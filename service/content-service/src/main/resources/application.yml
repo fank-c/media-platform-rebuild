@@ -1,0 +1,22 @@
+server:
+  port: 8300
+spring:
+  application:
+    name: content-service
+  config:
+    import: "optional:nacos:application.yml"
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+  datasource:
+    url: ${CONTENT_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${CONTENT_DB_USERNAME:media}
+    password: ${CONTENT_DB_PASSWORD:media}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

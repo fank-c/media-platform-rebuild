@@ -1,0 +1,18 @@
+server:
+  port: 8100
+
+spring:
+  application:
+    name: auth-service
+  config:
+    import: "optional:nacos:application.yml"
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
