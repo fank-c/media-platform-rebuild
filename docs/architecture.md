@@ -9,10 +9,15 @@
 MySQL、Redis、MinIO、MyBatis-Plus 和 `java-jwt`。基础设施通过
 `docker-compose.yml` 提供本地开发环境。
 
-当前工程只完成骨架和连通性占位，尚未迁移单体业务接口、数据库表、JWT 签发逻辑或
-RabbitMQ 消费者。本文区分“当前已实现”和“目标设计”，避免将规划误作现状。
+当前工程按领域逐步迁移；2026-09-07 用户确认 auth/user 第一阶段功能收尾：认证基础用例、
+Redis 两阶段刷新、Outbox 投递与用户资料查询/编辑和幂等初始化已有实现，网关已有认证拦截与缓存代码。
+这不包含旧账号兼容、其他领域闭环、切流与完整独立运行验收。本文区分
+“当前已实现”和“目标设计”，代码存在不等于领域已迁移。
 
-## 2. 系统边界
+阅读入口见 [文档中心](README.md)；接口字段以 [认证契约](contracts/http/auth-api-v1.md) 为准，
+认证具体流程、历史证据和风险集中在 [认证设计](reference/authentication.md)。
+
+## 2. 系统边界（目标拓扑）
 
 ```text
 Client
@@ -33,6 +38,8 @@ Interaction Service ---- RabbitMQ --------> Recommend Service (8600)
 All business services ---> one MySQL instance initially, with logical ownership
 ```
 
+上图中的内容、审核、互动、推荐和对象存储业务连线是目标关系，不表示业务链路已上线。
+
 网关是客户端唯一入口。服务间的同步调用只用于必须即时返回且数据量有限的场景；
 审核、推荐更新等不要求同步完成的动作通过 RabbitMQ 领域事件解耦。
 
@@ -40,16 +47,17 @@ All business services ---> one MySQL instance initially, with logical ownership
 
 | 服务 | 端口 | 负责范围 | 数据所有权 | 当前状态 |
 | --- | ---: | --- | --- | --- |
-| gateway-service | 8000 | 路由、CORS、认证前置校验、限流和灰度入口 | 无业务表 | 骨架与路由已配置 |
-| auth-service | 8100 | 注册/登录协作、JWT 签发刷新注销、会话失效 | `auth_*` | 健康接口占位 |
-| user-service | 8200 | 账户资料、关系、用户设置 | `user_*` | 骨架 |
+| gateway-service | 8000 | 路由、CORS、JWT 认证前置校验、身份下传、限流和灰度入口 | 无业务表 | 路由与认证拦截已实现；切流和限流仍待后续 |
+| auth-service | 8100 | 登录、JWT 签发刷新注销、会话失效 | `auth_*` | 注册及认证用例已有代码；旧账号兼容与完整验收待完成 |
+| user-service | 8200 | 账户资料、关系、用户设置 | `user_*` | 骨架与资料表 SQL；资料业务闭环未完成 |
 | content-service | 8300 | 视频、标签、分类、文件元数据、上传编排 | `content_*` | 骨架 |
 | audit-service | 8400 | 内容审核任务、审核结果与人工处理 | `audit_*` | 骨架 |
 | interaction-service | 8500 | 点赞、收藏、评论、关注、历史、分享 | `interaction_*` | 骨架 |
 | recommend-service | 8600 | 用户画像、候选集、推荐结果 | `recommend_*` | 骨架 |
 
 服务不共享 JPA/MyBatis 实体、Mapper、Service 实现或数据库表。`common` 只能承载
-协议和横切基础能力，不能成为共享业务模块。
+协议和横切基础能力，不能成为共享业务模块。`common-web` 通过 Spring Boot 自动配置在
+Servlet 业务服务中注册 `UserContextFilter`，仅解析网关注入的身份 Header；它不负责 JWT 验签。
 
 ## 4. 公共模块边界
 
@@ -57,7 +65,10 @@ All business services ---> one MySQL instance initially, with logical ownership
 business service -> common-web -> common-core
 ```
 
-- `common-core`：统一响应、错误码、基础异常、无业务含义的 DTO/事件信封。
+- `common-core`：统一响应、错误码、基础异常、无业务含义的 DTO/事件信封。当前
+  `EventEnvelope<T>` 只提供事件公共元数据容器；认证等领域 Payload 由各服务本地维护。当前
+  auth 的事件工厂写入 Outbox，user 的协议适配器直接绑定为 `EventEnvelope<本地Payload>` 后交给事务处理器，
+  不共享领域 DTO、JSON 配置或消息框架对象。
 - `common-web`：HTTP 相关横切能力，例如全局异常处理、请求 ID、校验和认证上下文。
 
 禁止放入 `common` 的内容包括用户、视频、审核等领域实体，Mapper，跨服务数据库访问，
@@ -70,21 +81,12 @@ JWT 由 `auth-service` 签发；网关进行第一道校验，业务服务仍需
 `java-jwt` 和 HMAC-SHA256；签名密钥只从环境变量或 Nacos 受保护配置读取，绝不提交到
 仓库。未来如需多方验签，可迁移为 RSA/EC 非对称签名而不改变 Token 声明约定。
 
-访问令牌应至少包含以下声明：
+JWT Claims、刷新凭据、错误与兼容性以 [认证 HTTP v1](contracts/http/auth-api-v1.md) 为唯一详细定义。
+网关通过认证服务 `/verify` 回源验证，并缓存 Token 摘要对应的验证结果；它不是本地 JWT 验签器。
+common-web 只解析身份头，因此业务服务的可信网络隔离仍是必要前提，不能将身份解析描述为独立验签。
 
-| 声明 | 含义 |
-| --- | --- |
-| `sub` | 用户或管理员的稳定 ID |
-| `typ` | 主体类型，例如 `user`、`admin` |
-| `roles` | 授权角色集合 |
-| `jti` | Token 唯一 ID，用于注销和审计 |
-| `iss` / `aud` | 签发方和受众，固定为本平台约定值 |
-| `iat` / `exp` | 签发与过期时间 |
-
-访问令牌短期有效；刷新令牌使用随机、不透明值，以哈希形式存入 Redis，并绑定主体、设备
-和过期时间。登出、改密、禁用账号时删除对应刷新会话，并将未过期访问令牌的 `jti` 标记
-为失效。客户端统一通过 `Authorization: Bearer <access-token>` 传递令牌，不兼容旧系统
-的自定义 Header 时，由迁移适配层临时转换。
+网关注销后会尝试清理缓存，但缓存删除失败、直连注销和并发回填仍有撤销窗口；
+禁用状态也不由 `/verify` 实时查库。完整说明及待补独立 ADR 见 [认证设计](reference/authentication.md)。
 
 ## 6. Nacos 配置与服务发现
 
@@ -95,27 +97,12 @@ JWT 由 `auth-service` 签发；网关进行第一道校验，业务服务仍需
 - 数据库密码、JWT 签名密钥、对象存储密钥等敏感配置只可在运行环境提供，不能放入
   `.env.example`、Nacos 示例配置或代码。
 
-## 7. RabbitMQ 事件设计
+## 7. RabbitMQ 事件设计（目标）
 
-所有领域事件发送至主题交换机 `media.platform.events`。路由键采用
-`<domain>.<event>.<version>`，例如 `content.published.v1`、`interaction.liked.v1`。
-事件信封的建议字段如下：
-
-```json
-{
-  "eventId": "uuid",
-  "eventType": "content.published.v1",
-  "occurredAt": "2026-08-31T00:00:00Z",
-  "producer": "content-service",
-  "aggregateId": "123",
-  "traceId": "trace-id",
-  "payload": {}
-}
-```
-
-消费者必须以 `eventId` 幂等处理。涉及数据库变更和消息发布的业务，落地时采用 Outbox
-模式或等价的可靠投递机制；失败消息进入重试队列，超过阈值后进入死信队列并可观测告警。
-禁止把 RabbitMQ 当作远程 RPC 或传递完整领域实体。
+非即时业务通过版本化事件解耦，目标交换机 `media.platform.events`、路由键
+`<domain>.<event>.<version>`。具体信封、Outbox、幂等、重试与死信要求统一见
+[消息设计](reference/messaging.md)。auth 到 user 的 `auth.account.created.v1` 已有本地 Outbox、类型化
+协议适配和消费幂等代码，但隔离环境中的真实投递、死信与恢复验证仍待完成，不能据此标记用户领域已迁移。
 
 ## 8. 数据与存储设计
 
@@ -123,6 +110,22 @@ JWT 由 `auth-service` 签发；网关进行第一道校验，业务服务仍需
 新建表必须使用服务前缀：`auth_`、`user_`、`content_`、`audit_`、`interaction_`、
 `recommend_`。一个服务只持有和迁移自己的表；跨域查询通过服务 API、只读投影或事件
 同步，不允许跨服务 SQL Join。
+
+### 8.1 初始认证与用户资料表
+
+| 表 | 精确所有者 | 职责 | 关联与访问边界 |
+| --- | --- | --- | --- |
+| `auth_account` | `auth-service` | 登录名、BCrypt 密码哈希、角色、认证状态和逻辑删除标记 | 仅 `auth-service` 可读写；`status` 决定能否认证，`deleted` 由服务内 Mapper 过滤。 |
+| `auth_outbox`、`auth_profile_backfill_progress` | `auth-service` | 认证领域事件可靠发布及新认证库账号补齐进度 | 不读取或写入 user-service 表；补齐默认关闭且默认 dry-run。 |
+| `user_profile`、`user_consumed_event` | `user-service` | 资料、并发版本及账号创建事件消费幂等 | `account_id` 仅逻辑关联 `auth_account.id`；资料状态不替代认证状态，关注关系属于 interaction-service。 |
+
+`auth_account.id` 使用 MyBatis-Plus `ASSIGN_UUID` 生成的 32 位字符串 UUID；`user_profile.account_id`
+必须使用该认证主体 ID，资料服务不得自行生成不关联认证主体的标识。
+
+空库使用 `db/init/schema.sql` 初始化当前 Schema；各服务 `db/schema/` 中按表拆分的 DDL 作为所属服务的源码入口，
+两者必须在同一变更中保持一致。后续已建库环境的结构演进须另行设计并提交可审查迁移脚本。Compose 当前不挂载初始化 SQL，需要按
+[数据库初始化指南](database-setup-guide.md) 手动执行；字段及 Redis 所有权见
+[数据库参考](reference/database-schema.md)。
 
 旧单体表在迁移前先登记“当前拥有者、目标表、读写切换时间和回退方式”。必要时创建
 服务专属新表并双写/回填，验证后再切流；不要求也不允许在第一阶段批量重命名全部旧表。
@@ -142,3 +145,18 @@ Redis 只保存缓存、限流计数、会话/Token 失效状态和推荐计算�
 
 在首个迁移阶段，不引入服务网格、分布式事务框架、Kubernetes、独立数据库实例、
 复杂 CQRS 或多区域部署。只有在已有服务边界、流量和运维需求验证后，才评估这些投入。
+
+## 11. 当前网关路由
+
+以下路由以本地 gateway-service YAML 为据；有路由不代表下游业务接口已经实现。
+
+| 路径 | 目标服务 |
+| --- | --- |
+| `/api/auth/**` | auth-service |
+| `/api/users/**` | user-service |
+| `/api/content/**` | content-service |
+| `/api/audit/**` | audit-service |
+| `/api/interactions/**` | interaction-service |
+| `/api/recommend/**` | recommend-service |
+
+当前没有旧单体兜底或切流开关配置；迁移计划中的切回单体属于待设计和演练的目标操作。

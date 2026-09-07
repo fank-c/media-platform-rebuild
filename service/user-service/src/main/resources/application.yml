@@ -12,10 +12,45 @@ spring:
       config:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
   datasource:
+    # 当前与内容服务共用物理库；保留 USER_DB_* 覆盖入口以支持后续独立拆库。
     url: ${USER_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${USER_DB_USERNAME:media}
     password: ${USER_DB_PASSWORD:media}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:media}
+    password: ${RABBITMQ_PASSWORD:}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          # 与 UserMessagingProperties 共用同一配置源，避免监听容器与运行参数出现两个重试上限。
+          max-attempts: ${user.messaging.account-created.max-attempts}
+          initial-interval: 1s
+          multiplier: 2
+          max-interval: 2s
+user:
+  profile:
+    # UserProfileProperties 绑定此参数；未建立文件引用契约前默认隐藏历史头像。
+    avatar-allowed-prefix: ${USER_AVATAR_ALLOWED_PREFIX:}
+  messaging:
+    account-created:
+      # UserMessagingProperties 统一绑定并校验消费者开关、并发和有限重试次数。
+      enabled: ${USER_ACCOUNT_CREATED_CONSUMER_ENABLED:true}
+      concurrency: ${USER_ACCOUNT_CREATED_CONCURRENCY:1}
+      max-attempts: ${USER_ACCOUNT_CREATED_MAX_ATTEMPTS:3}
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        # 用户资料读写必须依赖 MySQL；RabbitMQ 故障只延迟异步初始化，不阻断已有资料接口。
+        readiness:
+          include: readinessState,db
   endpoints:
     web:
       exposure:

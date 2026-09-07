@@ -17,8 +17,9 @@ services:
     image: rabbitmq:3.13-management
     container_name: media-platform-rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-media}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-media}
+      # 与业务服务的 RABBITMQ_USERNAME/PASSWORD 共用变量，避免初始化账户和连接账户偏离。
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-media}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-media}
     ports:
       - "5672:5672"
       - "15672:15672"
@@ -30,6 +31,7 @@ services:
     image: mysql:8.4
     container_name: media-platform-mysql
     environment:
+      # 第一阶段共用实例和数据库；表级所有权由各服务的前缀与访问边界保证。
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-media_root}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-media_platform}
       MYSQL_USER: ${MYSQL_USER:-media}

@@ -34,3 +34,13 @@ HTTP 契约优先使用 OpenAPI YAML/JSON；在此之前使用 Markdown 说明�
 - 生产者不能在未知消费者尚未完成兼容前停止发送旧事件；消费者须忽略未知字段。
 - JWT Claims 也是跨服务契约。新增 Claim 可兼容，修改既有 Claim 语义或移除 Claim 必须按
   破坏性变更处理。
+
+## 当前契约索引
+
+| 契约 | 所有者 | 已知调用方 | 状态 |
+| --- | --- | --- | --- |
+| [认证 HTTP API v1（含 JWT Claims）](http/auth-api-v1.md) | auth-service | 新客户端、gateway-service | 现有实现文档；补录接口和差异待完整验收 |
+| [用户资料 HTTP API v1](http/user-api-v1.md) | user-service | 新客户端、平台管理端 | 已实现，待独立验收 |
+| [账号创建事件 v1](events/auth.account.created.v1.md) | auth-service | user-service | 已实现，待集成与故障验收 |
+
+消息通用规范见 [消息设计](../reference/messaging.md)；只有本索引登记的事件才属于已发布契约。

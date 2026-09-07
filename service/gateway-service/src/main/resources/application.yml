@@ -6,6 +6,12 @@ spring:
     name: gateway-service
   config:
     import: "optional:nacos:application.yml"
+  data:
+    redis:
+      # 网关仅将 Redis 用于 Token 验证结果缓存，不保存完整 Token。
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
   cloud:
     nacos:
       discovery:
@@ -36,6 +42,19 @@ spring:
           uri: lb://recommend-service
           predicates:
             - Path=/api/recommend/**
+
+gateway:
+  auth:
+    # 认证服务通过 Nacos 服务发现解析，避免网关固定绑定单个实例。
+    auth-service-url: ${GATEWAY_AUTH_SERVICE_URL:lb://auth-service}
+    cache-ttl: ${GATEWAY_AUTH_CACHE_TTL:10m}
+    whitelist:
+      - /api/auth/ping
+      - /api/auth/login
+      - /api/auth/register
+      - /api/auth/refresh
+      - /actuator/health
+      - /actuator/info
 
 management:
   endpoints:

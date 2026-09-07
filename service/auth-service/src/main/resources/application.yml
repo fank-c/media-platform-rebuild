@@ -10,8 +10,66 @@ spring:
     nacos:
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+  datasource:
+    # 认证表由 auth-service 独占；密码不提供仓库内默认值，避免误连未知数据库。
+    url: ${AUTH_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${AUTH_DB_USERNAME:media}
+    password: ${AUTH_DB_PASSWORD:}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:media}
+    password: ${RABBITMQ_PASSWORD:}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+
+auth:
+  jwt-secret: ${AUTH_JWT_SECRET:}
+  jwt-issuer: ${AUTH_JWT_ISSUER:auth-service}
+  jwt-audience: ${AUTH_JWT_AUDIENCE:media-platform}
+  access-token-ttl-seconds: ${AUTH_ACCESS_TOKEN_TTL_SECONDS:900}
+  refresh-token-ttl-seconds: ${AUTH_REFRESH_TOKEN_TTL_SECONDS:2592000}
+  # AuthOutboxProperties 统一绑定并校验这些参数；关闭发布只暂停发送，注册事务仍持续记录 Outbox。
+  outbox:
+    enabled: ${AUTH_OUTBOX_ENABLED:true}
+    # 快速提示只在事务成功提交后提交 eventId；默认关闭，启用/关闭都需要受控重启。
+    fast-dispatch-enabled: ${AUTH_OUTBOX_FAST_DISPATCH_ENABLED:false}
+    fast-dispatch-threads: ${AUTH_OUTBOX_FAST_DISPATCH_THREADS:2}
+    fast-dispatch-queue-capacity: ${AUTH_OUTBOX_FAST_DISPATCH_QUEUE_CAPACITY:256}
+    # batch-size 是单轮候选 ID 上限，不表示同时持有的租约数。
+    batch-size: ${AUTH_OUTBOX_BATCH_SIZE:100}
+    max-attempts: ${AUTH_OUTBOX_MAX_ATTEMPTS:20}
+    confirm-timeout: ${AUTH_OUTBOX_CONFIRM_TIMEOUT:5s}
+    lease: ${AUTH_OUTBOX_LEASE:30s}
+    poll-interval: ${AUTH_OUTBOX_POLL_INTERVAL:1s}
+    # 全表积压统计与发送分离；统计滞后不影响可靠投递状态机。
+    backlog-refresh-interval: ${AUTH_OUTBOX_BACKLOG_REFRESH_INTERVAL:60s}
+    shutdown-await: ${AUTH_OUTBOX_SHUTDOWN_AWAIT:10s}
+  # ProfileBackfillProperties 统一绑定并校验这些参数；默认关闭且 dry-run，不涉及旧单体迁移。
+  profile-backfill:
+    enabled: ${AUTH_PROFILE_BACKFILL_ENABLED:false}
+    dry-run: ${AUTH_PROFILE_BACKFILL_DRY_RUN:true}
+    batch-size: ${AUTH_PROFILE_BACKFILL_BATCH_SIZE:100}
+    poll-interval: ${AUTH_PROFILE_BACKFILL_POLL_INTERVAL:10s}
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        # 认证读写依赖 MySQL 和 Redis；RabbitMQ 由 Outbox 隔离，不阻断注册就绪状态。
+        readiness:
+          include: readinessState,db,redis
   endpoints:
     web:
       exposure:
