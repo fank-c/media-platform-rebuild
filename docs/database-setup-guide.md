@@ -50,3 +50,10 @@ SHOW CREATE TABLE user_profile;
 DDL 成功不代表注册与资料业务可用，后续执行 [认证测试矩阵](guides/testing.md)。
 失败时保留错误和结构证据，不通过删库、删表或删除 Docker 数据卷重试。
 空库初始化后的新表也不自动授权删除；已有业务数据时回退必须按已确认方案进行。
+
+
+## file-service 第一阶段建表
+
+文件服务只拥有 `file_asset`。空库初始化使用 `db/init/schema.sql`；已有库以 `service/file-service/db/schema/file-asset.sql` 为可审查来源。执行前后运行 `SHOW CREATE TABLE file_asset` 对照列、CHECK 约束和索引；已存在但不同构时停止并形成独立迁移方案，不在应用启动时或本轮脚本中隐式修改。
+
+本次没有执行任何数据库 DDL、旧文件回填或数据删除。MinIO bucket 也不由业务请求自动创建：隔离环境中应显式创建私有 `FILE_MINIO_BUCKET` 和最小权限账号，再进行 SDK 联调。

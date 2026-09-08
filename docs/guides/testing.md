@@ -184,3 +184,10 @@ auth/user 第一阶段功能由用户确认收尾。本轮核对了文档导航�
 复制到无冒号的隔离目录，在 JDK 17 下运行 `./mvnw -pl service/auth-service,service/user-service -am verify`。
 根路径的 `./build.sh` 可规避部分构建路径问题，但本项目测试曾需无冒号副本，失败时不得靠跳过测试宣称通过。
 真实 Redis 测试只指向明确属于自己的隔离资源，记录运行数量、跳过数量和依赖版本，不打印凭据。
+
+
+## file-service 第一阶段验证
+
+文件服务实现需要分别证明配置绑定、HTTP 状态、条件 SQL、对象 SDK 和网关信任边界。当前代码单元测试覆盖配置与有界摘要流；MySQL 双连接竞争、MinIO 签名/CORS/取消语义、实际 bucket 权限、网关阻止服务直连和端到端上传/删除尚需在明确授权的隔离资源执行。
+
+根目录含 `:`，运行 Maven 测试时使用包含当前未跟踪源码、排除 `.git`/`.env`/`target`、没有符号链接的无冒号副本。推荐在副本运行 `./mvnw -pl service/file-service -am clean verify`，再运行网关相关测试。`docker compose config -q`、YAML 解析和 `./build.sh -DskipTests` 仅是静态证据，不替代数据库与 MinIO 联调。

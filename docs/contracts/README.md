@@ -44,3 +44,5 @@ HTTP 契约优先使用 OpenAPI YAML/JSON；在此之前使用 Markdown 说明�
 | [账号创建事件 v1](events/auth.account.created.v1.md) | auth-service | user-service | 已实现，待集成与故障验收 |
 
 消息通用规范见 [消息设计](../reference/messaging.md)；只有本索引登记的事件才属于已发布契约。
+
+| [文件 HTTP v1](http/file-api-v1.md) | file-service | 新客户端 | 已实施，待独立验收；不含公开引用或跨服务读取 |

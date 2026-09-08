@@ -75,3 +75,6 @@ volumes:
   redis-data:
   rabbitmq-data:
   minio-data:
+
+# file-service 复用现有 MinIO；初始化专用私有 bucket 与最小权限账号须在隔离环境显式执行。
+# 业务服务容器尚未在本 Compose 自动启动，避免把签名直传或端口暴露误当作上线授权。

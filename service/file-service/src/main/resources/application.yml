@@ -1,0 +1,65 @@
+server:
+  # 文件服务建议单独监听 8700；生产入口仍应仅由网关暴露。
+  port: ${FILE_SERVER_PORT:8700}
+spring:
+  application:
+    name: file-service
+  config:
+    import: "optional:nacos:application.yml"
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+  datasource:
+    # file-service 是 file_* 表唯一所有者；凭据不设置开发默认值，避免误连共享库。
+    url: ${FILE_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${FILE_DB_USERNAME:}
+    password: ${FILE_DB_PASSWORD:}
+  servlet:
+    multipart:
+      # Servlet 层先限流，仍由应用层按字节核验，防止绕开声明大小。
+      max-file-size: ${FILE_MAX_MULTIPART_SIZE:20MB}
+      max-request-size: ${FILE_MAX_REQUEST_SIZE:21MB}
+file:
+  storage:
+    type: ${FILE_STORAGE_TYPE:MINIO}
+    # HTTP 客户端超时限制不可达或慢对象占用确认线程；SDK 取消语义仍需隔离联调。
+    connect-timeout: ${FILE_STORAGE_CONNECT_TIMEOUT:3s}
+    read-timeout: ${FILE_STORAGE_READ_TIMEOUT:15s}
+    call-timeout: ${FILE_STORAGE_CALL_TIMEOUT:90s}
+    minio:
+      endpoint: ${FILE_MINIO_ENDPOINT:http://localhost:9000}
+      presign-endpoint: ${FILE_MINIO_PRESIGN_ENDPOINT:http://localhost:9000}
+      bucket: ${FILE_MINIO_BUCKET:media-files-dev}
+      access-key: ${FILE_MINIO_ACCESS_KEY:}
+      secret-key: ${FILE_MINIO_SECRET_KEY:}
+  max-size: ${FILE_MAX_SIZE:20971520}
+  put-ttl: ${FILE_PUT_TTL:5m}
+  upload-ttl: ${FILE_UPLOAD_TTL:15m}
+  get-ttl: ${FILE_GET_TTL:2m}
+  stream-buffer-size: ${FILE_STREAM_BUFFER_SIZE:65536}
+  confirm:
+    threads: ${FILE_CONFIRM_THREADS:2}
+    queue-capacity: ${FILE_CONFIRM_QUEUE_CAPACITY:16}
+    task-timeout: ${FILE_CONFIRM_TASK_TIMEOUT:120s}
+  cleanup:
+    enabled: ${FILE_CLEANUP_ENABLED:false}
+    interval: ${FILE_CLEANUP_INTERVAL:60s}
+    batch-size: ${FILE_CLEANUP_BATCH_SIZE:100}
+    max-batches: ${FILE_CLEANUP_MAX_BATCHES:5}
+    run-timeout: ${FILE_CLEANUP_RUN_TIMEOUT:30s}
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        # 元数据必须依赖 MySQL；MinIO 短暂故障由文件操作返回明确失败，不触发存活重启。
+        readiness:
+          include: readinessState,db
+  endpoints:
+    web:
+      exposure:
+        include: health,info

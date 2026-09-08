@@ -27,7 +27,8 @@ Gateway Service (8000) ---- Nacos: discovery/config
   |        |        |\
   |        |        | +-- Auth Service (8100)
   |        |        +---- User Service (8200)
-  |        +------------- Content Service (8300) ---- MinIO
+  |        +------------- Content Service (8300)
+  |        +------------- File Service (8700) ------- MinIO (私有 bucket，签名数据流例外)
   +---------------------- Interaction Service (8500)
                            |
 Content Service -------- RabbitMQ --------> Audit Service (8400)
@@ -50,7 +51,8 @@ All business services ---> one MySQL instance initially, with logical ownership
 | gateway-service | 8000 | 路由、CORS、JWT 认证前置校验、身份下传、限流和灰度入口 | 无业务表 | 路由与认证拦截已实现；切流和限流仍待后续 |
 | auth-service | 8100 | 登录、JWT 签发刷新注销、会话失效 | `auth_*` | 注册及认证用例已有代码；旧账号兼容与完整验收待完成 |
 | user-service | 8200 | 账户资料、关系、用户设置 | `user_*` | 骨架与资料表 SQL；资料业务闭环未完成 |
-| content-service | 8300 | 视频、标签、分类、文件元数据、上传编排 | `content_*` | 骨架 |
+| content-service | 8300 | 视频、标签、分类和未来业务引用 | `content_*` | 骨架；不再拥有通用文件元数据或对象存储编排 |
+| file-service | 8700 | 私人文件元数据、上传编排、MinIO 适配与短期签名 | `file_*` | 第一阶段已实现，待独立验收；未开放跨服务读取、公开引用或真实环境直传 |
 | audit-service | 8400 | 内容审核任务、审核结果与人工处理 | `audit_*` | 骨架 |
 | interaction-service | 8500 | 点赞、收藏、评论、关注、历史、分享 | `interaction_*` | 骨架 |
 | recommend-service | 8600 | 用户画像、候选集、推荐结果 | `recommend_*` | 骨架 |
@@ -155,6 +157,7 @@ Redis 只保存缓存、限流计数、会话/Token 失效状态和推荐计算�
 | `/api/auth/**` | auth-service |
 | `/api/users/**` | user-service |
 | `/api/content/**` | content-service |
+| `/api/files/**` | file-service |
 | `/api/audit/**` | audit-service |
 | `/api/interactions/**` | interaction-service |
 | `/api/recommend/**` | recommend-service |

@@ -58,3 +58,10 @@ MinIO 存对象本体；文件元数据和授权归 `content-service`，相关�
 结构变更同时更新服务私有 SQL 与空库快照，声明兼容、回填、核验和回退限制。
 `CREATE TABLE IF NOT EXISTS` 只会跳过已有表，不会把旧列自动升级为最新结构。
 大批量回填需分批、重试、进度和集合校验；旧表删除、共享库修改、双写切换都需明确确认。
+
+
+## file-service 文件元数据
+
+`file_asset` 仅由 file-service 读写，DDL 源为 `service/file-service/db/schema/file-asset.sql`，空库快照同步在 `db/init/schema.sql`。`declared_size` 是客户端声明，`size` 和 `sha256` 只在 `COMPLETED` 后由服务端流式读取填充；新文件的 `storage_key` 由服务端 UTC 创建日期与文件 ID 组成，例如 `assets/2026/09/08/<id>`，一经写入即作为后续操作的定位依据；`storage_key`、bucket、端点均不属于对外 DTO。
+
+首期只允许 `MINIO`，对象 key 永不复用；PENDING 只能条件转为 COMPLETED 或 EXPIRED。既有环境必须在执行前后用 `SHOW CREATE TABLE file_asset` 与 DDL 对照；发现列、约束或索引漂移即停止，不隐式 ALTER。未进行旧单体回填，也不设置跨服务外键。

@@ -38,6 +38,8 @@ ADR 不是变更日志，也不是详细设计文档。它记录的是"为什么
 | [0004](./0004-auth-user-local-structure-and-typed-decoding.md) | Auth/User 本地目录收敛与类型化消息绑定 | 已接受 | 2026-09-06 | 项目维护者、实施代理 |
 | [0005](./0005-auth-outbox-post-commit-fast-dispatch.md) | Auth Outbox 提交后快速投递与扫描恢复 | 已接受 | 2026-09-06 | 项目维护者、实施代理 |
 
+| [0007](./0007-file-service-minio-first-phase.md) | file-service 第一阶段私有 MinIO 文件能力 | 已接受 | 2026-09-07 | 项目维护者、实施代理 |
+
 补录待确认：[0006 Refresh 两阶段条件轮换](./0006-auth-refresh-session-atomicity.md)（提议，2026-09-07）。
 当前代码已实现，补录状态不代表独立验收通过，也不改写已接受 ADR。
 

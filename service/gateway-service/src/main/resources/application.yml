@@ -30,6 +30,11 @@ spring:
           uri: lb://content-service
           predicates:
             - Path=/api/content/**
+        # 文件业务 API 仍经认证网关；MinIO 对象传输仅使用受控短期签名例外。
+        - id: file-service
+          uri: lb://file-service
+          predicates:
+            - Path=/api/files/**
         - id: audit-service
           uri: lb://audit-service
           predicates:
