@@ -26,10 +26,26 @@ public class FileCleanupScheduler {
   /** 默认不执行；仅隔离 bucket 显式启用时才处理有限数量的过期记录。 */
   @Scheduled(fixedDelayString = "${file.cleanup.interval:60s}")
   public void trigger() {
-    if (properties.getCleanup().isEnabled())
+    if (properties.getCleanup().isEnabled()) {
       cleanupService.cleanup(
           properties.getCleanup().getBatchSize(),
           properties.getCleanup().getMaxBatches(),
           properties.getCleanup().getRunTimeout());
+      // V2 恢复只处理数据库已知的 VERIFYING 记录，不扫描 bucket。
+      cleanupService.recoverVerification(
+          properties.getCleanup().getBatchSize(),
+          properties.getCleanup().getMaxBatches(),
+          properties.getCleanup().getRunTimeout());
+      // 完成后的 staging 清理失败不回滚文件可用状态，下一轮继续补偿。
+      cleanupService.cleanupStaging(
+          properties.getCleanup().getBatchSize(),
+          properties.getCleanup().getMaxBatches(),
+          properties.getCleanup().getRunTimeout());
+      // 删除恢复独立于上传清理，确保远端成功但墓碑写入失败的记录最终收敛。
+      cleanupService.recoverDeletion(
+          properties.getCleanup().getBatchSize(),
+          properties.getCleanup().getMaxBatches(),
+          properties.getCleanup().getRunTimeout());
+    }
   }
 }

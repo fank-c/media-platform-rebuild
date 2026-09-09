@@ -22,7 +22,26 @@ class FileStoragePropertiesTest {
     assertThrows(IllegalStateException.class, properties::validate);
   }
 
-  /** @return 测试用完整非敏感配置 */
+  /** V2 开关开启时必须同时启用清理恢复闭环。 */
+  @Test
+  void rejectsV2WithoutCleanup() {
+    FileStorageProperties properties = configured();
+    properties.getDirectUploadV2().setEnabled(true);
+    assertThrows(IllegalStateException.class, properties::validate);
+  }
+
+  /** staging 与 permanent 不能相同或互相嵌套。 */
+  @Test
+  void rejectsNestedObjectPrefixes() {
+    FileStorageProperties properties = configured();
+    properties.getMinio().setStagingPrefix("objects");
+    properties.getMinio().setPermanentPrefix("objects/permanent");
+    assertThrows(IllegalStateException.class, properties::validate);
+  }
+
+  /**
+   * @return 测试用完整非敏感配置
+   */
   private FileStorageProperties configured() {
     FileStorageProperties properties = new FileStorageProperties();
     properties.getMinio().setEndpoint("http://minio.internal:9000");

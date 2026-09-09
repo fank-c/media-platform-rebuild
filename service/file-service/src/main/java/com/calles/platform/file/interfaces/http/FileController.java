@@ -7,6 +7,7 @@ import com.calles.platform.file.application.confirmation.DirectUploadConfirmatio
 import com.calles.platform.file.application.security.FileAccessPolicy;
 import com.calles.platform.file.exception.FileOperationException;
 import com.calles.platform.file.interfaces.http.dto.DirectUploadRequest;
+import com.calles.platform.file.interfaces.http.dto.DirectUploadV2Request;
 import com.calles.platform.file.interfaces.http.dto.FileResponses;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
@@ -68,6 +69,35 @@ public class FileController {
         .body(ApiResponse.ok(fileService.initializeDirectUpload(user.userId(), request)));
   }
 
+  /** V2 初始化只签发 staging checksum PUT；开关关闭时不暴露内部能力。 */
+  @PostMapping(path = "/direct-upload/v2", consumes = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<ApiResponse<FileResponses.DirectUpload>> initializeDirectUploadV2(
+      @RequestBody DirectUploadV2Request request) {
+    UserInfo user = accessPolicy.requireUser();
+    return ResponseEntity.status(201)
+        .body(ApiResponse.ok(fileService.initializeDirectUploadV2(user.userId(), request)));
+  }
+
+  /** V2 confirm 返回 VERIFYING 的真实 202，完成后下一次调用返回 200 元数据。 */
+  @PostMapping("/{id}/confirm/v2")
+  public ResponseEntity<ApiResponse<?>> confirmV2(@PathVariable String id) {
+    UserInfo user = accessPolicy.requireUser();
+    try {
+      Object response = confirmationService.confirmV2(user.userId(), id);
+      if (response instanceof FileResponses.ConfirmationAccepted accepted) {
+        return ResponseEntity.accepted().body(ApiResponse.ok(accepted));
+      }
+      return ResponseEntity.ok(ApiResponse.ok(response));
+    } catch (FileOperationException exception) {
+      if (exception.getStatus().value() == 503) {
+        return ResponseEntity.status(503)
+            .header(HttpHeaders.RETRY_AFTER, "2")
+            .body(new ApiResponse<>(503, exception.getMessage(), null));
+      }
+      throw exception;
+    }
+  }
+
   /** 已完成返回 200；首次提交和同进程在途请求返回真实 HTTP 202。 */
   @PostMapping("/{id}/confirm")
   public ResponseEntity<ApiResponse<?>> confirm(@PathVariable String id) {
@@ -106,7 +136,7 @@ public class FileController {
         .body(ApiResponse.ok(fileService.downloadUrl(user.userId(), id)));
   }
 
-  /** 本人删除执行远端先行、墓碑后写；已存在本人的墓碑仍返回 204。 */
+  /** 本人删除先建立数据库闸门，再删远端并落墓碑；完成或既有墓碑才返回 204。 */
   @DeleteMapping("/{id}")
   public ResponseEntity<Void> delete(@PathVariable String id) {
     UserInfo user = accessPolicy.requireUser();

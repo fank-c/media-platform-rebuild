@@ -58,7 +58,7 @@ class FileAssetApplicationServiceTest {
 
     ArgumentCaptor<FileAsset> assetCaptor = ArgumentCaptor.forClass(FileAsset.class);
     verify(repository).insert(assetCaptor.capture());
-    assertEquals("assets/2026/09/08/" + result.fileId(), assetCaptor.getValue().getStorageKey());
+    assertEquals("permanent/2026/09/08/" + result.fileId(), assetCaptor.getValue().getStorageKey());
     assertEquals("hello.txt", result.originName());
     assertEquals(5L, result.declaredSize());
     assertEquals(5L, result.actualSize());

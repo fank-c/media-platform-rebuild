@@ -4,6 +4,8 @@ import com.calles.platform.file.application.port.ObjectStorageClient;
 import com.calles.platform.file.config.FileStorageProperties;
 import com.calles.platform.file.domain.asset.StorageType;
 import com.calles.platform.file.exception.ObjectStorageException;
+import io.minio.CopyObjectArgs;
+import io.minio.CopySource;
 import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
@@ -47,7 +49,9 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     this.bucket = properties.getMinio().getBucket();
   }
 
-  /** @return MINIO */
+  /**
+   * @return MINIO
+   */
   @Override
   public StorageType storageType() {
     return StorageType.MINIO;
@@ -102,11 +106,23 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     }
   }
 
-  /** 生成只含受控 Content-Type 要求的 PUT 签名。 */
+  /** 生成旧 V1 只含受控 Content-Type 要求的 PUT 签名。 */
   @Override
   public PresignedUrl presignPut(String key, String mime, Duration ttl) {
+    return presignPutWithHeaders(key, Map.of("Content-Type", mime), ttl);
+  }
+
+  /** 生成 V2 checksum PUT 签名；checksum header 同时参与签名和对象存储校验。 */
+  @Override
+  public PresignedUrl presignPut(String key, String mime, String checksumBase64, Duration ttl) {
+    return presignPutWithHeaders(
+        key, Map.of("Content-Type", mime, "x-amz-checksum-sha256", checksumBase64), ttl);
+  }
+
+  /** 以 SDK 的 extraHeaders 生成签名，确保客户端必须原样带上受控请求头。 */
+  private PresignedUrl presignPutWithHeaders(
+      String key, Map<String, String> headers, Duration ttl) {
     try {
-      Map<String, String> headers = Map.of("Content-Type", mime);
       String url =
           presignClient.getPresignedObjectUrl(
               GetPresignedObjectUrlArgs.builder()
@@ -119,6 +135,26 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
       return new PresignedUrl(url, headers, Instant.now().plus(ttl));
     } catch (Exception exception) {
       throw translate("生成上传签名失败", exception);
+    }
+  }
+
+  /** 使用源 ETag 条件执行服务端 copy，避免 file-service 下载 staging 文件。 */
+  @Override
+  public void copy(String sourceKey, String targetKey, String sourceEtag) {
+    try {
+      storageClient.copyObject(
+          CopyObjectArgs.builder()
+              .bucket(bucket)
+              .object(targetKey)
+              .source(
+                  CopySource.builder()
+                      .bucket(bucket)
+                      .object(sourceKey)
+                      .matchETag(sourceEtag)
+                      .build())
+              .build());
+    } catch (Exception exception) {
+      throw translateCopy(exception);
     }
   }
 
@@ -148,6 +184,23 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     }
     return new ObjectStorageException(
         ObjectStorageException.Category.UNAVAILABLE, action, exception);
+  }
+
+  /** 条件 copy 的 ETag 不匹配是内容竞争，不应伪造完成；其他异常结果仍按未知失败处理。 */
+  private ObjectStorageException translateCopy(Exception exception) {
+    if (exception instanceof ErrorResponseException response) {
+      String code = response.errorResponse() == null ? "" : response.errorResponse().code();
+      if (isNotFound(response)) {
+        return new ObjectStorageException(
+            ObjectStorageException.Category.NOT_FOUND, "复制对象失败", exception);
+      }
+      if ("PreconditionFailed".equals(code) || "InvalidRequest".equals(code)) {
+        return new ObjectStorageException(
+            ObjectStorageException.Category.CONTENT_MISMATCH, "复制条件未满足", exception);
+      }
+    }
+    return new ObjectStorageException(
+        ObjectStorageException.Category.UNKNOWN_RESULT, "复制对象结果未确认", exception);
   }
 
   /** 仅将明确对象缺失码分类为不存在，bucket 缺失和权限不足不能混同。 */

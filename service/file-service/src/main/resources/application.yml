@@ -33,6 +33,9 @@ file:
       endpoint: ${FILE_MINIO_ENDPOINT:http://localhost:9000}
       presign-endpoint: ${FILE_MINIO_PRESIGN_ENDPOINT:http://localhost:9000}
       bucket: ${FILE_MINIO_BUCKET:media-files-dev}
+      # V2 PUT 只能写入暂存前缀；完成后由服务端 copy 到 permanent，两个前缀不可嵌套。
+      staging-prefix: ${FILE_MINIO_STAGING_PREFIX:staging}
+      permanent-prefix: ${FILE_MINIO_PERMANENT_PREFIX:permanent}
       access-key: ${FILE_MINIO_ACCESS_KEY:}
       secret-key: ${FILE_MINIO_SECRET_KEY:}
   max-size: ${FILE_MAX_SIZE:20971520}
@@ -40,6 +43,9 @@ file:
   upload-ttl: ${FILE_UPLOAD_TTL:15m}
   get-ttl: ${FILE_GET_TTL:2m}
   stream-buffer-size: ${FILE_STREAM_BUFFER_SIZE:65536}
+  direct-upload-v2:
+    # 默认关闭；需先在隔离 MinIO/OSS 完成 checksum、条件 copy、CORS 与生命周期 POC。
+    enabled: ${FILE_DIRECT_UPLOAD_V2_ENABLED:false}
   confirm:
     threads: ${FILE_CONFIRM_THREADS:2}
     queue-capacity: ${FILE_CONFIRM_QUEUE_CAPACITY:16}
