@@ -12,6 +12,7 @@ spring:
       config:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
   datasource:
+    # 当前与用户服务共用物理库；保留 CONTENT_DB_* 覆盖入口以支持后续独立拆库。
     url: ${CONTENT_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${CONTENT_DB_USERNAME:media}
     password: ${CONTENT_DB_PASSWORD:media}
