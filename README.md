@@ -12,8 +12,8 @@ Calles 视频平台的渐进式微服务重构工程。相邻 `../calles` 是只
 - 网关已有路由、认证拦截、验证缓存和身份 Header 下传；内容、审核、互动、推荐仍主要是骨架。
 - 第一阶段收尾不等于生产可用或旧系统已迁移；旧账号兼容、切流及真实依赖独立验收仍保留门槛。
 
-详细阶段范围见 [功能清单](docs/TODO.md)，验证记录见 [测试指南](docs/guides/testing.md)。以上不是本轮运行验收。能力边界见 [架构设计](docs/architecture.md)，
-风险与验证缺口见 [认证设计](docs/reference/authentication.md)。
+详细阶段范围见 [功能清单](docs/TODO.md)，接口说明见 [接口文档](docs/api.md)，模块行为与限制见
+[文档中心](docs/README.md)。以上不是本轮运行验收。
 
 ## 工程布局与技术基线
 
@@ -32,10 +32,10 @@ Calles 视频平台的渐进式微服务重构工程。相邻 `../calles` 是只
 
 ## 从哪里开始
 
-1. [快速开始](docs/guides/quick-start.md)：环境准备、手动建表、构建和网关探针。
-2. [文档中心](docs/README.md)：按任务选择资料，了解各主题的唯一维护位置。
-3. [开发指南](docs/guides/development.md)：变更流程与交付要求。
-4. [迁移计划](docs/migration-plan.md)：阶段门槛、兼容和回退约束。
+1. [功能清单](docs/TODO.md)：查看各模块当前进度和下一步任务。
+2. [文档中心](docs/README.md)：按业务模块查接口、流程和限制。
+3. [接口文档](docs/api.md)：查看当前 HTTP 请求、响应和权限约束。
+4. [文件模块问题记录](docs/file-issues.md)：查看文件上传、删除和真实依赖验证缺口。
 
 Linux 下当前路径包含 `:`，全量构建使用 `./build.sh -DskipTests`，不要直接执行根 reactor
 的 `./mvnw clean package`。完整说明集中在快速开始，不在各文档重复维护启动步骤。
