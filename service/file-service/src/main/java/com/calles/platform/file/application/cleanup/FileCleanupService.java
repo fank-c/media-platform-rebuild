@@ -37,22 +37,6 @@ public class FileCleanupService {
   private final FileOperationalMetrics metrics;
 
   /**
-   * 兼容旧测试和调用方的构造入口；V2 恢复使用默认大小预算。
-   *
-   * @param repository 仓储
-   * @param storageFactory 工厂
-   * @param clock 时钟
-   * @param metrics 指标
-   */
-  public FileCleanupService(
-      FileAssetRepository repository,
-      StorageFactory storageFactory,
-      Clock clock,
-      FileOperationalMetrics metrics) {
-    this(repository, storageFactory, new FileStorageProperties(), clock, metrics);
-  }
-
-  /**
    * @param repository 仓储
    * @param storageFactory 工厂
    * @param properties 文件参数
@@ -170,22 +154,26 @@ public class FileCleanupService {
       metrics.verificationFailure();
       return;
     }
+    // 文件信息是否匹配
     if (head.size() != asset.getDeclaredSize()
         || head.size() < 1
         || head.size() > properties.getMaxSize()
         || head.etag() == null
         || head.etag().isBlank()) {
       metrics.verificationFailure();
+      // 不匹配则直接删除
       if (repository.rejectVerification(asset.getId(), Instant.now(clock)) == 1) {
         deleteExpiredObject(asset);
       }
       return;
     }
+    // 更新Etag信息
     if (repository.observeVerification(
             asset.getId(), asset.getCreateBy(), head.etag(), Instant.now(clock))
         != 1) {
       return;
     }
+    // 将文件移动到永久化区域
     try {
       client.copy(asset.getStagingStorageKey(), asset.getStorageKey(), head.etag());
     } catch (ObjectStorageException exception) {
@@ -196,6 +184,7 @@ public class FileCleanupService {
       }
       return;
     }
+    // 更新成完成状态
     if (repository.completeVerification(
             asset.getId(),
             asset.getCreateBy(),
@@ -209,6 +198,7 @@ public class FileCleanupService {
             Instant.now(clock))
         == 1) {
       metrics.verificationSuccess();
+      // 清理暂存区文件 更新数据库状态信息
       cleanupStagingOne(asset);
     } else {
       // 若记录已过期或已落删除墓碑，copy 可能晚于状态变化，必须清掉新产生的对象。

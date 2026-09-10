@@ -1,5 +1,5 @@
 server:
-  port: 8500
+  port: ${INTERACTION_SERVER_PORT:8500}
 spring:
   application:
     name: interaction-service
