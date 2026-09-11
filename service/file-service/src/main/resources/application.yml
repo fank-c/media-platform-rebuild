@@ -12,6 +12,8 @@ spring:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
       config:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      username: ${NACOS_SERVER_USERNAME:nacos}
+      password: ${NACOS_SERVER_PASSWORD:nacos_password}
   datasource:
     # file-service 是 file_* 表唯一所有者；凭据不设置开发默认值，避免误连共享库。
     url: ${FILE_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}

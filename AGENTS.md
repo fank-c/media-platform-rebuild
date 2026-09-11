@@ -4,7 +4,7 @@
 
 ## 作用范围
 
-- 本规则适用于 `media-platform:rebuild` 工程及其子目录。
+- 本规则适用于 `media-platform-rebuild` 工程及其子目录。
 - 相邻 `../calles` 是迁移来源，不得修改、格式化、删除或重命名，除非用户明确要求。
 - 现有未提交变更视为用户工作，禁止擅自回退或覆盖。
 
@@ -239,10 +239,8 @@
 
 ## 构建与验证
 
-- 当前根目录包含 `:`。在 Linux 上不要直接使用根 reactor 的
-  `./mvnw clean package` 构建全部模块，因为 Java classpath 会错误拆分该路径。
-- 全量构建使用 `./build.sh -DskipTests`；单服务构建使用
-  `./mvnw -f service/<service-name>/pom.xml package -DskipTests`。
+- 若工程目录包含 `:`（如历史 `media-platform:rebuild` 命名），Linux 下 Java classpath 会将冒号作为分隔符错误拆分路径导致测试类编译失败，此时全量构建需使用 `./build.sh -DskipTests`，单服务构建使用 `./mvnw -f service/<service-name>/pom.xml package -DskipTests`。
+- 若工程目录已重命名且不包含 `:`（如 `media-platform-rebuild`），可直接使用标准 `./mvnw clean test` 或 `./mvnw clean package` 运行单元测试与构建。
 - 修改服务配置后，至少验证 YAML 可解析并重新打包受影响服务；修改认证/网关后，启动服务并
   探测对应 HTTP 接口。
 - 未确认 Docker 守护进程可用时，不把容器启动失败归因于工程配置；先执行

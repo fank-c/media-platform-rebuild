@@ -11,6 +11,8 @@ spring:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
       config:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      username: ${NACOS_SERVER_USERNAME:nacos}
+      password: ${NACOS_SERVER_PASSWORD:nacos_password}
   data:
     redis:
       host: ${REDIS_HOST:localhost}

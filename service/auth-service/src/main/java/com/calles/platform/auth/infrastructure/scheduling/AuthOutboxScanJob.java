@@ -25,8 +25,11 @@ public class AuthOutboxScanJob {
         this.dispatcher = dispatcher;
     }
 
-    /** 扫描一轮候选；fixedDelay 从本轮完成后开始，保证同一实例只有一个扫描进度槽位。 */
-    @Scheduled(fixedDelayString = "${auth.outbox.poll-interval:1s}")
+    /**
+     * 扫描一轮候选；fixedDelay 从本轮完成后开始，保证同一实例只有一个扫描进度槽位。
+     * 定时任务参数使用纯数字毫秒字符串（默认 1000ms），避免 @Scheduled 无法解析类似 1s 的带单位字符串。
+     */
+    @Scheduled(fixedDelayString = "${auth.outbox.poll-interval:1000}")
     public void runBatch() {
         dispatcher.dispatchScanBatch();
     }

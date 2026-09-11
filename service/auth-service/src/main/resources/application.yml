@@ -12,6 +12,8 @@ spring:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
       config:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      username: ${NACOS_SERVER_USERNAME:nacos}
+      password: ${NACOS_SERVER_PASSWORD:nacos_password}
   datasource:
     # 认证表由 auth-service 独占；密码不提供仓库内默认值，避免误连未知数据库。
     url: ${AUTH_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
@@ -49,17 +51,18 @@ auth:
     batch-size: ${AUTH_OUTBOX_BATCH_SIZE:100}
     max-attempts: ${AUTH_OUTBOX_MAX_ATTEMPTS:20}
     confirm-timeout: ${AUTH_OUTBOX_CONFIRM_TIMEOUT:5s}
-    lease: ${AUTH_OUTBOX_LEASE:30s}
-    poll-interval: ${AUTH_OUTBOX_POLL_INTERVAL:1s}
-    # 全表积压统计与发送分离；统计滞后不影响可靠投递状态机。
-    backlog-refresh-interval: ${AUTH_OUTBOX_BACKLOG_REFRESH_INTERVAL:60s}
+    # 扫描轮询延迟毫秒数；@Scheduled 注解要求纯数字字符串，默认 1000ms (1s)
+    poll-interval: ${AUTH_OUTBOX_POLL_INTERVAL:1000}
+    # 全表积压统计与发送分离；统计滞后不影响可靠投递状态机。@Scheduled 要求纯数字毫秒，默认 60000ms (60s)
+    backlog-refresh-interval: ${AUTH_OUTBOX_BACKLOG_REFRESH_INTERVAL:60000}
     shutdown-await: ${AUTH_OUTBOX_SHUTDOWN_AWAIT:10s}
   # ProfileBackfillProperties 统一绑定并校验这些参数；默认关闭且 dry-run，不涉及旧单体迁移。
   profile-backfill:
     enabled: ${AUTH_PROFILE_BACKFILL_ENABLED:false}
     dry-run: ${AUTH_PROFILE_BACKFILL_DRY_RUN:true}
     batch-size: ${AUTH_PROFILE_BACKFILL_BATCH_SIZE:100}
-    poll-interval: ${AUTH_PROFILE_BACKFILL_POLL_INTERVAL:10s}
+    # 补齐轮询间隔毫秒数；@Scheduled 注解要求纯数字字符串，默认 10000ms (10s)
+    poll-interval: ${AUTH_PROFILE_BACKFILL_POLL_INTERVAL:10000}
 
 management:
   endpoint:

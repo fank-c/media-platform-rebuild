@@ -31,8 +31,11 @@ public class AuthOutboxBacklogMetricsJob {
         this.metrics = metrics;
     }
 
-    /** 低频读取积压聚合；数据库异常不改变已经记录的发送结果。 */
-    @Scheduled(fixedDelayString = "${auth.outbox.backlog-refresh-interval:60s}")
+    /**
+     * 低频读取积压聚合；数据库异常不改变已经记录的发送结果。
+     * 定时任务参数使用纯数字毫秒字符串（默认 60000ms），避免 @Scheduled 无法解析类似 60s 的带单位字符串。
+     */
+    @Scheduled(fixedDelayString = "${auth.outbox.backlog-refresh-interval:60000}")
     public void refresh() {
         try {
             metrics.updateOutboxBacklog(repository.loadBacklogSnapshot());

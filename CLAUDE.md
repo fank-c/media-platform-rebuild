@@ -6,7 +6,7 @@
 
 ## 作用范围
 
-- 本规则适用于 `media-platform:rebuild` 工程及其子目录。
+- 本规则适用于 `media-platform-rebuild` 工程及其子目录。
 - 相邻 `../calles` 是迁移来源，不得修改、格式化、删除或重命名，除非用户明确要求。
 - 现有未提交变更视为用户工作，禁止擅自回退或覆盖；开始工作前先检查 `git status`。
 
@@ -183,7 +183,6 @@
   `recommend_`。开始迁移前完成接口、表、Redis Key、事件和回退盘点。
 - Java 目标版本为 17，沿用现有 Spring Boot、Spring Cloud 和 MyBatis-Plus 版本；保持
   Controller、Application/Service、Repository/Mapper 分层。
-- 当前根目录包含 `:`。Linux 下不要直接执行根 reactor 的 `./mvnw clean package`；全量构建使用
-  `./build.sh -DskipTests`，单服务构建使用 `./mvnw -f service/<service-name>/pom.xml package -DskipTests`。
+- 若工程目录包含 `:`（如历史 `media-platform:rebuild` 命名），Linux 下 Java classpath 会将冒号作为分隔符错误拆分路径导致测试类编译失败，此时全量构建需使用 `./build.sh -DskipTests`，单服务构建使用 `./mvnw -f service/<service-name>/pom.xml package -DskipTests`；若工程目录不含 `:`（如 `media-platform-rebuild`），可直接使用标准 `./mvnw clean test` 或 `./mvnw clean package`。
 - 修改服务配置后验证 YAML 并重新打包；修改认证或网关后启动服务并探测 HTTP 接口。Docker 不可用
   时先执行 `docker compose config -q`，不要把容器启动失败误判为工程配置错误。

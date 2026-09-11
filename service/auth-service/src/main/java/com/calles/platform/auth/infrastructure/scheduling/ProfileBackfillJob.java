@@ -33,8 +33,11 @@ public class ProfileBackfillJob {
         this.properties = properties;
     }
 
-    /** 扫描一批候选；实际写入须同时显式 enabled=true、dry-run=false。 */
-    @Scheduled(fixedDelayString = "${auth.profile-backfill.poll-interval:10s}")
+    /**
+     * 扫描一批候选；实际写入须同时显式 enabled=true、dry-run=false。
+     * 定时任务参数使用纯数字毫秒字符串（默认 10000ms），避免 @Scheduled 无法解析类似 10s 的带单位字符串。
+     */
+    @Scheduled(fixedDelayString = "${auth.profile-backfill.poll-interval:10000}")
     public void runBatch() {
         if (!properties.isEnabled()) {
             return;
