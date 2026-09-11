@@ -29,6 +29,9 @@ public class AuthExceptionHandler {
      */
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<ApiResponse<Void>> handleAuthException(AuthException ex) {
+        // 步骤 1：记录业务异常 WARN 日志（状态码与错误信息）
+        log.warn("认证业务异常: status={}, message={}", ex.getStatus().value(), ex.getMessage());
+        // 步骤 2：按业务异常定义的状态码封装统一响应体
         return response(ex.getStatus(), ex.getMessage());
     }
 
@@ -40,14 +43,24 @@ public class AuthExceptionHandler {
             HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
             MissingRequestHeaderException.class})
     public ResponseEntity<ApiResponse<Void>> handleInvalidRequest(Exception ex) {
+        // 步骤 1：设定兜底错误提示
         String message = "请求参数错误";
+
+        // 步骤 2：若为 Spring 字段校验异常，提取校验失败的字段名和用户可读提示
         if (ex instanceof MethodArgumentNotValidException validation
                 && validation.getBindingResult().getFieldError() != null) {
+            String field = validation.getBindingResult().getFieldError().getField();
             String fieldMessage = validation.getBindingResult().getFieldError().getDefaultMessage();
             if (fieldMessage != null && !fieldMessage.isBlank()) {
                 message = fieldMessage;
             }
+            log.warn("请求参数校验失败: field={}, message={}", field, message);
+        } else {
+            // 步骤 3：其他格式/反序列化失败记录 WARN 日志
+            log.warn("请求协议或格式不合法: type={}, detail={}", ex.getClass().getSimpleName(), ex.getMessage());
         }
+
+        // 步骤 4：统一包装为 400 BAD_REQUEST 响应返回
         return response(HttpStatus.BAD_REQUEST, message);
     }
 

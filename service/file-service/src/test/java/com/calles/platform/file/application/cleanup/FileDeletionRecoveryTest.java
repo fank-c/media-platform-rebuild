@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.calles.platform.file.application.port.FileAssetRepository;
 import com.calles.platform.file.application.port.ObjectStorageClient;
+import com.calles.platform.file.config.FileStorageProperties;
 import com.calles.platform.file.domain.asset.AssetStatus;
 import com.calles.platform.file.domain.asset.FileAsset;
 import com.calles.platform.file.domain.asset.StorageType;
@@ -46,6 +47,7 @@ class FileDeletionRecoveryTest {
         new FileCleanupService(
             repository,
             storageFactory,
+            new FileStorageProperties(),
             CLOCK,
             new FileOperationalMetrics(new SimpleMeterRegistry()));
 

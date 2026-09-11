@@ -57,7 +57,8 @@ end
 
 -- 先用 NX 创建新索引；只有索引成功后，才允许替换会话 Hash 并结束 in-flight 状态。
 local indexResult = redis.call('SET', KEYS[2], ARGV[1], 'NX', 'PXAT', deadline)
-if indexResult ~= 'OK' then
+local success = (type(indexResult) == 'table' and indexResult['ok'] == 'OK') or indexResult == 'OK'
+if not success then
     return 'DEPENDENCY_ERROR'
 end
 -- 新索引已落位后更新 session，并用同一 deadline 续期，最后移除轮换占用标记。

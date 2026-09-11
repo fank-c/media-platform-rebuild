@@ -69,7 +69,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
         String token = extractToken(exchange.getRequest());
         if (token == null) {
-            return unauthorized(exchange.getResponse(), "缺少认证凭据");
+            return unauthorized(exchange, "缺少认证凭据");
         }
 
         // Redis 故障只视为缓存未命中，仍回源认证；认证服务不可用时 AuthServiceClient 返回无效结果并拒绝请求。
@@ -87,7 +87,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
                                 .thenReturn(result)))
                 .flatMap(result -> isCompleteIdentity(result)
                         ? forwardAuthenticated(exchange, chain, result, token, path)
-                        : unauthorized(exchange.getResponse(), "认证凭据无效或已过期"));
+                        : unauthorized(exchange, "认证凭据无效或已过期"));
     }
 
     /**
@@ -163,14 +163,55 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
     }
 
     /**
-     * 返回统一 JSON 401 响应，不包含 Token 或其他敏感信息。
+     * 记录 WARN 审计日志并返回统一 JSON 401 响应，不包含 Token 或其他敏感信息。
+     *
+     * @param exchange 响应式 HTTP 契约
+     * @param message 拒绝原因
+     * @return 异步完成信号 Mono
      */
-    private Mono<Void> unauthorized(ServerHttpResponse response, String message) {
+    private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {
+        // 步骤 1：提取未授权请求元数据（HTTP 方法、请求路径与来源 IP）
+        ServerHttpRequest request = exchange.getRequest();
+        String method = request.getMethod() != null ? request.getMethod().name() : "UNKNOWN";
+        String path = request.getURI().getPath();
+        String clientIp = resolveClientIp(request);
+
+        // 步骤 2：记录网关鉴权拒绝审计日志（WARN 级别，不含敏感 Token）
+        LOGGER.warn("网关鉴权拒绝: method={}, path={}, clientIp={}, 原因={}", method, path, clientIp, message);
+
+        // 步骤 3：构造统一 401 JSON 错误响应体
+        ServerHttpResponse response = exchange.getResponse();
         response.setStatusCode(HttpStatus.UNAUTHORIZED);
         response.getHeaders().set(HttpHeaders.CONTENT_TYPE, "application/json;charset=UTF-8");
         String body = String.format("{\"code\":401,\"message\":\"%s\",\"data\":null}", message);
         return response.writeWith(Mono.just(response.bufferFactory()
                 .wrap(body.getBytes(StandardCharsets.UTF_8))));
+    }
+
+    /**
+     * 解析客户端来源 IP，优先兼容反向代理传递的请求头。
+     *
+     * @param request 响应式请求
+     * @return 客户端来源 IP
+     */
+    private String resolveClientIp(ServerHttpRequest request) {
+        // 步骤 1：优先读取 X-Forwarded-For 反向代理链首个 IP
+        String forwarded = request.getHeaders().getFirst("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            int commaIndex = forwarded.indexOf(',');
+            return commaIndex > 0 ? forwarded.substring(0, commaIndex).trim() : forwarded.trim();
+        }
+
+        // 步骤 2：次选读取 X-Real-IP
+        String realIp = request.getHeaders().getFirst("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp.trim();
+        }
+
+        // 步骤 3：兜底获取 RemoteAddress 套接字地址
+        return request.getRemoteAddress() != null && request.getRemoteAddress().getAddress() != null
+                ? request.getRemoteAddress().getAddress().getHostAddress()
+                : "unknown";
     }
 
     /**

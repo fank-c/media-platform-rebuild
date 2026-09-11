@@ -39,7 +39,8 @@ end
 
 -- 先原子占用 refresh 索引；占用失败时不创建 Hash，避免留下无法定位的会话。
 local indexResult = redis.call('SET', KEYS[2], ARGV[1], 'NX', 'PXAT', deadline)
-if indexResult ~= 'OK' then
+local success = (type(indexResult) == 'table' and indexResult['ok'] == 'OK') or indexResult == 'OK'
+if not success then
     return 'DEPENDENCY_ERROR'
 end
 -- 索引已成功落位后再写会话，并使用同一绝对过期时间保持两把键的生命周期一致。
