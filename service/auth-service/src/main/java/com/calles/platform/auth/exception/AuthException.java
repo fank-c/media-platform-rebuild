@@ -61,8 +61,8 @@ public class AuthException extends RuntimeException {
         return new AuthException(HttpStatus.SERVICE_UNAVAILABLE, "AUTH_SESSION_UNAVAILABLE", "认证会话暂不可用");
     }
 
-    /** 登录名已被占用。数据库唯一索引仍是并发注册时的最终约束。 */
-    public static AuthException loginNameAlreadyExists() {
-        return new AuthException(HttpStatus.CONFLICT, "AUTH_LOGIN_NAME_EXISTS", "用户名已存在");
+    /** 邮箱已被注册。数据库唯一索引仍是并发注册时的最终约束。 */
+    public static AuthException emailAlreadyExists() {
+        return new AuthException(HttpStatus.CONFLICT, "AUTH_EMAIL_EXISTS", "该邮箱已注册");
     }
 }

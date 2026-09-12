@@ -93,11 +93,11 @@ class SessionServiceRedisIntegrationTest {
         String sid = sid();
         String oldToken = token();
         String newToken = token();
-        sessionService.createSession(sid, "account-1", AccountRole.USER, oldToken, deadline());
+        sessionService.createSession(sid, "account-1", AccountRole.USER, oldToken, deadline(), "device-test", "account-1", 5);
 
         SessionService.RotationSnapshot rotation = sessionService.beginRefreshRotation(oldToken).orElseThrow();
         assertEquals("inflight", redisTemplate.opsForHash().get("auth:session:" + sid, "rotationState"));
-        assertTrue(sessionService.finishRefreshRotation(rotation, newToken, AccountRole.ADMIN, deadline()));
+        assertTrue(sessionService.finishRefreshRotation(rotation, newToken, AccountRole.ADMIN, deadline(), "account-1"));
 
         assertFalse(sessionService.beginRefreshRotation(oldToken).isPresent());
         assertEquals(sid, redisTemplate.opsForValue().get("auth:refresh:" + SessionService.hashRefreshToken(newToken)));
@@ -111,12 +111,12 @@ class SessionServiceRedisIntegrationTest {
         String sid = sid();
         String oldToken = token();
         String newToken = token();
-        sessionService.createSession(sid, "account-1", AccountRole.USER, oldToken, deadline());
+        sessionService.createSession(sid, "account-1", AccountRole.USER, oldToken, deadline(), "device-test", "account-1", 5);
         SessionService.RotationSnapshot rotation = sessionService.beginRefreshRotation(oldToken).orElseThrow();
 
-        sessionService.deleteSession(sid);
+        sessionService.deleteSession(sid, "account-1");
 
-        assertFalse(sessionService.finishRefreshRotation(rotation, newToken, AccountRole.USER, deadline()));
+        assertFalse(sessionService.finishRefreshRotation(rotation, newToken, AccountRole.USER, deadline(), "account-1"));
         assertFalse(Boolean.TRUE.equals(redisTemplate.hasKey("auth:session:" + sid)));
         assertFalse(Boolean.TRUE.equals(redisTemplate.hasKey("auth:refresh:" + SessionService.hashRefreshToken(newToken))));
     }
@@ -126,7 +126,7 @@ class SessionServiceRedisIntegrationTest {
     void concurrentBeginsHaveExactlyOneWinner() throws Exception {
         String sid = sid();
         String oldToken = token();
-        sessionService.createSession(sid, "account-1", AccountRole.USER, oldToken, deadline());
+        sessionService.createSession(sid, "account-1", AccountRole.USER, oldToken, deadline(), "device-test", "account-1", 5);
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
         SessionService secondInstance = anotherSessionService();
@@ -165,9 +165,9 @@ class SessionServiceRedisIntegrationTest {
         String sid = sid();
         String oldToken = token();
         String newToken = token();
-        sessionService.createSession(sid, "account-1", AccountRole.USER, oldToken, deadline());
+        sessionService.createSession(sid, "account-1", AccountRole.USER, oldToken, deadline(), "device-test", "account-1", 5);
         SessionService.RotationSnapshot first = sessionService.beginRefreshRotation(oldToken).orElseThrow();
-        assertTrue(sessionService.finishRefreshRotation(first, newToken, AccountRole.USER, deadline()));
+        assertTrue(sessionService.finishRefreshRotation(first, newToken, AccountRole.USER, deadline(), "account-1"));
 
         assertFalse(sessionService.abortRefreshRotation(first, newToken));
         Optional<SessionService.RotationSnapshot> next = sessionService.beginRefreshRotation(newToken);

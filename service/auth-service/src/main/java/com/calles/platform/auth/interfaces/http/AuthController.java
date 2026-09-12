@@ -45,10 +45,11 @@ public class AuthController {
         return ApiResponse.ok("auth-service");
     }
 
-    /** 校验登录凭据并签发新的访问令牌和刷新令牌。 */
+    /** 校验登录凭据并签发新的访问令牌和刷新令牌。deviceId 可选，缺失时由服务端生成随机 UUID 向后兼容。 */
     @PostMapping("/login")
     public ApiResponse<TokenResponse> login(@Valid @RequestBody LoginRequest request) {
-        return ApiResponse.ok(TokenResponse.from(authService.login(request.loginName(), request.password())));
+        return ApiResponse.ok(TokenResponse.from(
+                authService.login(request.email(), request.password(), request.deviceId())));
     }
 
     /**
@@ -72,7 +73,7 @@ public class AuthController {
     /** 注册普通用户账户；管理员账户不经由此公开接口创建。 */
     @PostMapping("/register")
     public ApiResponse<RegisterResponse> register(@Valid @RequestBody RegisterRequest request) {
-        return ApiResponse.ok(authService.register(request.loginName(), request.password()));
+        return ApiResponse.ok(authService.register(request.email(), request.password()));
     }
 
     /**

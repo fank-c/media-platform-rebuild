@@ -66,6 +66,9 @@ public class AuthService {
     /** Access Token 有效期秒数（默认 15 分钟） */
     private final long accessTokenTtlSeconds;
 
+    /** 单用户最大并发设备会话数，超限触发 LRU 淘汰，取自配置以支持不重启调整。 */
+    private final int maxSessions;
+
     /** 时钟，用于获取当前时间（便于测试） */
     private final Clock clock;
 
@@ -104,6 +107,7 @@ public class AuthService {
         this.sessionService = sessionService;
         this.refreshTokenTtl = properties.refreshTokenTtl();
         this.accessTokenTtlSeconds = properties.getAccessTokenTtlSeconds();
+        this.maxSessions = properties.getMaxSessions();
         this.clock = authClock;
         this.accountCreatedEventFactory = accountCreatedEventFactory;
         this.outboxRepository = outboxRepository;
@@ -114,18 +118,19 @@ public class AuthService {
     /**
      * 用户登录。
      *
-     * <p>验证用户名和密码，成功后签发访问令牌和刷新令牌。
+     * <p>验证邮箱和密码，成功后签发访问令牌和刷新令牌。
      *
-     * @param loginName 登录名
+     * @param email 登录邮箱
      * @param password 明文密码
+     * @param deviceId 客户端设备唯一标识；为空时由服务端生成随机 UUID，向后兼容旧版本客户端
      * @return 包含访问令牌、刷新令牌、有效期、角色的认证令牌对象
-     * @throws AuthException.invalidRequest 密码格式不合法
-     * @throws AuthException.invalidCredentials 用户名或密码错误
+     * @throws AuthException.invalidRequest 密码或邮箱格式不合法
+     * @throws AuthException.invalidCredentials 账号或密码错误
      * @throws AuthException.accountDisabled 账户已被禁用
      */
-    public AuthTokens login(String loginName, String password) {
-        // 规范化登录名（trim 处理）
-        String normalizedLoginName = normalizeLoginName(loginName);
+    public AuthTokens login(String email, String password, String deviceId) {
+        // 规范化邮箱（trim 处理并转小写）
+        String normalizedEmail = normalizeEmail(email);
 
         // 密码基本校验
         if (password == null || password.isBlank()) {
@@ -137,9 +142,9 @@ public class AuthService {
         }
 
         // 查询账户
-        AuthAccount account = accountMapper.findByLoginName(normalizedLoginName);
+        AuthAccount account = accountMapper.findByEmail(normalizedEmail);
         if (account == null) {
-            // 用户不存在，返回统一的"用户名或密码错误"，防止用户枚举
+            // 用户不存在，返回统一的"账号或密码错误"，防止用户枚举
             throw AuthException.invalidCredentials();
         }
 
@@ -157,7 +162,7 @@ public class AuthService {
         }
 
         // 签发令牌并创建会话
-        return issueLoginTokens(account);
+        return issueLoginTokens(account, deviceId);
     }
 
     /**
@@ -228,7 +233,7 @@ public class AuthService {
                     account.getId(), account.getRole(), rotation.sessionId());
 
             // 仅 Redis 明确确认同一 in-flight 会话已更新时，才允许向客户端返回候选令牌对。
-            if (!sessionService.finishRefreshRotation(rotation, candidateRefreshToken, account.getRole(), deadline)) {
+            if (!sessionService.finishRefreshRotation(rotation, candidateRefreshToken, account.getRole(), deadline, account.getId())) {
                 outcome = "invalid";
                 throw AuthException.invalidRefreshToken();
             }
@@ -282,8 +287,8 @@ public class AuthService {
         // 验证并解析 Access Token
         TokenService.AccessTokenClaims claims = tokenService.verifyAccessToken(authorizationHeader);
 
-        // 删除会话（使 Refresh Token 无法再换发新令牌）
-        sessionService.deleteSession(claims.sessionId());
+        // 删除会话（使 Refresh Token 无法再换发新令牌），同步清理设备映射和会话时序记录。
+        sessionService.deleteSession(claims.sessionId(), claims.subject());
 
         // 将 Access Token 的 jti 加入黑名单（使当前 Access Token 立即失效）
         // TTL 设置为 Token 的剩余有效期，过期后自动删除
@@ -295,8 +300,8 @@ public class AuthService {
      *
      * <p>注册流程：
      * <ol>
-     *   <li>规范化登录名（trim 处理）</li>
-     *   <li>检查用户名是否已存在（大小写敏感）</li>
+     *   <li>规范化邮箱（trim 处理并转小写）</li>
+     *   <li>检查邮箱是否已被注册（大小写不敏感）</li>
      *   <li>验证密码长度（8-72 字符，BCrypt 限制）</li>
      *   <li>使用 BCrypt 加密密码（不可逆）</li>
      *   <li>创建账户，角色固定为 USER，状态为 ACTIVE</li>
@@ -306,25 +311,25 @@ public class AuthService {
      * <ul>
      *   <li>密码立即 BCrypt 加密，明文密码不落盘</li>
      *   <li>注册成功后不自动登录，需要调用 /login 接口</li>
-     *   <li>用户名唯一性由数据库唯一索引保证</li>
+     *   <li>邮箱唯一性由数据库唯一索引保证</li>
      * </ul>
      *
-     * @param loginName 登录名，会自动 trim
+     * @param email 注册邮箱，会自动 trim 并转小写
      * @param password 明文密码，长度 8-72 字符
      * @return 注册成功响应，包含账户基本信息（不含敏感信息）
-     * @throws AuthException.loginNameAlreadyExists 用户名已存在
+     * @throws AuthException.emailAlreadyExists 该邮箱已注册
      * @throws AuthException.invalidRequest 密码格式不合法
      */
     @Transactional
-    public RegisterResponse register(String loginName, String password) {
-        // 规范化登录名（trim 处理，移除首尾空格）
-        String normalizedLoginName = normalizeLoginName(loginName);
+    public RegisterResponse register(String email, String password) {
+        // 规范化邮箱（trim 处理并转小写）
+        String normalizedEmail = normalizeEmail(email);
 
-        // 检查用户名是否已存在（大小写敏感）
-        AuthAccount existing = accountMapper.findByLoginName(normalizedLoginName);
+        // 检查邮箱是否已被注册
+        AuthAccount existing = accountMapper.findByEmail(normalizedEmail);
         if (existing != null) {
-            // 用户名已存在，返回 409 Conflict
-            throw AuthException.loginNameAlreadyExists();
+            // 邮箱已存在，返回 409 Conflict
+            throw AuthException.emailAlreadyExists();
         }
 
         // 密码长度验证（已在 DTO 层通过 @Size 验证，此处为防御性检查）
@@ -343,7 +348,7 @@ public class AuthService {
 
         // 创建账户实体
         AuthAccount account = new AuthAccount();
-        account.setLoginName(normalizedLoginName);
+        account.setEmail(normalizedEmail);
         // 使用 BCrypt 加密密码（不可逆，成本因子默认为 10）
         account.setPasswordHash(passwordService.encode(password));
         // 角色固定为普通用户，管理员账户由运维手动创建
@@ -363,7 +368,7 @@ public class AuthService {
         // 返回账户基本信息（不含密码哈希等敏感信息）
         return new RegisterResponse(
                 account.getId(),
-                account.getLoginName(),
+                account.getEmail(),
                 account.getRole().getValue(),
                 account.getStatus().name()
         );
@@ -464,7 +469,7 @@ public class AuthService {
      * 如果只需验证 Token 有效性而不需要最新账户状态，建议使用 verifyToken。
      *
      * @param authorizationHeader Authorization Header，格式为 "Bearer {token}"
-     * @return 当前用户信息，包含账户 ID、登录名、角色、会话 ID
+     * @return 当前用户信息，包含账户 ID、邮箱、角色、会话 ID
      * @throws AuthException.invalidAccessToken Token 无效、已过期或账户不存在
      * @throws AuthException.accountDisabled 账户已被禁用
      */
@@ -497,7 +502,7 @@ public class AuthService {
         // 返回当前用户信息
         return new CurrentUserResponse(
                 account.getId(),            // 账户 ID
-                account.getLoginName(),     // 登录名
+                account.getEmail(),         // 注册邮箱
                 account.getRole().getValue(), // 角色枚举值（USER/ADMIN）
                 type,                       // 用户类型（admin/user）
                 claims.sessionId()          // 会话 ID（用于后续注销操作）
@@ -508,20 +513,20 @@ public class AuthService {
      * 为新登录签发令牌并创建会话。刷新流程不得调用本方法，因为它会生成新的 sid；刷新只能在
      * {@link #refresh(String)} 中对 begin 阶段确认的既有 sid 执行条件 finish。
      *
-     * <p>令牌签发流程：
-     * <ol>
-     *   <li>生成新的 sessionId 和随机 Refresh Token</li>
-     *   <li>签发包含账户、角色、sessionId 和 jti 的 Access Token</li>
-     *   <li>以同一绝对 deadline 创建 Redis 会话和 Refresh Token 哈希索引</li>
-     *   <li>只有会话创建明确成功后才返回令牌对</li>
-     * </ol>
+     * <p>若 deviceId 为空（旧版本客户端），服务端生成随机 UUID 代替，保持向后兼容；
+     * 同一随机 UUID 不会在两次请求之间复用，因此旧客户端每次登录都视为新设备。
      *
      * @param account 已完成凭据和状态校验的账户
+     * @param deviceId 客户端传入的设备标识；可为空，空时自动生成随机 UUID
      * @return 包含访问令牌、刷新令牌、有效期、角色的认证令牌对象
      */
-    private AuthTokens issueLoginTokens(AuthAccount account) {
+    private AuthTokens issueLoginTokens(AuthAccount account, String deviceId) {
         // 新登录必须生成新 sid；刷新不能调用此方法，避免在 logout 后重新创建旧会话。
         String sessionId = tokenService.newSessionId();
+
+        // deviceId 为空时降级生成随机 UUID，避免旧版本客户端因缺少该字段导致会话创建失败。
+        String effectiveDeviceId = (deviceId != null && !deviceId.isBlank())
+                ? deviceId : java.util.UUID.randomUUID().toString();
 
         // Refresh Token 与 Access Token 仅在 Redis 会话建立成功后才作为登录结果返回。
         Instant sessionDeadline = clock.instant().plus(refreshTokenTtl);
@@ -530,30 +535,32 @@ public class AuthService {
                 account.getId(), account.getRole(), sessionId);
 
         // 会话与哈希索引使用相同绝对 deadline，Redis 失败则整体拒绝本次登录。
-        sessionService.createSession(sessionId, account.getId(), account.getRole(), refreshToken, sessionDeadline);
+        // maxSessions 从配置读取，支持运行时调整而无需重新部署。
+        sessionService.createSession(sessionId, account.getId(), account.getRole(),
+                refreshToken, sessionDeadline, effectiveDeviceId, account.getId(), maxSessions);
         return new AuthTokens(accessToken.value(), refreshToken, accessTokenTtlSeconds, account.getRole());
     }
 
     /**
-     * 规范化登录名（trim 处理，移除首尾空格）。
+     * 规范化邮箱（trim 处理，移除首尾空格并转换为全小写）。
      *
      * <p>规范化规则：
      * <ul>
      *   <li>移除首尾空格（trim）</li>
+     *   <li>转换为全小写（toLowerCase），确保邮箱大小写不敏感</li>
      *   <li>空字符串或纯空格视为无效</li>
-     *   <li>大小写保持不变（大小写敏感）</li>
      * </ul>
      *
-     * @param loginName 原始登录名
-     * @return 规范化后的登录名
-     * @throws AuthException.invalidRequest 登录名为空或纯空格
+     * @param email 原始邮箱
+     * @return 规范化后的邮箱
+     * @throws AuthException.invalidRequest 邮箱为空或纯空格
      */
-    private String normalizeLoginName(String loginName) {
-        if (loginName == null || loginName.isBlank()) {
-            throw AuthException.invalidRequest("loginName 不能为空");
+    private String normalizeEmail(String email) {
+        if (email == null || email.isBlank()) {
+            throw AuthException.invalidRequest("email 不能为空");
         }
-        // 移除首尾空格
-        return loginName.trim();
+        // 移除首尾空格并转小写（邮箱大小写不敏感）
+        return email.trim().toLowerCase();
     }
 
     /**

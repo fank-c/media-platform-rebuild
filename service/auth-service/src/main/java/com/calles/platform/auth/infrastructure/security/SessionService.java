@@ -38,6 +38,10 @@ public class SessionService {
     private static final String REFRESH_PREFIX = "auth:refresh:";
     /** 已注销 Access Token 的 jti 黑名单，生命周期不超过原令牌。 */
     private static final String REVOKED_PREFIX = "auth:revoked:jti:";
+    /** 用户设备 ID → sessionId 的映射 Hash，用于同设备重复登录的旧会话覆盖。 */
+    private static final String DEVICES_PREFIX = "auth:user:devices:";
+    /** 用户全局会话时序 ZSet，score 为活跃时间戳（毫秒），用于配额计数与 LRU 淘汰。 */
+    private static final String SESSIONS_PREFIX = "auth:user:sessions:";
     /** Lua 受控返回：刷新资格不存在、已消费、已注销或竞争失败。 */
     private static final String INVALID = "INVALID";
     /** Lua 返回快照的固定前缀，后续内容为内部 JSON。 */
@@ -99,22 +103,29 @@ public class SessionService {
     }
 
     /**
-     * 建立新登录会话。调用方提供的 deadline 同时决定 Hash、Refresh 索引和对外 Refresh Token 的寿命。
-     * Redis 拒绝键冲突、数据结构异常或已过期预算时，不能返回未被会话托管的凭据。
+     * 建立新登录会话。在写入 session / refresh 索引后再写入设备映射和 ZSet，确保 abort 路径
+     * 不产生 devices / sessions 残留。超限时在 Lua 内执行 LRU 淘汰，整个过程原子完成。
      *
      * @param sessionId 新生成且未复用的会话 ID
      * @param subjectId 会话所属账户 ID
      * @param role 登录时已校验的账户角色
      * @param refreshToken 仅用于在进程内计算哈希，不会写入 Redis
      * @param deadline Refresh Token 的绝对到期时刻
+     * @param deviceId 客户端设备唯一标识，用于同设备重复登录覆盖旧会话
+     * @param userId 用于构造 devices / sessions 键；与 subjectId 语义独立，便于未来解耦
+     * @param maxSessions 单用户最大并发会话数，超限触发 LRU 淘汰
      */
     public void createSession(String sessionId, String subjectId, AccountRole role,
-                              String refreshToken, Instant deadline) {
+                              String refreshToken, Instant deadline,
+                              String deviceId, String userId, int maxSessions) {
         String refreshHash = hashRefreshToken(refreshToken);
         String result = execute(CREATE_SCRIPT,
-                List.of(sessionKey(sessionId), refreshKey(refreshHash)),
+                List.of(sessionKey(sessionId), refreshKey(refreshHash),
+                        devicesKey(userId), sessionsKey(userId)),
                 sessionId, subjectId, role == null ? null : role.getValue(), refreshHash,
-                deadline == null ? null : deadline.toString(), deadline == null ? null : String.valueOf(deadline.toEpochMilli()));
+                deadline == null ? null : deadline.toString(),
+                deadline == null ? null : String.valueOf(deadline.toEpochMilli()),
+                deviceId, String.valueOf(maxSessions), userId);
         if ("OK".equals(result)) {
             return;
         }
@@ -136,7 +147,8 @@ public class SessionService {
             return Optional.empty();
         }
         String rotationId = UUID.randomUUID().toString();
-        String value = execute(BEGIN_ROTATION_SCRIPT, List.of(refreshKey(hashRefreshToken(refreshToken))),
+        String value = execute(BEGIN_ROTATION_SCRIPT,
+                List.of(refreshKey(hashRefreshToken(refreshToken))),
                 hashRefreshToken(refreshToken), rotationId);
         if (value == null || value.isBlank() || INVALID.equals(value)) {
             return Optional.empty();
@@ -167,12 +179,14 @@ public class SessionService {
      * @param newRefreshToken 本次生成的新 Refresh Token，仅用于计算哈希
      * @param latestRole 本次数据库读取到的最新角色
      * @param deadline 新 Refresh Token 的同一绝对过期时刻
+     * @param userId 会话所属用户 ID，用于构造 ZSet 键（KEYS[3]）；finish 成功后 Lua 自动更新 LRU score
      * @return Redis 已确认更新时为 true；轮换归属或生命周期失效时为 false
      */
     public boolean finishRefreshRotation(RotationSnapshot rotation, String newRefreshToken,
-                                         AccountRole latestRole, Instant deadline) {
+                                         AccountRole latestRole, Instant deadline, String userId) {
         if (rotation == null || newRefreshToken == null || newRefreshToken.isBlank()
-                || latestRole == null || deadline == null || !deadline.isAfter(clock.instant())) {
+                || latestRole == null || deadline == null || !deadline.isAfter(clock.instant())
+                || userId == null || userId.isBlank()) {
             throw AuthException.sessionUnavailable();
         }
         String newRefreshHash = hashRefreshToken(newRefreshToken);
@@ -180,7 +194,7 @@ public class SessionService {
             throw AuthException.sessionUnavailable();
         }
         String result = execute(FINISH_ROTATION_SCRIPT,
-                List.of(sessionKey(rotation.sessionId()), refreshKey(newRefreshHash)),
+                List.of(sessionKey(rotation.sessionId()), refreshKey(newRefreshHash), sessionsKey(userId)),
                 rotation.sessionId(), rotation.subjectId(), rotation.rotationId(), rotation.refreshHash(),
                 newRefreshHash, latestRole.getValue(), deadline.toString(), String.valueOf(deadline.toEpochMilli()));
         if ("OK".equals(result)) {
@@ -217,16 +231,20 @@ public class SessionService {
     }
 
     /**
-     * 删除会话及其刷新令牌索引。ready 与 in-flight 会话都会删除，因此注销可阻止迟到 finish 复活 sid；
+     * 删除会话及其刷新令牌索引，同步清理用户设备映射和会话时序 ZSet。
+     * ready 与 in-flight 会话都会删除，因此注销可阻止迟到 finish 复活 sid；
      * 删除不存在会话仍视为成功，支持客户端幂等重试。
      *
      * @param sessionId 要注销的会话 ID
+     * @param userId 会话所属用户 ID，用于构造 devices / sessions 键
      */
-    public void deleteSession(String sessionId) {
+    public void deleteSession(String sessionId, String userId) {
         if (sessionId == null || sessionId.isBlank()) {
             return;
         }
-        String result = execute(DELETE_SESSION_SCRIPT, List.of(sessionKey(sessionId)));
+        String result = execute(DELETE_SESSION_SCRIPT,
+                List.of(sessionKey(sessionId), devicesKey(userId), sessionsKey(userId)),
+                sessionId);
         if (!"OK".equals(result)) {
             throw AuthException.sessionUnavailable();
         }
@@ -328,6 +346,22 @@ public class SessionService {
     /** 构造 Access Token jti 的撤销键。 */
     private String revokedKey(String jti) {
         return REVOKED_PREFIX + jti;
+    }
+
+    /**
+     * 构造用户设备映射键。该 Hash 存储 deviceId → sessionId 的映射，
+     * 用于同设备重复登录时定位并覆盖旧会话，保证同一设备只占用一个会话配额。
+     */
+    private String devicesKey(String userId) {
+        return DEVICES_PREFIX + userId;
+    }
+
+    /**
+     * 构造用户会话时序键。该 ZSet 以活跃时间戳为 score 记录用户全量有效会话，
+     * 用于配额计数（ZCARD）和 LRU 淘汰（ZPOPMIN），刷新成功后更新 score 保持活跃。
+     */
+    private String sessionsKey(String userId) {
+        return SESSIONS_PREFIX + userId;
     }
 
     /**

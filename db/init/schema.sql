@@ -7,7 +7,7 @@
 -- id 由 MyBatis-Plus ASSIGN_UUID 生成 32 位 UUID 字符串，不使用数据库自增序列。
 CREATE TABLE IF NOT EXISTS `auth_account` (
     `id` CHAR(32) NOT NULL,
-    `login_name` VARCHAR(255) NOT NULL,
+    `email` VARCHAR(255) NOT NULL,
     `password_hash` VARCHAR(255) NOT NULL,
     `role` VARCHAR(16) NOT NULL DEFAULT 'USER',
     `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS `auth_account` (
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_auth_account_login_name` (`login_name`),
+    UNIQUE KEY `uk_auth_account_email` (`email`),
     CONSTRAINT `ck_auth_account_role` CHECK (`role` IN ('USER', 'ADMIN')),
     CONSTRAINT `ck_auth_account_status` CHECK (`status` IN ('ACTIVE', 'DISABLED')),
     CONSTRAINT `ck_auth_account_deleted` CHECK (`deleted` IN (0, 1))

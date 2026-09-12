@@ -3,6 +3,7 @@ package com.calles.platform.auth.application;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -72,7 +73,7 @@ class AuthServiceTest {
         authService = new AuthService(accountMapper, passwordService, tokenService, sessionService,
                 properties, Clock.fixed(NOW, ZoneOffset.UTC), accountCreatedEventFactory, outboxRepository,
                 outboxDispatchNotifier, operationalMetrics);
-        activeAccount = new AuthAccount("account-1", "demo", "hash", AccountRole.USER,
+        activeAccount = new AuthAccount("account-1", "demo@example.com", "hash", AccountRole.USER,
                 AccountStatus.ACTIVE, 0, null, null);
         issuedAccessToken = new TokenService.IssuedAccessToken("access", "jti", "sid",
                 NOW.plusSeconds(900));
@@ -81,29 +82,29 @@ class AuthServiceTest {
     /** 正确凭据必须同时建立新 sid 会话并返回新的令牌对。 */
     @Test
     void loginWithCorrectPasswordReturnsTokenPair() {
-        when(accountMapper.findByLoginName("demo")).thenReturn(activeAccount);
+        when(accountMapper.findByEmail("demo@example.com")).thenReturn(activeAccount);
         when(passwordService.matches("password", "hash")).thenReturn(true);
         when(tokenService.newSessionId()).thenReturn("sid");
         when(tokenService.newRefreshToken()).thenReturn("refresh");
         when(tokenService.issueAccessToken("account-1", AccountRole.USER, "sid"))
                 .thenReturn(issuedAccessToken);
 
-        AuthService.AuthTokens result = authService.login(" demo ", "password");
+        AuthService.AuthTokens result = authService.login(" DEMO@EXAMPLE.COM ", "password", null);
 
         assertEquals("access", result.accessToken());
         assertEquals("refresh", result.refreshToken());
         assertEquals(AccountRole.USER, result.role());
         verify(sessionService).createSession(eq("sid"), eq("account-1"), eq(AccountRole.USER),
-                eq("refresh"), eq(NOW.plusSeconds(3600)));
+                eq("refresh"), eq(NOW.plusSeconds(3600)), any(), eq("account-1"), anyInt());
     }
 
     /** 密码校验失败不得创建会话或请求新令牌。 */
     @Test
     void loginWithWrongPasswordFails() {
-        when(accountMapper.findByLoginName("demo")).thenReturn(activeAccount);
+        when(accountMapper.findByEmail("demo@example.com")).thenReturn(activeAccount);
         when(passwordService.matches("wrong", "hash")).thenReturn(false);
 
-        assertThrows(AuthException.class, () -> authService.login("demo", "wrong"));
+        assertThrows(AuthException.class, () -> authService.login("demo@example.com", "wrong", null));
         verify(tokenService, never()).newSessionId();
     }
 
@@ -111,10 +112,10 @@ class AuthServiceTest {
     @Test
     void disabledAccountCannotLogin() {
         activeAccount.setStatus(AccountStatus.DISABLED);
-        when(accountMapper.findByLoginName("demo")).thenReturn(activeAccount);
+        when(accountMapper.findByEmail("demo@example.com")).thenReturn(activeAccount);
 
         AuthException exception = assertThrows(AuthException.class,
-                () -> authService.login("demo", "password"));
+                () -> authService.login("demo@example.com", "password", null));
 
         assertEquals(403, exception.getStatus().value());
         verify(passwordService, never()).matches(any(), any());
@@ -123,7 +124,7 @@ class AuthServiceTest {
     /** 注册成功必须在返回前记录与账户同事务提交的创建事件。 */
     @Test
     void registerRecordsAccountCreatedOutbox() {
-        when(accountMapper.findByLoginName("new-user")).thenReturn(null);
+        when(accountMapper.findByEmail("new-user@example.com")).thenReturn(null);
         when(passwordService.encode("password123")).thenReturn("encoded");
         org.mockito.Mockito.doAnswer(invocation -> {
             AuthAccount account = invocation.getArgument(0);
@@ -135,7 +136,7 @@ class AuthServiceTest {
                 "0123456789abcdef0123456789abcdef", "auth.account.created", 1, "{}", "trace", NOW);
         when(accountCreatedEventFactory.create(any(AuthAccount.class))).thenReturn(event);
 
-        authService.register("new-user", "password123");
+        authService.register("New-User@example.com ", "password123");
 
         verify(outboxRepository).insert(event);
         verify(outboxDispatchNotifier).notifyAfterCommit("event-id");
@@ -151,14 +152,14 @@ class AuthServiceTest {
         when(tokenService.issueAccessToken("account-1", AccountRole.USER, "sid"))
                 .thenReturn(issuedAccessToken);
         when(sessionService.finishRefreshRotation(rotation, "new-refresh", AccountRole.USER,
-                NOW.plusSeconds(3600))).thenReturn(true);
+                NOW.plusSeconds(3600), "account-1")).thenReturn(true);
 
         AuthService.AuthTokens result = authService.refresh("old-refresh");
 
         assertEquals("new-refresh", result.refreshToken());
         verify(sessionService).finishRefreshRotation(rotation, "new-refresh", AccountRole.USER,
-                NOW.plusSeconds(3600));
-        verify(sessionService, never()).createSession(eq("sid"), any(), any(), any(), any());
+                NOW.plusSeconds(3600), "account-1");
+        verify(sessionService, never()).createSession(eq("sid"), any(), any(), any(), any(), any(), any(), anyInt());
         verify(sessionService, never()).abortRefreshRotation(any(), any());
         verify(operationalMetrics).recordRefresh(eq("success"), any(Long.class));
     }
@@ -214,13 +215,13 @@ class AuthServiceTest {
         when(tokenService.issueAccessToken("account-1", AccountRole.USER, "sid"))
                 .thenReturn(issuedAccessToken);
         when(sessionService.finishRefreshRotation(rotation, "new-refresh", AccountRole.USER,
-                NOW.plusSeconds(3600))).thenReturn(false);
+                NOW.plusSeconds(3600), "account-1")).thenReturn(false);
 
         AuthException exception = assertThrows(AuthException.class, () -> authService.refresh("old-refresh"));
 
         assertEquals(401, exception.getStatus().value());
         verify(sessionService).abortRefreshRotation(rotation, "new-refresh");
-        verify(sessionService, never()).createSession(any(), any(), any(), any(), any());
+        verify(sessionService, never()).createSession(any(), any(), any(), any(), any(), any(), any(), anyInt());
     }
 
     /** 生成候选凭据时的异常也必须清理当前 nonce 所属会话，不能将旧索引恢复。 */
@@ -245,7 +246,7 @@ class AuthServiceTest {
 
         authService.logout("Bearer access");
 
-        verify(sessionService).deleteSession("sid");
+        verify(sessionService).deleteSession("sid", "account-1");
         verify(sessionService).revokeAccessToken("jti", NOW.plusSeconds(900));
     }
 
@@ -260,7 +261,7 @@ class AuthServiceTest {
         authService.logout("Bearer access");
 
         assertThrows(AuthException.class, () -> authService.refresh("refresh"));
-        verify(sessionService).deleteSession("sid");
+        verify(sessionService).deleteSession("sid", "account-1");
     }
 
     /** 构造一条已由 begin 脚本确认、仍由当前请求持有的轮换快照。 */

@@ -85,23 +85,23 @@ Authorization: Bearer <accessToken>
 
 | 字段 | 类型 | 必填 | 规则 |
 | --- | --- | --- | --- |
-| `loginName` | string | 是 | 3–255 个字母、数字、下划线或连字符 |
+| `email` | string | 是 | 符合标准邮箱格式，最多 255 字符；应用层统一 trim 并转小写 |
 | `password` | string | 是 | 至少 8 个字符，最多 72 个 UTF-8 字节；HTTP 字符长度上限也为 72 |
 
 ```json
 {
-  "loginName": "example_user",
+  "email": "example_user@example.com",
   "password": "<符合长度要求的测试密码>"
 }
 ```
 
-成功 `200`：返回 `accountId`、`loginName`、`role`、`status`，均为字符串；新账号固定 `USER / ACTIVE`。账号 ID 是无连字符的 32 位十六进制字符串。**不返回令牌，不自动登录，资料异步初始化。**
+成功 `200`：返回 `accountId`、`email`、`role`、`status`，均为字符串；新账号固定 `USER / ACTIVE`。账号 ID 是无连字符的 32 位十六进制字符串。**不返回令牌，不自动登录，资料异步初始化。**
 
-关键错误：输入校验失败 `400`；预先查到登录名占用 `409`。并发重名可能触发数据库重复键异常并走通用 `500`，当前未统一映射为 `409`。
+关键错误：输入校验失败 `400`；预先查到邮箱已注册 `409`。并发重名可能触发数据库重复键异常并走通用 `500`，当前未统一映射为 `409`。
 
 ### 登录：POST /api/auth/login
 
-JSON 必填 `loginName`、`password`。登录名非空、最多 255 字符，应用层去首尾空白；密码非空，HTTP 最多 72 字符且应用层复核不超过 72 个 UTF-8 字节。请求形状与注册相同。
+JSON 必填 `email`、`password`。邮箱非空、符合邮箱格式、最多 255 字符，应用层去首尾空白并转小写；密码非空，HTTP 最多 72 字符且应用层复核不超过 72 个 UTF-8 字节。请求形状与注册相同。
 
 成功 `200`：
 
@@ -132,7 +132,7 @@ JSON 必填 `loginName`、`password`。登录名非空、最多 255 字符，应
 
 ### 当前账号：GET /api/auth/me
 
-无查询参数。成功 `200` 返回：`accountId`、`loginName`、`role`（`USER/ADMIN`）、`type`（`user/admin`）、`sessionId`，均为字符串。服务读取最新账号数据，但响应**没有 `status` 字段**，也不包含昵称、简介等用户资料。
+无查询参数。成功 `200` 返回：`accountId`、`email`、`role`（`USER/ADMIN`）、`type`（`user/admin`）、`sessionId`，均为字符串。服务读取最新账号数据，但响应**没有 `status` 字段**，也不包含昵称、简介等用户资料。
 
 关键错误：令牌无效或账号不存在 `401`；账号禁用 `403`。需要用户资料时使用 `/api/users/me`。
 

@@ -1,7 +1,9 @@
 -- Refresh 轮换 finish 阶段脚本：仅拥有相同 rotationId 的请求可以提交候选凭据。
 -- KEYS[1] = auth:session:<sid>；KEYS[2] = auth:refresh:<新 refresh SHA-256>
+-- KEYS[3] = auth:user:sessions:<userId>（会话时序 ZSet，finish 成功后更新 score 实现 LRU）
 -- ARGV = sid、subjectId、rotationId、旧/新 refreshHash、最新 role、ISO expiresAt、绝对 epoch 毫秒 deadline
 -- 先以 SET NX PXAT 写新索引，再更新会话并移除 in-flight 标记；任何不匹配均失败关闭。
+-- finish 成功后更新 ZSet score 为当前时间戳，保证活跃设备在 LRU 淘汰中保持"年轻"。
 
 -- 统一检查键类型，避免在错误类型键上继续执行会话更新。
 local function keyType(key)
@@ -13,7 +15,7 @@ local function positiveInteger(value)
 end
 
 -- finish 需要完整的旧状态归属和候选状态；参数错位时禁止修改 in-flight 会话。
-if #KEYS ~= 2 or #ARGV ~= 8 or not ARGV[1] or ARGV[1] == ''
+if #KEYS ~= 3 or #ARGV ~= 8 or not ARGV[1] or ARGV[1] == ''
         or not ARGV[2] or ARGV[2] == '' or not ARGV[3] or ARGV[3] == ''
         or not ARGV[4] or ARGV[4] == '' or not ARGV[5] or ARGV[5] == ''
         or (ARGV[6] ~= 'USER' and ARGV[6] ~= 'ADMIN')
@@ -63,7 +65,10 @@ if not success then
 end
 -- 新索引已落位后更新 session，并用同一 deadline 续期，最后移除轮换占用标记。
 redis.call('HSET', KEYS[1], 'role', ARGV[6], 'refreshHash', ARGV[5], 'expiresAt', ARGV[7])
---
 redis.call('PEXPIREAT', KEYS[1], deadline)
 redis.call('HDEL', KEYS[1], 'rotationId', 'rotationState')
+
+-- 刷新成功后更新 ZSet score 为当前时间戳，使活跃设备在 LRU 淘汰中保持"年轻"。
+-- 未参与刷新的僵尸会话 score 停留在过去，超限时会被优先淘汰。
+redis.call('ZADD', KEYS[3], nowMillis, ARGV[1])
 return 'OK'

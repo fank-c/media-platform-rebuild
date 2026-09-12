@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -84,7 +85,8 @@ class AuthRefreshConcurrencyTest {
                 .thenReturn(new TokenService.AccessTokenClaims("account-1", AccountRole.USER, "sid", "current-jti",
                         NOW.plusSeconds(900)));
         // 测试替身表达真实 Lua 的条件结果：logout 删除会话后，finish 无法再确认当前 rotationId。
-        when(sessionService.finishRefreshRotation(rotation, "new-refresh", AccountRole.USER, NOW.plusSeconds(3600)))
+        when(sessionService.finishRefreshRotation(rotation, "new-refresh", AccountRole.USER, NOW.plusSeconds(3600),
+                "account-1"))
                 .thenReturn(false);
 
         ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -103,10 +105,10 @@ class AuthRefreshConcurrencyTest {
 
             InOrder sessionOrder = inOrder(sessionService);
             sessionOrder.verify(sessionService).beginRefreshRotation("old-refresh");
-            sessionOrder.verify(sessionService).deleteSession("sid");
+            sessionOrder.verify(sessionService).deleteSession("sid", "account-1");
             sessionOrder.verify(sessionService).finishRefreshRotation(rotation, "new-refresh", AccountRole.USER,
-                    NOW.plusSeconds(3600));
-            verify(sessionService, never()).createSession(eq("sid"), any(), any(), any(), any());
+                    NOW.plusSeconds(3600), "account-1");
+            verify(sessionService, never()).createSession(eq("sid"), any(), any(), any(), any(), any(), any(), anyInt());
         } finally {
             allowAccountRead.countDown();
             executor.shutdownNow();

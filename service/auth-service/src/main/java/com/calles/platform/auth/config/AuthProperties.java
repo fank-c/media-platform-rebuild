@@ -19,6 +19,11 @@ public class AuthProperties {
     private long accessTokenTtlSeconds = 900;
     /** Refresh Token 对应 Redis 会话的有效时间，单位为秒。 */
     private long refreshTokenTtlSeconds = 2_592_000;
+    /**
+     * 单用户允许的最大并发设备会话数；超限时按 LRU（最近最少使用）策略淘汰最久未活跃的会话。
+     * 取值范围 1–20，默认 5。该值在 create-session.lua 中作为 ARGV 传入，支持不重启热更新。
+     */
+    private int maxSessions = 5;
 
     public String getJwtSecret() {
         return jwtSecret;
@@ -60,6 +65,18 @@ public class AuthProperties {
         this.refreshTokenTtlSeconds = refreshTokenTtlSeconds;
     }
 
+    /** 返回单用户最大并发会话数配置值，由 create-session.lua 读取用于容量判断。 */
+    public int getMaxSessions() {
+        return maxSessions;
+    }
+
+    /**
+     * @param maxSessions 单用户最大并发设备会话数，合法范围 1–20
+     */
+    public void setMaxSessions(int maxSessions) {
+        this.maxSessions = maxSessions;
+    }
+
     public Duration accessTokenTtl() {
         // 由秒数属性统一换算，调用方不应自行解释配置单位。
         return Duration.ofSeconds(accessTokenTtlSeconds);
@@ -84,6 +101,10 @@ public class AuthProperties {
         if (accessTokenTtlSeconds <= 0 || refreshTokenTtlSeconds <= 0
                 || refreshTokenTtlSeconds <= accessTokenTtlSeconds) {
             throw new IllegalStateException("JWT TTL values are invalid");
+        }
+        // maxSessions 过小会导致用户无法使用多设备，过大会失去限额意义；1–20 是合理业务边界。
+        if (maxSessions < 1 || maxSessions > 20) {
+            throw new IllegalStateException("maxSessions must be between 1 and 20");
         }
     }
 }

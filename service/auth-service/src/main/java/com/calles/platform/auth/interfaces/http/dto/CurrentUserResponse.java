@@ -23,8 +23,8 @@ public record CurrentUserResponse(
         /** 账户 ID（UUID 格式） */
         String accountId,
 
-        /** 登录名 */
-        String loginName,
+        /** 注册邮箱 */
+        String email,
 
         /** 角色（USER 或 ADMIN） */
         String role,

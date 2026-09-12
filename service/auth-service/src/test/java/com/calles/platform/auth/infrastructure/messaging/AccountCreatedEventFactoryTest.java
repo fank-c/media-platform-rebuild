@@ -17,12 +17,12 @@ import org.slf4j.MDC;
 /** 账号创建事件最小披露与时间契约测试。 */
 class AccountCreatedEventFactoryTest {
 
-    /** 事件只允许包含资料初始化所需字段，不得泄露登录名或密码摘要。 */
+    /** 事件只允许包含资料初始化所需字段，不得泄露邮箱或密码摘要。 */
     @Test
     void eventDoesNotExposeAuthenticationCredentials() throws Exception {
         AuthAccount account = new AuthAccount();
         account.setId("0123456789abcdef0123456789abcdef");
-        account.setLoginName("sensitive-login");
+        account.setEmail("sensitive@test.com");
         account.setPasswordHash("sensitive-password-hash");
         account.setCreatedAt(LocalDateTime.of(2026, 9, 1, 8, 30));
         Clock clock = Clock.fixed(Instant.parse("2026-09-05T00:00:00Z"), ZoneOffset.UTC);
@@ -39,9 +39,9 @@ class AccountCreatedEventFactoryTest {
         assertEquals(account.getId(), root.path("payload").path("accountId").asText());
         assertEquals("user", root.path("payload").path("accountType").asText());
         assertEquals("2026-09-01T08:30:00Z", root.path("payload").path("createdAt").asText());
-        assertFalse(record.payload().contains("sensitive-login"));
+        assertFalse(record.payload().contains("sensitive@test.com"));
         assertFalse(record.payload().contains("sensitive-password-hash"));
-        assertFalse(root.path("payload").has("loginName"));
+        assertFalse(root.path("payload").has("email"));
         assertFalse(root.path("payload").has("passwordHash"));
     }
 

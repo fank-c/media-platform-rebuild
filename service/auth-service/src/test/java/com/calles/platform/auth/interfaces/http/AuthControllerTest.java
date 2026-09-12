@@ -1,5 +1,7 @@
 package com.calles.platform.auth.interfaces.http;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -86,5 +88,59 @@ class AuthControllerTest {
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value(503))
                 .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    /** 登录请求携带合法邮箱必须成功映射并返回令牌。 */
+    @Test
+    void loginWithValidEmailReturnsTokens() throws Exception {
+        when(authService.login(eq("user@example.com"), eq("password123"), any()))
+                .thenReturn(new AuthService.AuthTokens("access-token", "refresh-token", 900, AccountRole.USER));
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"user@example.com\",\"password\":\"password123\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.accessToken").value("access-token"))
+                .andExpect(jsonPath("$.data.refreshToken").value("refresh-token"))
+                .andExpect(jsonPath("$.data.role").value("USER"));
+    }
+
+    /** 登录请求邮箱格式不合法必须在 DTO 校验层返回 400。 */
+    @Test
+    void loginWithInvalidEmailReturnsBadRequest() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"not-an-email\",\"password\":\"password123\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400));
+    }
+
+    /** 注册请求携带合法邮箱必须成功并返回包含 email 的注册响应。 */
+    @Test
+    void registerWithValidEmailReturnsRegisterResponse() throws Exception {
+        when(authService.register("new-user@example.com", "password123"))
+                .thenReturn(new com.calles.platform.auth.interfaces.http.dto.RegisterResponse(
+                        "acc-1", "new-user@example.com", "USER", "ACTIVE"));
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"new-user@example.com\",\"password\":\"password123\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.accountId").value("acc-1"))
+                .andExpect(jsonPath("$.data.email").value("new-user@example.com"))
+                .andExpect(jsonPath("$.data.role").value("USER"))
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"));
+    }
+
+    /** 注册请求邮箱格式不合法必须在 DTO 校验层返回 400。 */
+    @Test
+    void registerWithInvalidEmailReturnsBadRequest() throws Exception {
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"invalid-format\",\"password\":\"password123\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(400));
     }
 }

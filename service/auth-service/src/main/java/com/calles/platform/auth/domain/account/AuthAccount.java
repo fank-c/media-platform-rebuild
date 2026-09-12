@@ -30,10 +30,10 @@ public class AuthAccount {
     private String id;
 
     /**
-     * 用于身份校验的唯一登录名，不承载展示昵称。
+     * 用于身份校验的唯一邮箱，统一保存规范化后的小写字符串，不承载展示昵称。
      */
-    @TableField("login_name")
-    private String loginName;
+    @TableField("email")
+    private String email;
 
     /**
      * 仅保存 BCrypt 密码哈希；调用方不得记录、序列化或输出其明文来源。
