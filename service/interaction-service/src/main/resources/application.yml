@@ -25,4 +25,5 @@ management:
 
 logging:
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{traceId:-}] [%t] %-40.40logger{39} : %m%n"
+    # 控制台彩色输出：时间/线程弱化(faint)、级别自适应着色(%5p)、traceId洋红高亮(magenta)、类名青色(cyan)
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%X{traceId:-}]){magenta} %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"
