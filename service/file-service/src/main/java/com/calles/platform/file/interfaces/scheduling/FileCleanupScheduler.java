@@ -23,8 +23,13 @@ public class FileCleanupScheduler {
     this.properties = properties;
   }
 
-  /** 默认不执行；仅隔离 bucket 显式启用时才处理有限数量的过期记录。 */
-  @Scheduled(fixedDelayString = "${file.cleanup.interval:60s}")
+  /**
+   * 定时清理触发入口。
+   *
+   * <p>定时任务参数使用纯数字毫秒字符串（默认 60000ms），避免 @Scheduled 无法解析类似 60s 的带单位字符串。
+   * 默认不执行；仅隔离 bucket 显式启用时才处理有限数量的过期记录。
+   */
+  @Scheduled(fixedDelayString = "${file.cleanup.interval:60000}")
   public void trigger() {
     if (properties.getCleanup().isEnabled()) {
       cleanupService.cleanup(

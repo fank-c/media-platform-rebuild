@@ -54,7 +54,8 @@ file:
     task-timeout: ${FILE_CONFIRM_TASK_TIMEOUT:120s}
   cleanup:
     enabled: ${FILE_CLEANUP_ENABLED:false}
-    interval: ${FILE_CLEANUP_INTERVAL:60s}
+    # 清理扫描延迟毫秒数；@Scheduled 注解要求纯数字字符串，默认 60000ms (60s)
+    interval: ${FILE_CLEANUP_INTERVAL:60000}
     batch-size: ${FILE_CLEANUP_BATCH_SIZE:100}
     max-batches: ${FILE_CLEANUP_MAX_BATCHES:5}
     run-timeout: ${FILE_CLEANUP_RUN_TIMEOUT:30s}
