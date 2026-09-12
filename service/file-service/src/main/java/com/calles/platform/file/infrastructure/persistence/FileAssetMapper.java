@@ -55,7 +55,7 @@ public interface FileAssetMapper {
           + COLUMNS
           + " FROM file_asset WHERE delete_requested_at IS NULL AND deleted_at IS NULL"
           + " AND upload_status IN ('PENDING','VERIFYING') AND upload_expires_at &lt;= #{cutoff}"
-          + " <if test='cursorTime != null' AND"
+          + " <if test='cursorTime != null'> AND"
           + " (upload_expires_at &gt; #{cursorTime} OR (upload_expires_at = #{cursorTime} AND id"
           + " &gt; #{cursorId})) </if> ORDER BY upload_expires_at,id LIMIT #{limit}</script>")
   List<FileAsset> selectPendingExpired(
@@ -79,7 +79,7 @@ public interface FileAssetMapper {
           + COLUMNS
           + " FROM file_asset WHERE upload_protocol='DIRECT_STAGED_CHECKSUM_V2'"
           + " AND upload_status='VERIFYING' AND delete_requested_at IS NULL AND deleted_at IS NULL"
-          + " <if test='cursorTime != null' AND (verification_requested_at &gt; #{cursorTime}"
+          + " <if test='cursorTime != null'> AND (verification_requested_at &gt; #{cursorTime}"
           + " OR (verification_requested_at = #{cursorTime} AND id &gt; #{cursorId})) </if>"
           + " ORDER BY verification_requested_at,id LIMIT #{limit}</script>")
   List<FileAsset> selectVerificationRecovery(
@@ -219,7 +219,7 @@ public interface FileAssetMapper {
       "<script>SELECT "
           + COLUMNS
           + " FROM file_asset WHERE delete_requested_at IS NOT NULL AND deleted_at IS NULL"
-          + " <if test='cursorTime != null' AND (delete_requested_at &gt; #{cursorTime}"
+          + " <if test='cursorTime != null'> AND (delete_requested_at &gt; #{cursorTime}"
           + " OR (delete_requested_at = #{cursorTime} AND id &gt; #{cursorId})) </if>"
           + " ORDER BY delete_requested_at,id LIMIT #{limit}</script>")
   List<FileAsset> selectDeletionRequested(
