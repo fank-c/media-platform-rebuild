@@ -10,6 +10,7 @@ import com.calles.platform.auth.interfaces.http.dto.TokenResponse;
 import com.calles.platform.auth.interfaces.http.dto.VerifyTokenRequest;
 import com.calles.platform.auth.interfaces.http.dto.VerifyTokenResponse;
 import com.calles.platform.common.core.ApiResponse;
+import com.calles.platform.common.web.context.UserContext;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,11 +46,20 @@ public class AuthController {
         return ApiResponse.ok("auth-service");
     }
 
-    /** 校验登录凭据并签发新的访问令牌和刷新令牌。deviceId 可选，缺失时由服务端生成随机 UUID 向后兼容。 */
+    /**
+     * 校验登录凭据并签发新的访问令牌和刷新令牌。
+     * 设备标识优先从 UserContext（由 X-Device-Id 请求头拦截注入）读取，未携带时检查请求头或回退至请求体 deviceId；
+     * 均缺失时由服务端生成随机 UUID 向后兼容。
+     */
     @PostMapping("/login")
-    public ApiResponse<TokenResponse> login(@Valid @RequestBody LoginRequest request) {
-        return ApiResponse.ok(TokenResponse.from(
-                authService.login(request.email(), request.password(), request.deviceId())));
+    public ApiResponse<TokenResponse> login(
+            @RequestHeader(value = "X-Device-Id", required = false) String deviceIdHeader,
+            @Valid @RequestBody LoginRequest request) {
+        String deviceId = UserContext.getCurrentDeviceId()
+                .filter(id -> !id.isBlank())
+                .or(() -> java.util.Optional.ofNullable(deviceIdHeader).filter(id -> !id.isBlank()))
+                .orElse(request.deviceId());
+        return ApiResponse.ok(TokenResponse.from(authService.login(request.email(), request.password(), deviceId)));
     }
 
     /**

@@ -66,6 +66,13 @@ public final class UserContext {
     }
 
     /**
+     * 获取当前请求关联的客户端设备标识。
+     */
+    public static Optional<String> getCurrentDeviceId() {
+        return get().map(UserInfo::deviceId);
+    }
+
+    /**
      * 判断当前请求是否为管理员身份。
      */
     public static boolean isAdmin() {

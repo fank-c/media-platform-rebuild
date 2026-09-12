@@ -140,6 +140,9 @@ public class AuthService {
         if (password.getBytes(StandardCharsets.UTF_8).length > 72) {
             throw AuthException.invalidRequest("password 不能超过 72 个 UTF-8 字节");
         }
+        if (deviceId != null && deviceId.length() > 128) {
+            throw AuthException.invalidRequest("deviceId 长度不能超过 128 个字符");
+        }
 
         // 查询账户
         AuthAccount account = accountMapper.findByEmail(normalizedEmail);

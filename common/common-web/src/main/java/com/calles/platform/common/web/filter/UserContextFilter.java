@@ -24,27 +24,30 @@ public class UserContextFilter extends OncePerRequestFilter {
     private static final String HEADER_USER_ROLE = "X-User-Role";
     private static final String HEADER_USER_TYPE = "X-User-Type";
     private static final String HEADER_SESSION_ID = "X-Session-Id";
+    private static final String HEADER_DEVICE_ID = "X-Device-Id";
 
     /**
-     * 创建无状态过滤器；请求级身份仅保存在 UserContext 中。
+     * 创建无状态过滤器；请求级身份与设备元数据仅保存在 UserContext 中。
      */
     public UserContextFilter() {
     }
 
     /**
-     * 解析请求身份、执行后续过滤器并在 finally 中清理线程上下文。
+     * 解析请求身份及设备标识、执行后续过滤器并在 finally 中清理线程上下文。
      */
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         try {
             String userId = request.getHeader(HEADER_USER_ID);
-            if (userId != null && !userId.isBlank()) {
+            String deviceId = request.getHeader(HEADER_DEVICE_ID);
+            if ((userId != null && !userId.isBlank()) || (deviceId != null && !deviceId.isBlank())) {
                 UserContext.set(new UserInfo(
                         userId,
                         request.getHeader(HEADER_USER_ROLE),
                         request.getHeader(HEADER_USER_TYPE),
-                        request.getHeader(HEADER_SESSION_ID)));
+                        request.getHeader(HEADER_SESSION_ID),
+                        deviceId));
             }
             filterChain.doFilter(request, response);
         } finally {

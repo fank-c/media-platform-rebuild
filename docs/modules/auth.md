@@ -20,11 +20,11 @@
 
 ### 登录并取得两种凭据
 
-调用 `POST /api/auth/login`，JSON 提交 `email`、`password`。服务规范化邮箱（trim 并转小写），查询账号，检查状态，再比对密码。账号不存在或密码错误返回 `401`；代码对已禁用账号单独返回 `403`，不能将当前行为描述为“所有失败都隐藏账号存在性”。
+调用 `POST /api/auth/login`，JSON 提交 `email`、`password`，可选提交 `deviceId` 或通过 `X-Device-Id` 请求头传入设备标识（拦截层注入 `UserContext`，优先取 Header）。服务规范化邮箱（trim 并转小写），查询账号，检查状态，再比对密码。账号不存在或密码错误返回 `401`；代码对已禁用账号单独返回 `403`，不能将当前行为描述为“所有失败都隐藏账号存在性”。
 
 成功后返回 `accessToken`、`refreshToken`、`expiresIn` 和 `role`。访问令牌是携带签名的 JWT，用于后续请求的 `Authorization: Bearer <accessToken>`；刷新凭据用于访问令牌到期后续期，不用来直接调用业务 API。`expiresIn` 是访问令牌有效秒数，不是刷新凭据的期限。
 
-服务将刷新会话及凭据摘要索引写入 Redis，明确保存成功才返回凭据。仓库默认访问令牌 900 秒、刷新凭据 2592000 秒，可通过 `auth.access-token-ttl-seconds`、`auth.refresh-token-ttl-seconds` 配置；运行环境值本次未读取。
+服务将刷新会话及凭据摘要索引写入 Redis，并基于设备标识维护用户会话集合；同一设备重复登录直接替换旧会话，超过最大会话限制（默认 5）时自动淘汰最久未活跃会话。仓库默认访问令牌 900 秒、刷新凭据 2592000 秒，可通过 `auth.access-token-ttl-seconds`、`auth.refresh-token-ttl-seconds` 与 `auth.max-sessions-per-user` 配置；运行环境值本次未读取。
 
 ### 刷新与重复提交
 

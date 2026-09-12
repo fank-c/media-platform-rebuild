@@ -13,7 +13,16 @@ public record UserInfo(
         /** 主体类型，例如 user 或 admin。 */
         String type,
         /** 与刷新会话关联的会话 ID。 */
-        String sessionId) {
+        String sessionId,
+        /** 客户端设备标识，由 X-Device-Id 请求头或上下文传入。 */
+        String deviceId) {
+
+    /**
+     * 向后兼容四参构造器，默认 deviceId 为 null。
+     */
+    public UserInfo(String userId, String role, String type, String sessionId) {
+        this(userId, role, type, sessionId, null);
+    }
 
     /**
      * 判断身份是否具备管理员角色。

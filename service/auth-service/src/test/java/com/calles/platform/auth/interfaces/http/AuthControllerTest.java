@@ -106,6 +106,37 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.role").value("USER"));
     }
 
+    /** 登录请求携带 X-Device-Id 请求头优先于请求体 deviceId。 */
+    @Test
+    void loginWithDeviceIdHeaderPrefersHeaderOverBody() throws Exception {
+        when(authService.login(eq("user@example.com"), eq("password123"), eq("header-device-001")))
+                .thenReturn(new AuthService.AuthTokens("access-token", "refresh-token", 900, AccountRole.USER));
+
+        mockMvc.perform(post("/api/auth/login")
+                        .header("X-Device-Id", "header-device-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"user@example.com\",\"password\":\"password123\",\"deviceId\":\"body-device-999\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        Mockito.verify(authService).login(eq("user@example.com"), eq("password123"), eq("header-device-001"));
+    }
+
+    /** 未携带 X-Device-Id 请求头时正常回退至请求体 deviceId。 */
+    @Test
+    void loginWithBodyDeviceIdFallback() throws Exception {
+        when(authService.login(eq("user@example.com"), eq("password123"), eq("body-device-999")))
+                .thenReturn(new AuthService.AuthTokens("access-token", "refresh-token", 900, AccountRole.USER));
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"user@example.com\",\"password\":\"password123\",\"deviceId\":\"body-device-999\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        Mockito.verify(authService).login(eq("user@example.com"), eq("password123"), eq("body-device-999"));
+    }
+
     /** 登录请求邮箱格式不合法必须在 DTO 校验层返回 400。 */
     @Test
     void loginWithInvalidEmailReturnsBadRequest() throws Exception {
