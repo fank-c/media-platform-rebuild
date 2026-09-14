@@ -142,3 +142,108 @@ CREATE TABLE IF NOT EXISTS file_asset (
     (upload_status = 'VERIFYING' AND upload_protocol = 'DIRECT_STAGED_CHECKSUM_V2' AND verification_requested_at IS NOT NULL)
     OR upload_status <> 'VERIFYING')
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='file-service 独占的文件元数据；V2直传使用staging到permanent的条件迁移';
+
+-- content-service: 视频内容聚合根表
+CREATE TABLE IF NOT EXISTS `video_content` (
+    `id` CHAR(32) NOT NULL COMMENT '视频内部全局唯一ID (UUID)',
+    `vid` VARCHAR(32) NOT NULL COMMENT '业务对外公开编码 (如 cv2026090001)',
+    `author_id` CHAR(32) NOT NULL COMMENT '作者账号ID (逻辑关联 auth_account.id)',
+    `title` VARCHAR(128) NOT NULL COMMENT '视频标题',
+    `description` VARCHAR(2000) NULL COMMENT '视频简介描述',
+    `video_file_id` CHAR(32) NOT NULL COMMENT '主视频文件ID (引用 file_asset.id)',
+    `cover_file_id` CHAR(32) NOT NULL COMMENT '封面图片文件ID (引用 file_asset.id)',
+    `duration` INT NOT NULL DEFAULT 0 COMMENT '视频时长 (秒)',
+    `tags` VARCHAR(255) NULL COMMENT '轻量标签快照 (英文逗号分隔)',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT '平台可用状态: ACTIVE=正常, DISABLED=违规封禁/冻结',
+    `publish_status` VARCHAR(24) NOT NULL DEFAULT 'DRAFT' COMMENT '发布生命周期: DRAFT, AUDITING, PUBLISHED, REJECTED, OFFLINE',
+    `reject_reason` VARCHAR(255) NULL COMMENT '审核拒绝或下架原因',
+    `visibility` VARCHAR(16) NOT NULL DEFAULT 'PUBLIC' COMMENT '可见范围: PUBLIC, PRIVATE, UNLISTED',
+    `view_count` BIGINT NOT NULL DEFAULT 0 COMMENT '播放量快照',
+    `like_count` BIGINT NOT NULL DEFAULT 0 COMMENT '点赞数快照',
+    `comment_count` BIGINT NOT NULL DEFAULT 0 COMMENT '评论数快照',
+    `star_count` BIGINT NOT NULL DEFAULT 0 COMMENT '收藏数快照',
+    `share_count` BIGINT NOT NULL DEFAULT 0 COMMENT '分享数快照',
+    `published_at` DATETIME(3) NULL COMMENT '首次公开发布时间',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
+    `revision` BIGINT NOT NULL DEFAULT 0 COMMENT '并发修改版本乐观锁',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_video_vid` (`vid`),
+    KEY `idx_video_author` (`author_id`, `status`, `publish_status`, `created_at`),
+    KEY `idx_video_publish` (`status`, `publish_status`, `visibility`, `published_at`),
+    CONSTRAINT `ck_video_content_status` CHECK (`status` IN ('ACTIVE', 'DISABLED')),
+    CONSTRAINT `ck_video_content_publish_status` CHECK (`publish_status` IN ('DRAFT', 'AUDITING', 'PUBLISHED', 'REJECTED', 'OFFLINE')),
+    CONSTRAINT `ck_video_content_visibility` CHECK (`visibility` IN ('PUBLIC', 'PRIVATE', 'UNLISTED')),
+    CONSTRAINT `ck_video_content_deleted` CHECK (`deleted` IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频内容聚合根表';
+
+-- content-service: 视频转码派生流规格表
+CREATE TABLE IF NOT EXISTS `video_stream` (
+    `id` CHAR(32) NOT NULL COMMENT '流文件主键ID (UUID)',
+    `video_id` CHAR(32) NOT NULL COMMENT '所属视频内部ID (关联 video_content.id)',
+    `quality` VARCHAR(16) NOT NULL COMMENT '画质规格: 360P, 480P, 720P, 1080P, 1080P_60, 4K, RAW',
+    `format` VARCHAR(16) NOT NULL DEFAULT 'MP4' COMMENT '流媒体封装格式: MP4, HLS, DASH',
+    `codec` VARCHAR(16) NOT NULL DEFAULT 'H264' COMMENT '视频编码: H264, H265, AV1',
+    `file_id` CHAR(32) NOT NULL COMMENT '转码后文件在 file_asset 中的ID',
+    `file_size` BIGINT NOT NULL DEFAULT 0 COMMENT '流文件字节大小',
+    `bitrate` INT NULL COMMENT '视频码率 (kbps)',
+    `fps` INT NULL COMMENT '帧率',
+    `transcode_status` VARCHAR(16) NOT NULL DEFAULT 'COMPLETED' COMMENT '转码状态: PENDING, PROCESSING, COMPLETED, FAILED',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_stream_spec` (`video_id`, `quality`, `format`),
+    KEY `idx_stream_file` (`file_id`),
+    CONSTRAINT `ck_video_stream_quality` CHECK (`quality` IN ('360P', '480P', '720P', '1080P', '1080P_60', '4K', 'RAW')),
+    CONSTRAINT `ck_video_stream_format` CHECK (`format` IN ('MP4', 'HLS', 'DASH')),
+    CONSTRAINT `ck_video_stream_codec` CHECK (`codec` IN ('H264', 'H265', 'AV1')),
+    CONSTRAINT `ck_video_stream_transcode_status` CHECK (`transcode_status` IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频转码派生流规格表';
+
+-- content-service: 领域事件 Outbox 表
+CREATE TABLE IF NOT EXISTS `content_outbox` (
+    `event_id` CHAR(36) NOT NULL COMMENT '稳定事件 UUID，重试和重放必须复用',
+    `aggregate_id` CHAR(32) NOT NULL COMMENT '关联视频 ID',
+    `event_type` VARCHAR(128) NOT NULL COMMENT '事件类型 (如 content.video.published)',
+    `event_version` INT NOT NULL COMMENT '事件版本',
+    `payload` JSON NOT NULL COMMENT '事件载荷 JSON',
+    `trace_id` VARCHAR(64) NULL COMMENT '链路追踪 ID',
+    `occurred_at` DATETIME(3) NOT NULL COMMENT '事件发生时间',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING, PROCESSING, PUBLISHED, FAILED',
+    `attempts` INT NOT NULL DEFAULT 0 COMMENT '投递尝试次数',
+    `next_attempt_at` DATETIME(3) NOT NULL COMMENT '下次重试时间',
+    `lease_owner` VARCHAR(64) NULL COMMENT '当前租约所有者',
+    `lease_until` DATETIME(3) NULL COMMENT '当前租约截止时间',
+    `claim_token` CHAR(36) NULL COMMENT '领取令牌',
+    `published_at` DATETIME(3) NULL COMMENT '成功发布时间',
+    `last_error_code` VARCHAR(64) NULL COMMENT '最后错误分类',
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`event_id`),
+    KEY `idx_content_outbox_dispatch` (`status`, `next_attempt_at`, `lease_until`),
+    CONSTRAINT `ck_content_outbox_status` CHECK (`status` IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='content-service 领域事件 Outbox 表';
+
+-- content-service: 内容标签全局字典表
+CREATE TABLE IF NOT EXISTS `content_tag` (
+    `id` CHAR(32) NOT NULL COMMENT '标签主键ID (UUID)',
+    `name` VARCHAR(64) NOT NULL COMMENT '标签名称（唯一）',
+    `reference_count` BIGINT NOT NULL DEFAULT 0 COMMENT '被视频引用次数/热度统计',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT '标签状态: ACTIVE=启用, DISABLE=下线屏蔽',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_content_tag_name` (`name`),
+    KEY `idx_content_tag_hot` (`status`, `reference_count` DESC),
+    CONSTRAINT `ck_content_tag_status` CHECK (`status` IN ('ACTIVE', 'DISABLED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内容标签全局字典表';
+
+-- content-service: 视频与标签关联表
+CREATE TABLE IF NOT EXISTS `video_tag_rel` (
+    `id` CHAR(32) NOT NULL COMMENT '关联主键ID (UUID)',
+    `video_id` CHAR(32) NOT NULL COMMENT '视频内部全局唯一ID (关联 video_content.id)',
+    `tag_id` CHAR(32) NOT NULL COMMENT '标签主键ID (关联 content_tag.id)',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_video_tag` (`video_id`, `tag_id`),
+    KEY `idx_tag_video` (`tag_id`, `created_at` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频与标签关联多对多表';
