@@ -4,10 +4,14 @@ import com.calles.platform.content.domain.model.tag.ContentTag;
 import com.calles.platform.content.domain.repository.ContentTagRepository;
 import com.calles.platform.content.infrastructure.persistence.entity.ContentTagPO;
 import com.calles.platform.content.infrastructure.persistence.mapper.ContentTagMapper;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
@@ -90,9 +94,87 @@ public class ContentTagRepositoryImpl implements ContentTagRepository {
     }
 
     @Override
+    public List<ContentTag> findByNames(Collection<String> names) {
+        if (names == null || names.isEmpty()) {
+            return Collections.emptyList();
+        }
+        // 步骤 1：去空并去除首尾空白
+        List<String> cleanNames = names.stream()
+                .filter(n -> n != null && !n.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+        if (cleanNames.isEmpty()) {
+            return Collections.emptyList();
+        }
+        // 步骤 2：批量检索已存在标签并转换为领域模型
+        return contentTagMapper.selectByNames(cleanNames).stream()
+                .map(ContentTagPO::toDomain)
+                .toList();
+    }
+
+    @Override
+    public List<ContentTag> findOrCreateBatch(Collection<String> names) {
+        if (names == null || names.isEmpty()) {
+            return Collections.emptyList();
+        }
+        // 步骤 1：清洗并去重标签名
+        Set<String> cleanNames = names.stream()
+                .filter(n -> n != null && !n.isBlank())
+                .map(String::trim)
+                .collect(Collectors.toSet());
+        if (cleanNames.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 步骤 2：先批量查询已有标签
+        List<ContentTagPO> existing = contentTagMapper.selectByNames(cleanNames);
+        Map<String, ContentTagPO> existingMap = existing.stream()
+                .collect(Collectors.toMap(ContentTagPO::getName, po -> po, (a, b) -> a));
+
+        // 步骤 3：识别缺失的标签并原子执行 insertIgnore 避免并发主键/唯一索引冲突
+        boolean hasNew = false;
+        for (String name : cleanNames) {
+            if (!existingMap.containsKey(name)) {
+                String generatedId = UUID.randomUUID().toString().replace("-", "");
+                contentTagMapper.insertIgnore(generatedId, name);
+                hasNew = true;
+            }
+        }
+
+        // 步骤 4：若存在新插入的词条，重新批量检索补齐；否则直接返回已有实体
+        if (hasNew) {
+            return contentTagMapper.selectByNames(cleanNames).stream()
+                    .map(ContentTagPO::toDomain)
+                    .toList();
+        }
+        return existing.stream()
+                .map(ContentTagPO::toDomain)
+                .toList();
+    }
+
+    @Override
     public int updateReferenceCount(String tagId, long delta) {
         // 步骤 1：执行原子增减，保证非负
         return contentTagMapper.updateReferenceCount(tagId, delta);
+    }
+
+    @Override
+    public int batchUpdateReferenceCount(Collection<String> tagIds, long delta) {
+        if (tagIds == null || tagIds.isEmpty() || delta == 0) {
+            return 0;
+        }
+        // 步骤 1：主键过滤去空并强制升序排列，统一各并发事务加锁顺序以彻底避免 MySQL 行锁死锁
+        List<String> sortedIds = tagIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .sorted()
+                .toList();
+        if (sortedIds.isEmpty()) {
+            return 0;
+        }
+        // 步骤 2：执行批量原子增减
+        return contentTagMapper.batchUpdateReferenceCount(sortedIds, delta);
     }
 
     @Override

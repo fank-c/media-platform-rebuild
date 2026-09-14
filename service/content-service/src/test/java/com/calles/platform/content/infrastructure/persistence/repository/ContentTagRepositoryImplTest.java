@@ -9,6 +9,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -150,5 +151,56 @@ class ContentTagRepositoryImplTest {
         assertThat(hots).hasSize(2);
         assertThat(hots.get(0).getName()).isEqualTo("Java");
         assertThat(hots.get(1).getName()).isEqualTo("Spring");
+    }
+
+    /**
+     * 测试批量更新热度计数：主键升序排列防死锁。
+     */
+    @Test
+    @DisplayName("批量更新引用热度计数：参数升序排列防死锁并原子更新")
+    void shouldBatchUpdateReferenceCountWithSortedIds() {
+        // 步骤 1: 模拟底层 Mapper 批量更新受影响行数
+        ArgumentCaptor<List<String>> captor = ArgumentCaptor.forClass(List.class);
+        when(contentTagMapper.batchUpdateReferenceCount(captor.capture(), eq(1L))).thenReturn(2);
+
+        // 步骤 2: 传入无序列表进行批量更新
+        int rows = repository.batchUpdateReferenceCount(List.of("tag_003", "tag_001", "tag_002"), 1L);
+
+        // 步骤 3: 验证影响行数并断言 Mapper 接收到的主键列表严格升序排列
+        assertThat(rows).isEqualTo(2);
+        assertThat(captor.getValue()).containsExactly("tag_001", "tag_002", "tag_003");
+    }
+
+    /**
+     * 测试按名称批量查询标签。
+     */
+    @Test
+    @DisplayName("按名称批量查询标签")
+    void shouldFindByNames() {
+        ContentTagPO p1 = ContentTagPO.builder().id("tag_001").name("Java").referenceCount(50L).status("ACTIVE").build();
+        when(contentTagMapper.selectByNames(any())).thenReturn(List.of(p1));
+
+        List<ContentTag> tags = repository.findByNames(List.of("Java", "Kotlin"));
+
+        assertThat(tags).hasSize(1);
+        assertThat(tags.get(0).getName()).isEqualTo("Java");
+    }
+
+    /**
+     * 测试批量 findOrCreateBatch：部分存在部分不存在时的处理。
+     */
+    @Test
+    @DisplayName("findOrCreateBatch：部分存在部分不存在时幂等补全并返回全量")
+    void shouldFindOrCreateBatch() {
+        ContentTagPO existing = ContentTagPO.builder().id("tag_001").name("Java").referenceCount(10L).status("ACTIVE").build();
+        ContentTagPO created = ContentTagPO.builder().id("tag_002").name("Go").referenceCount(0L).status("ACTIVE").build();
+
+        when(contentTagMapper.selectByNames(any())).thenReturn(List.of(existing)).thenReturn(List.of(existing, created));
+        when(contentTagMapper.insertIgnore(any(), eq("Go"))).thenReturn(1);
+
+        List<ContentTag> result = repository.findOrCreateBatch(List.of("Java", "Go"));
+
+        assertThat(result).hasSize(2);
+        verify(contentTagMapper).insertIgnore(any(), eq("Go"));
     }
 }

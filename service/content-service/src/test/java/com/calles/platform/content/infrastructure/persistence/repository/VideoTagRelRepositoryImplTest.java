@@ -7,6 +7,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -48,15 +49,14 @@ class VideoTagRelRepositoryImplTest {
         VideoTagRel r1 = VideoTagRel.create("rel_001", "v001", "tag_010");
         VideoTagRel r2 = VideoTagRel.create("rel_002", "v001", "tag_020");
 
-        when(mapper.insert(any(VideoTagRelPO.class))).thenReturn(1);
+        when(mapper.batchInsert(any())).thenReturn(2);
 
         // 步骤 2: 调用仓储批量插入
         int inserted = repository.batchInsert(List.of(r1, r2));
 
         // 步骤 3: 验证插入总数
         assertThat(inserted).isEqualTo(2);
-        assertThat(r1.getId()).isEqualTo("rel_001");
-        assertThat(r2.getId()).isEqualTo("rel_002");
+        verify(mapper).batchInsert(any());
     }
 
     /**
@@ -106,5 +106,23 @@ class VideoTagRelRepositoryImplTest {
         // 步骤 3: 验证删除行数与 Mapper 交互
         assertThat(rows).isEqualTo(3);
         verify(mapper).deleteByVideoId(eq("v001"));
+    }
+
+    /**
+     * 测试精准解除指定视频的特定部分标签关联绑定关系（参数排序防死锁）。
+     */
+    @Test
+    @DisplayName("根据视频 ID 与标签 ID 列表精准批量删除关联：参数排序防死锁")
+    void shouldDeleteByVideoIdAndTagIds() {
+        // 步骤 1: 捕获传入 Mapper 的标签主键列表
+        ArgumentCaptor<List<String>> captor = ArgumentCaptor.forClass(List.class);
+        when(mapper.deleteByVideoIdAndTagIds(eq("v001"), captor.capture())).thenReturn(2);
+
+        // 步骤 2: 传入无序列表执行删除
+        int rows = repository.deleteByVideoIdAndTagIds("v001", List.of("tag_003", "tag_001"));
+
+        // 步骤 3: 验证删除行数并断言主键集合按字典序升序传递
+        assertThat(rows).isEqualTo(2);
+        assertThat(captor.getValue()).containsExactly("tag_001", "tag_003");
     }
 }

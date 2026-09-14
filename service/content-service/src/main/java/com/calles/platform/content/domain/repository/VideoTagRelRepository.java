@@ -1,6 +1,7 @@
 package com.calles.platform.content.domain.repository;
 
 import com.calles.platform.content.domain.model.tag.VideoTagRel;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -10,7 +11,7 @@ import java.util.List;
  * <ul>
  *   <li><b>所属边界</b>：视频与标签多对多关联关系统计与关系表维护契约；</li>
  *   <li><b>协作对象</b>：由基础设施层 {@link com.calles.platform.content.infrastructure.persistence.repository.VideoTagRelRepositoryImpl} 实现；</li>
- *   <li><b>能力覆盖</b>：支持批量绑定、正向按视频查标签、反向按标签分页拉取视频 ID 以及批量解绑。</li>
+ *   <li><b>能力覆盖</b>：支持批量绑定、正向按视频查标签、反向按标签分页拉取视频 ID 以及全量/精准批量解绑。</li>
  * </ul>
  * </p>
  */
@@ -49,4 +50,13 @@ public interface VideoTagRelRepository {
      * @return 删除的关联记录行数
      */
     int deleteByVideoId(String videoId);
+
+    /**
+     * 精准批量物理解除指定视频与某些特定标签的关联绑定记录。
+     *
+     * @param videoId 视频全局内部主键 ID
+     * @param tagIds 待解绑的标签主键 ID (UUID) 集合
+     * @return 实际删除的关联记录行数
+     */
+    int deleteByVideoIdAndTagIds(String videoId, Collection<String> tagIds);
 }

@@ -1,6 +1,7 @@
 package com.calles.platform.content.domain.repository;
 
 import com.calles.platform.content.domain.model.tag.ContentTag;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -58,6 +59,22 @@ public interface ContentTagRepository {
     ContentTag findOrCreate(String name);
 
     /**
+     * 批量按标签名称集合检索已存在的标签实体列表。
+     *
+     * @param names 标签名集合
+     * @return 匹配的标签领域实体列表（若入参为空则返回空列表）
+     */
+    List<ContentTag> findByNames(Collection<String> names);
+
+    /**
+     * 批量存在即返回，不存在则原子幂等创建并返回对应实体列表。
+     *
+     * @param names 标签名集合
+     * @return 对应的持久化标签实体列表
+     */
+    List<ContentTag> findOrCreateBatch(Collection<String> names);
+
+    /**
      * 原子自增或自减引用热度计数（底层保底不低于 0）。
      *
      * @param tagId 标签全局主键 ID (UUID)
@@ -65,6 +82,15 @@ public interface ContentTagRepository {
      * @return 影响行数
      */
     int updateReferenceCount(String tagId, long delta);
+
+    /**
+     * 批量原子自增或自减标签的引用热度计数（底层保底非负数，内部升序排列防死锁）。
+     *
+     * @param tagIds 目标标签主键 ID (UUID) 集合
+     * @param delta 变更量（正数表示递增，负数表示递减）
+     * @return 影响行数
+     */
+    int batchUpdateReferenceCount(Collection<String> tagIds, long delta);
 
     /**
      * 获取全站高热度有效标签排行列表。

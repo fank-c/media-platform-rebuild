@@ -57,6 +57,43 @@ public interface ContentTagMapper extends BaseMapper<ContentTagPO> {
     int updateReferenceCount(@Param("tagId") String tagId, @Param("delta") long delta);
 
     /**
+     * 批量按标签名称集合检索标签记录列表。
+     *
+     * @param names 标签文本名称集合
+     * @return 匹配的标签持久化实体列表
+     */
+    @Select("""
+            <script>
+            SELECT * FROM content_tag
+            WHERE name IN
+            <foreach item='name' collection='names' open='(' separator=',' close=')'>
+                #{name}
+            </foreach>
+            </script>
+            """)
+    List<ContentTagPO> selectByNames(@Param("names") java.util.Collection<String> names);
+
+    /**
+     * 批量原子自增或自减标签的引用热度计数（保底非负数）。
+     *
+     * @param tagIds 目标标签主键 ID 集合
+     * @param delta 变更幅度（正数递增，负数递减）
+     * @return 影响行数
+     */
+    @Update("""
+            <script>
+            UPDATE content_tag
+            SET reference_count = GREATEST(0, reference_count + #{delta}),
+                updated_at = CURRENT_TIMESTAMP(3)
+            WHERE id IN
+            <foreach item='id' collection='tagIds' open='(' separator=',' close=')'>
+                #{id}
+            </foreach>
+            </script>
+            """)
+    int batchUpdateReferenceCount(@Param("tagIds") java.util.Collection<String> tagIds, @Param("delta") long delta);
+
+    /**
      * 获取处于正常启用状态 (ACTIVE) 的热门高频标签列表。
      *
      * @param limit 获取数量上限

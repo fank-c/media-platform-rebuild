@@ -40,6 +40,14 @@ public class ContentTagApplicationService {
     /**
      * 将逗号分隔的轻量标签文本全量同步至全局标签字典，并自动维护多对多关联与热度引用计数。
      *
+     * <p>优化策略：
+     * <ul>
+     *   <li><b>增量精准差集 Diff</b>：仅对新增标签执行批量落库与热度自增 (+1)，仅对移除标签执行精准批量解绑与热度自减 (-1)，未变动标签不做多余 I/O；</li>
+     *   <li><b>消除循环单条 DB 访问</b>：所有新增标签通过 {@link ContentTagRepository#findOrCreateBatch} 批量创建，通过单条批量 SQL 统一更新热度计数；</li>
+     *   <li><b>高并发防死锁</b>：底层更新热度计数时严格按照标签主键 (tagId) 自然升序加锁，杜绝并发事务不同打标顺序引发的 MySQL 行锁死锁。</li>
+     * </ul>
+     * </p>
+     *
      * @param videoId 关联的视频内部全局主键 ID
      * @param rawTags 逗号分隔的标签字符串 (例如 "Java,微服务,SpringCloud")
      */
@@ -66,37 +74,40 @@ public class ContentTagApplicationService {
         Set<String> toRemove = new HashSet<>(currentTagNames);
         toRemove.removeAll(newTagNames);
 
-        // 步骤 4：处理新增标签：若字典中不存在则原子创建，批量插入关联记录，并将热度计数 +1
+        // 步骤 4：短路快速退出：新旧标签无任何差异，直接返回避免无效数据库事务开销
+        if (toAdd.isEmpty() && toRemove.isEmpty()) {
+            return;
+        }
+
+        // 步骤 5：精准增量处理新增标签：批量获取/创建实体、单条批量 SQL 原子递增引用计数 (+1)、批量写入新关联
         if (!toAdd.isEmpty()) {
-            List<VideoTagRel> relsToInsert = new ArrayList<>();
-            for (String tagName : toAdd) {
-                ContentTag tag = contentTagRepository.findOrCreate(tagName);
-                relsToInsert.add(VideoTagRel.create(null, videoId, tag.getId()));
-                contentTagRepository.updateReferenceCount(tag.getId(), 1L);
-            }
+            List<ContentTag> addedTags = contentTagRepository.findOrCreateBatch(toAdd);
+            List<String> addTagIds = addedTags.stream()
+                    .map(ContentTag::getId)
+                    .toList();
+            // 原子批量更新计数 (+1L)，仓储内部升序防死锁
+            contentTagRepository.batchUpdateReferenceCount(addTagIds, 1L);
+
+            // 批量持久化新增的视频-标签关联记录
+            List<VideoTagRel> relsToInsert = addedTags.stream()
+                    .map(tag -> VideoTagRel.create(null, videoId, tag.getId()))
+                    .toList();
             videoTagRelRepository.batchInsert(relsToInsert);
         }
 
-        // 步骤 5：处理被移除的标签：递减对应热度引用计数 (-1)
+        // 步骤 6：精准增量处理被移除的标签：单条批量 SQL 原子递减引用计数 (-1)、精准批量解绑关系记录
         if (!toRemove.isEmpty()) {
-            for (String tagName : toRemove) {
-                ContentTag tag = currentTagMap.get(tagName);
-                if (tag != null) {
-                    contentTagRepository.updateReferenceCount(tag.getId(), -1L);
-                }
-            }
-            // 步骤 6：刷新或清理关联关系表记录
-            if (newTagNames.isEmpty()) {
-                videoTagRelRepository.deleteByVideoId(videoId);
-            } else {
-                videoTagRelRepository.deleteByVideoId(videoId);
-                List<VideoTagRel> remainingRels = new ArrayList<>();
-                for (String tagName : newTagNames) {
-                    ContentTag tag = contentTagRepository.findOrCreate(tagName);
-                    remainingRels.add(VideoTagRel.create(null, videoId, tag.getId()));
-                }
-                videoTagRelRepository.batchInsert(remainingRels);
-            }
+            List<String> removeTagIds = toRemove.stream()
+                    .map(currentTagMap::get)
+                    .filter(java.util.Objects::nonNull)
+                    .map(ContentTag::getId)
+                    .toList();
+
+            // 原子批量更新计数 (-1L)，仓储内部升序防死锁
+            contentTagRepository.batchUpdateReferenceCount(removeTagIds, -1L);
+
+            // 精准批量删除关联记录，不影响未变更的原有标签
+            videoTagRelRepository.deleteByVideoIdAndTagIds(videoId, removeTagIds);
         }
     }
 

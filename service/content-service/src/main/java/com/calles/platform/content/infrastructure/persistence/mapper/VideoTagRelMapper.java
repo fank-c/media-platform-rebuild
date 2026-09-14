@@ -2,8 +2,10 @@ package com.calles.platform.content.infrastructure.persistence.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.calles.platform.content.infrastructure.persistence.entity.VideoTagRelPO;
+import java.util.Collection;
 import java.util.List;
 import org.apache.ibatis.annotations.Delete;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -49,4 +51,39 @@ public interface VideoTagRelMapper extends BaseMapper<VideoTagRelPO> {
      */
     @Delete("DELETE FROM video_tag_rel WHERE video_id = #{videoId}")
     int deleteByVideoId(@Param("videoId") String videoId);
+
+    /**
+     * 批量持久化插入多条视频与标签关联绑定记录。
+     *
+     * @param list 关联持久化实体列表
+     * @return 成功插入的记录行数
+     */
+    @Insert("""
+            <script>
+            INSERT INTO video_tag_rel (id, video_id, tag_id, created_at)
+            VALUES
+            <foreach collection='list' item='item' separator=','>
+                (#{item.id}, #{item.videoId}, #{item.tagId}, CURRENT_TIMESTAMP(3))
+            </foreach>
+            </script>
+            """)
+    int batchInsert(@Param("list") List<VideoTagRelPO> list);
+
+    /**
+     * 精准批量物理删除指定视频名下的部分特定标签关联记录。
+     *
+     * @param videoId 视频全局主键 ID (UUID)
+     * @param tagIds 待解绑的标签主键 ID 集合
+     * @return 物理删除的行数
+     */
+    @Delete("""
+            <script>
+            DELETE FROM video_tag_rel
+            WHERE video_id = #{videoId} AND tag_id IN
+            <foreach item='tagId' collection='tagIds' open='(' separator=',' close=')'>
+                #{tagId}
+            </foreach>
+            </script>
+            """)
+    int deleteByVideoIdAndTagIds(@Param("videoId") String videoId, @Param("tagIds") Collection<String> tagIds);
 }
