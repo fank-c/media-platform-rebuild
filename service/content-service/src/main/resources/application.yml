@@ -1,30 +1,40 @@
+# content-service 内容微服务配置文件
 server:
+  # 服务 HTTP 监听端口；默认 8300，可通过环境变量 CONTENT_SERVER_PORT 灵活调整
   port: ${CONTENT_SERVER_PORT:8300}
+
 spring:
   application:
+    # 微服务名称，用于 Nacos 服务注册、OpenFeign 远程调用寻址以及分布式链路追踪识别
     name: content-service
   config:
+    # 显式声明导入 Nacos 配置中心上的全局共享配置 application.yml（遵守 Nacos 导入规范，防止启动报错）
     import: "optional:nacos:application.yml"
   cloud:
     nacos:
       discovery:
+        # Nacos 服务注册与发现中心通信地址
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
       config:
+        # Nacos 动态配置管理中心通信地址及安全鉴权凭据
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
-      username: ${NACOS_SERVER_USERNAME:nacos}
-      password: ${NACOS_SERVER_PASSWORD:nacos_password}
+        username: ${NACOS_SERVER_USERNAME:nacos}
+        password: ${NACOS_SERVER_PASSWORD:nacos_password}
   datasource:
-    # 当前与用户服务共用物理库；保留 CONTENT_DB_* 覆盖入口以支持后续独立拆库。
+    # 数据库连接配置：第一阶段过渡期在同一 MySQL 实例中共存，表前缀独立隔离 (video_*, content_*)；
+    # 提供 CONTENT_DB_* 环境变量覆盖入口，为后续微服务独立拆库留出平滑过渡路径。
     url: ${CONTENT_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${CONTENT_DB_USERNAME:media}
     password: ${CONTENT_DB_PASSWORD:media}
+
 management:
   endpoints:
     web:
       exposure:
+        # 暴露轻量健康检查与应用基础信息端点，供 K8s 存活/就绪探针以及网关健康检查探测
         include: health,info
 
 logging:
   pattern:
-    # 控制台彩色输出：时间/线程弱化(faint)、级别自适应着色(%5p)、traceId洋红高亮(magenta)、类名青色(cyan)
+    # 控制台彩色日志输出：时间/线程弱化(faint)、级别自适应着色(%5p)、traceId洋红高亮(magenta)、类名青色(cyan)
     console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%X{traceId:-}]){magenta} %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"

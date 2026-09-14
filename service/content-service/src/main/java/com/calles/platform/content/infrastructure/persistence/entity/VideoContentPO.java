@@ -123,7 +123,9 @@ public class VideoContentPO {
     private LocalDateTime updatedAt;
 
     /**
-     * 将 PO 转为领域模型。
+     * 将持久化对象转换为领域聚合根实体 (VideoContent)。
+     *
+     * @return 映射后的领域聚合根实体
      */
     public VideoContent toDomain() {
         return VideoContent.builder()
@@ -154,7 +156,10 @@ public class VideoContentPO {
     }
 
     /**
-     * 从领域模型构造 PO。
+     * 从领域聚合根模型映射转换为数据库持久化对象 (PO)。
+     *
+     * @param domain 领域聚合根实例
+     * @return 对应的持久化实体；若入参为 null 则返回 null
      */
     public static VideoContentPO fromDomain(VideoContent domain) {
         if (domain == null) {

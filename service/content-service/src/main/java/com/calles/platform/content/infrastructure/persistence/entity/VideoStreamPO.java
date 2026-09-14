@@ -74,7 +74,9 @@ public class VideoStreamPO {
     private LocalDateTime createdAt;
 
     /**
-     * 将 PO 转为领域实体。
+     * 将转码流持久化对象映射为领域实体 (VideoStream)。
+     *
+     * @return 对应的流媒体领域实体
      */
     public VideoStream toDomain() {
         return VideoStream.builder()
@@ -93,7 +95,10 @@ public class VideoStreamPO {
     }
 
     /**
-     * 从领域实体转为 PO。
+     * 从转码流领域实体构造持久化实体 (PO)。
+     *
+     * @param domain 视频流领域实体
+     * @return 对应的数据库持久化对象；若入参为 null 则返回 null
      */
     public static VideoStreamPO fromDomain(VideoStream domain) {
         if (domain == null) {

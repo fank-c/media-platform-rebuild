@@ -101,6 +101,18 @@ public class VideoContent {
 
     /**
      * 工厂方法：新建视频草稿 (DRAFT)。
+     *
+     * @param id 视频全局内部主键 ID (UUID)
+     * @param vid 24 位高熵业务对外公开短码 (如 cv...)
+     * @param authorId 创作者账户 ID
+     * @param title 视频标题
+     * @param description 视频图文描述
+     * @param videoFileId 原始主视频文件在 file-service 中的文件资产 ID
+     * @param coverFileId 封面图片文件在 file-service 中的文件资产 ID
+     * @param duration 视频时长（秒，非负）
+     * @param tags 逗号分隔的轻量关键词标签
+     * @return 初始化就绪的 DRAFT 状态聚合根实体
+     * @throws IllegalArgumentException 当基础入参非法（如空值或时长为负）时抛出
      */
     public static VideoContent createDraft(String id, String vid, String authorId, String title,
                                           String description, String videoFileId, String coverFileId,
@@ -131,7 +143,9 @@ public class VideoContent {
     }
 
     /**
-     * 提交发布：从草稿或被拒绝状态变更为审核中 (AUDITING)。
+     * 提交发布申请：从草稿 (DRAFT) 或被驳回 (REJECTED) 状态变更为审核中 (AUDITING)。
+     *
+     * @throws IllegalStateException 当视频处于封禁状态，或非 DRAFT/REJECTED 生命周期阶段时抛出
      */
     public void submitForAudit() {
         if (this.status != CommonStatus.ACTIVE) {
@@ -145,7 +159,10 @@ public class VideoContent {
     }
 
     /**
-     * 审核通过并正式发布 (PUBLISHED)。
+     * 审核通过并正式公开发布 (PUBLISHED)。
+     *
+     * @param publishTime 首次公开发布时间戳（若为 null 则自动取当前系统时间）
+     * @throws IllegalStateException 当视频非 AUDITING 审核中状态时抛出
      */
     public void publish(LocalDateTime publishTime) {
         if (this.publishStatus != PublishStatus.AUDITING) {
@@ -159,7 +176,10 @@ public class VideoContent {
     }
 
     /**
-     * 审核不通过拒绝 (REJECTED)。
+     * 审核不通过打回草稿箱 (REJECTED)。
+     *
+     * @param reason 审核人员或机审系统给出的不通过原因
+     * @throws IllegalStateException 当视频非 AUDITING 审核中状态时抛出
      */
     public void reject(String reason) {
         if (this.publishStatus != PublishStatus.AUDITING) {
@@ -170,7 +190,10 @@ public class VideoContent {
     }
 
     /**
-     * 创作者主动下架 (OFFLINE)。
+     * 创作者主动下架视频 (OFFLINE)。
+     *
+     * @param reason 创作者主动下架填写的备注或说明
+     * @throws IllegalStateException 当视频非 PUBLISHED 已发布状态时抛出
      */
     public void takeOffline(String reason) {
         if (this.publishStatus != PublishStatus.PUBLISHED) {
@@ -181,7 +204,9 @@ public class VideoContent {
     }
 
     /**
-     * 平台违规封禁/冻结 (DISABLED)。
+     * 平台违规治理封禁与冻结 (DISABLED)。
+     *
+     * @param reason 管理员填写的违规封禁业务原因
      */
     public void ban(String reason) {
         this.status = CommonStatus.DISABLED;
@@ -189,7 +214,7 @@ public class VideoContent {
     }
 
     /**
-     * 平台解除封禁 (ACTIVE)。
+     * 平台解除违规封禁，恢复正常可用状态 (ACTIVE)。
      */
     public void unban() {
         this.status = CommonStatus.ACTIVE;
@@ -197,6 +222,11 @@ public class VideoContent {
 
     /**
      * 修改视频图文元信息。
+     *
+     * @param newTitle 新标题（若非空则更新）
+     * @param newDescription 新简介描述（若非 null 则更新）
+     * @param newCoverFileId 新封面文件资产 ID（若非空则更新）
+     * @param newTags 新标签文本（若非 null 则清洗后更新）
      */
     public void updateMetadata(String newTitle, String newDescription, String newCoverFileId, String newTags) {
         if (newTitle != null && !newTitle.isBlank()) {
@@ -214,7 +244,13 @@ public class VideoContent {
     }
 
     /**
-     * 更新互动快照计数（由 interaction 异步事件回写）。
+     * 刷新互动计数快照（由 interaction 互动微服务异步事件批量回写）。
+     *
+     * @param viewCount 播放总次数
+     * @param likeCount 点赞总次数
+     * @param commentCount 评论总条数
+     * @param starCount 收藏总次数
+     * @param shareCount 分享转发总次数
      */
     public void updateMetricsSnapshot(long viewCount, long likeCount, long commentCount,
                                       long starCount, long shareCount) {
@@ -225,6 +261,9 @@ public class VideoContent {
         this.shareCount = Math.max(0, shareCount);
     }
 
+    /**
+     * 基础属性合法性前置断言校验。
+     */
     private static void validateBasicInfo(String id, String vid, String authorId, String title,
                                           String videoFileId, String coverFileId, int duration) {
         if (id == null || id.isBlank()) {
@@ -250,6 +289,12 @@ public class VideoContent {
         }
     }
 
+    /**
+     * 清洗标签文本，规范化中英文逗号并去除多余空白字符。
+     *
+     * @param rawTags 原始标签文本
+     * @return 格式化后的标签字符串 (如 "Java,微服务")
+     */
     private static String cleanTags(String rawTags) {
         if (rawTags == null || rawTags.isBlank()) {
             return "";

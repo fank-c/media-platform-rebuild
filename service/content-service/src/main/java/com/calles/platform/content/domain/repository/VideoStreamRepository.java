@@ -7,41 +7,49 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 视频转码流仓储端口接口。
+ * 视频转码流仓储端口接口 (Domain Repository Interface)。
+ *
+ * <p>职责与边界说明：
+ * <ul>
+ *   <li><b>所属边界</b>：转码流媒体切片及画质规格资产的持久化契约；</li>
+ *   <li><b>协作对象</b>：由基础设施层 {@link com.calles.platform.content.infrastructure.persistence.repository.VideoStreamRepositoryImpl} 映射 {@code video_stream} 表；</li>
+ *   <li><b>查询维度</b>：支持根据主视频 ID 汇总查询、以及根据 (videoId, quality, format) 复合规格精确查询。</li>
+ * </ul>
+ * </p>
  */
 public interface VideoStreamRepository {
 
     /**
-     * 保存转码流资产记录。
+     * 持久化转码流媒体切片记录。
      *
-     * @param stream 视频流实体
-     * @return 影响行数
+     * @param stream 待保存的视频流领域实体
+     * @return 影响的数据库记录行数
      */
     int insert(VideoStream stream);
 
     /**
-     * 查询指定视频的所有已生成转码流。
+     * 根据主视频内部 ID 查询该视频已生成的所有转码流切片。
      *
-     * @param videoId 视频内部 ID
-     * @return 该视频下的所有流资产列表
+     * @param videoId 视频内部全局主键 ID
+     * @return 对应的流媒体资产列表（按文件尺寸倒序）
      */
     List<VideoStream> findByVideoId(String videoId);
 
     /**
-     * 精确查询指定视频、画质与封装格式的流文件。
+     * 根据视频 ID、画质规格与流媒体封装格式精确检索唯一切片。
      *
-     * @param videoId 视频 ID
-     * @param quality 画质
-     * @param format 封装格式
-     * @return 对应流实体（若存在）
+     * @param videoId 视频全局主键 ID
+     * @param quality 画质规格 (如 1080P, 720P)
+     * @param format 封装格式 (如 MP4, HLS)
+     * @return 包含流实体的 {@link Optional}，未匹配时返回 empty
      */
     Optional<VideoStream> findBySpec(String videoId, StreamQuality quality, StreamFormat format);
 
     /**
-     * 删除指定视频关联的所有转码流记录。
+     * 级联物理删除指定视频名下的全部转码流切片记录。
      *
-     * @param videoId 视频 ID
-     * @return 影响行数
+     * @param videoId 视频全局主键 ID
+     * @return 影响的数据库记录行数
      */
     int deleteByVideoId(String videoId);
 }

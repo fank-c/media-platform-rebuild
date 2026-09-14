@@ -5,39 +5,47 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * 标签全局仓储端口接口。
+ * 标签全局仓储端口接口 (Domain Repository Interface)。
+ *
+ * <p>职责与边界说明：
+ * <ul>
+ *   <li><b>所属边界</b>：定义领域层针对标签字典与热度计数的持久化契约，与底层数据库技术解耦；</li>
+ *   <li><b>协作对象</b>：由基础设施层 {@link com.calles.platform.content.infrastructure.persistence.repository.ContentTagRepositoryImpl} 实现；</li>
+ *   <li><b>核心契约</b>：包含精确查找、批量拉取、原子按需创建 (findOrCreate)、原子热度增减以及热门榜单查询。</li>
+ * </ul>
+ * </p>
  */
 public interface ContentTagRepository {
 
     /**
-     * 按标签名称精确查找。
+     * 按标签唯一名称精确检索。
      *
-     * @param name 标签名
-     * @return 标签实体（若存在）
+     * @param name 标签名（如 "Java"）
+     * @return 包含领域实体的 {@link Optional}，未找到时返回 empty
      */
     Optional<ContentTag> findByName(String name);
 
     /**
-     * 按 ID 查找。
+     * 根据主键 ID 精确检索标签。
      *
-     * @param id 标签 ID (UUID)
-     * @return 标签实体（若存在）
+     * @param id 标签全局主键 ID (UUID)
+     * @return 包含领域实体的 {@link Optional}，未找到时返回 empty
      */
     Optional<ContentTag> findById(String id);
 
     /**
-     * 批量按 ID 查找标签。
+     * 批量按主键 ID 查找标签实体列表。
      *
      * @param ids 标签 ID (UUID) 列表
-     * @return 对应的标签实体列表
+     * @return 对应的标签领域实体列表（若入参为空则返回空列表）
      */
     List<ContentTag> findByIds(List<String> ids);
 
     /**
-     * 保存新标签记录。
+     * 新增持久化单条标签记录。
      *
-     * @param tag 待保存标签
-     * @return 影响行数
+     * @param tag 待保存的标签聚合实体
+     * @return 影响的数据库行数
      */
     int insert(ContentTag tag);
 
@@ -50,19 +58,19 @@ public interface ContentTagRepository {
     ContentTag findOrCreate(String name);
 
     /**
-     * 原子自增/自减引用热度计数。
+     * 原子自增或自减引用热度计数（底层保底不低于 0）。
      *
-     * @param tagId 标签 ID (UUID)
-     * @param delta 变更量（正数为增，负数为减）
+     * @param tagId 标签全局主键 ID (UUID)
+     * @param delta 变更量（正数表示递增，负数表示递减）
      * @return 影响行数
      */
     int updateReferenceCount(String tagId, long delta);
 
     /**
-     * 获取全站热门标签列表。
+     * 获取全站高热度有效标签排行列表。
      *
      * @param limit 获取数量上限
-     * @return 热门标签列表
+     * @return 按引用热度倒序排列的活跃标签实体列表
      */
     List<ContentTag> findTopHotTags(int limit);
 }
