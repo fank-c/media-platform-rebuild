@@ -45,6 +45,16 @@ file:
   upload-ttl: ${FILE_UPLOAD_TTL:15m}
   get-ttl: ${FILE_GET_TTL:2m}
   stream-buffer-size: ${FILE_STREAM_BUFFER_SIZE:65536}
+  security:
+    # 静态资源防盗链与时效签名 Token 密钥
+    token-secret: ${FILE_SECURITY_TOKEN_SECRET:media_platform_secure_resource_asset_token_secret_2026}
+    # 资源直链签名默认有效时长
+    default-ttl: ${FILE_SECURITY_DEFAULT_TTL:30m}
+  proxy:
+    # 允许后端流式代理的最大字节数，默认 10MB (10485760字节)，超出拒绝代理以保护微服务带宽
+    max-size: ${FILE_PROXY_MAX_SIZE:10485760}
+    # 浏览器本地缓存有效时间
+    cache-max-age: ${FILE_PROXY_CACHE_MAX_AGE:1h}
   direct-upload-v2:
     # 默认关闭；需先在隔离 MinIO/OSS 完成 checksum、条件 copy、CORS 与生命周期 POC。
     enabled: ${FILE_DIRECT_UPLOAD_V2_ENABLED:false}

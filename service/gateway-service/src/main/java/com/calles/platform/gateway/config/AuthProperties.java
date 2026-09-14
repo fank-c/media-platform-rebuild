@@ -24,6 +24,7 @@ public class AuthProperties {
             "/api/auth/login",
             "/api/auth/register",
             "/api/auth/refresh",
+            "/api/files/assets/**",
             "/actuator/health",
             "/actuator/info");
 

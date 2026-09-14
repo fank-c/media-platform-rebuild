@@ -36,4 +36,7 @@ public final class FileResponses {
 
   /** 下载签名响应，持有人可直接访问对象入口，必须以 no-store 返回。 */
   public record DownloadUrl(String url, Instant expiresAt) {}
+
+  /** 静态资源受控预览防盗链签名直链响应。 */
+  public record ViewUrl(String url, Instant expiresAt) {}
 }

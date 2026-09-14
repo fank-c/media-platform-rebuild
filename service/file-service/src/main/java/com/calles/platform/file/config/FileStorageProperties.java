@@ -38,6 +38,40 @@ public class FileStorageProperties {
   /** 过期扫描参数；默认关闭，避免误清共享 bucket。 */
   private Cleanup cleanup = new Cleanup();
 
+  /** 资源安全防盗链时效签名参数。 */
+  private Security security = new Security();
+
+  /** 静态资源受控代理流中转参数。 */
+  private Proxy proxy = new Proxy();
+
+  /**
+   * @return 安全防盗链签名参数
+   */
+  public Security getSecurity() {
+    return security;
+  }
+
+  /**
+   * @param security 安全防盗链签名参数
+   */
+  public void setSecurity(Security security) {
+    this.security = security;
+  }
+
+  /**
+   * @return 静态资源流式代理参数
+   */
+  public Proxy getProxy() {
+    return proxy;
+  }
+
+  /**
+   * @param proxy 静态资源流式代理参数
+   */
+  public void setProxy(Proxy proxy) {
+    this.proxy = proxy;
+  }
+
   /**
    * @return 存储类型与 MinIO 参数的受控分组
    */
@@ -209,6 +243,12 @@ public class FileStorageProperties {
     directUploadV2.validate(storage.getMinio());
     if (directUploadV2.isEnabled() && !cleanup.isEnabled()) {
       throw new IllegalStateException("启用 V2 暂存直传时必须同时启用清理任务");
+    }
+    if (security != null) {
+      security.validate();
+    }
+    if (proxy != null) {
+      proxy.validate();
     }
   }
 
@@ -644,6 +684,100 @@ public class FileStorageProperties {
           || runTimeout == null
           || runTimeout.isNegative()
           || runTimeout.isZero()) throw new IllegalStateException("清理间隔、批次大小、批次数和运行期限必须为正");
+    }
+  }
+
+  /** 资源防盗链签名参数分组，对应 file.security.* 配置键。 */
+  public static class Security {
+    /** HMAC-SHA256 签名密钥，避免使用弱密钥；默认提供安全的开发备用值。 */
+    private String tokenSecret = "media_platform_secure_resource_asset_token_secret_2026";
+
+    /** 资源签名默认有效时长，默认 30 分钟。 */
+    private Duration defaultTtl = Duration.ofMinutes(30);
+
+    /**
+     * @return 签名密钥
+     */
+    public String getTokenSecret() {
+      return tokenSecret;
+    }
+
+    /**
+     * @param tokenSecret 签名密钥
+     */
+    public void setTokenSecret(String tokenSecret) {
+      this.tokenSecret = tokenSecret;
+    }
+
+    /**
+     * @return 签名默认有效期
+     */
+    public Duration getDefaultTtl() {
+      return defaultTtl;
+    }
+
+    /**
+     * @param defaultTtl 签名默认有效期
+     */
+    public void setDefaultTtl(Duration defaultTtl) {
+      this.defaultTtl = defaultTtl;
+    }
+
+    /** 校验安全签名参数。 */
+    private void validate() {
+      if (tokenSecret == null || tokenSecret.trim().isEmpty()) {
+        throw new IllegalStateException("资源防盗链签名密钥 tokenSecret 不能为空");
+      }
+      if (defaultTtl == null || defaultTtl.isNegative() || defaultTtl.isZero()) {
+        throw new IllegalStateException("资源防盗链签名有效期 defaultTtl 必须为正时长");
+      }
+    }
+  }
+
+  /** 静态资源受控代理流中转参数分组，对应 file.proxy.* 配置键。 */
+  public static class Proxy {
+    /** 允许流式代理的最大字节数，默认 10 MiB (10485760 字节)。 */
+    private long maxSize = 10L * 1024 * 1024;
+
+    /** 浏览器本地缓存有效时间，默认 1 小时。 */
+    private Duration cacheMaxAge = Duration.ofHours(1);
+
+    /**
+     * @return 最大代理字节数
+     */
+    public long getMaxSize() {
+      return maxSize;
+    }
+
+    /**
+     * @param maxSize 最大代理字节数
+     */
+    public void setMaxSize(long maxSize) {
+      this.maxSize = maxSize;
+    }
+
+    /**
+     * @return 浏览器缓存时长
+     */
+    public Duration getCacheMaxAge() {
+      return cacheMaxAge;
+    }
+
+    /**
+     * @param cacheMaxAge 浏览器缓存时长
+     */
+    public void setCacheMaxAge(Duration cacheMaxAge) {
+      this.cacheMaxAge = cacheMaxAge;
+    }
+
+    /** 校验代理流参数。 */
+    private void validate() {
+      if (maxSize <= 0) {
+        throw new IllegalStateException("静态资源代理最大限制 maxSize 必须为正");
+      }
+      if (cacheMaxAge == null || cacheMaxAge.isNegative() || cacheMaxAge.isZero()) {
+        throw new IllegalStateException("静态资源代理缓存时长 cacheMaxAge 必须为正时长");
+      }
     }
   }
 

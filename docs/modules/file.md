@@ -82,6 +82,20 @@ V2 初始化只有 `file.direct-upload-v2.enabled=true` 才开放，否则返回
 
 成功响应包含 `url` 和 `expiresAt`，HTTP 缓存控制为 `no-store`，默认 `file.get-ttl=2m`。客户端应使用该地址下载，不把它当作永久公开链接。当前检查对象大小，不重新计算完整摘要；存储中的同大小内容变化不是这个接口能完整识别的情况。
 
+### 受控轻量静态资源防盗链代理流
+
+面向前端 HTML 标签（如 `<img src="...">`）直接内嵌展示的头像、缩略图等轻量资源（默认限制 $\le 10\text{MB}$），提供免 Bearer Token 登录、以 URL 签名进行防盗链鉴权的代理流端点：
+
+1. **获取预览防盗链签名直链**：调用 `GET /api/files/{id}/view-url`，需携带登录态，返回带有 `expires` 与 `sign` 参数的受控 URL 及过期时间（默认 30 分钟）。
+2. **受控代理访问**：调用 `GET /api/files/assets/{id}?expires={timestamp}&sign={hmacSignature}`：
+   - 网关层已将该端点加入白名单放行，同时挂载基于客户端 IP 的频次限流（每秒最多 30 次，超出返回 `429 Too Many Requests`）；
+   - 文件服务校验 HMAC-SHA256 签名与有效时效，未通过或被篡改返回 `403 Forbidden`；
+   - 检查文件元数据，未就绪返回 `409`，文件已标记删除则立即返回 `404 Not Found`；
+   - 超过代理尺寸阈值（10MB）时触发熔断拒绝中转流并返回 `413 Payload Too Large`；
+   - 强支持 HTTP 缓存协商：以文件 `sha256` 作为强 `ETag`，若客户端携带匹配的 `If-None-Match`，服务端直接返回 `304 Not Modified`（零数据流传输，无存储读取与带宽开销）；未命中则安全流式输出，携带 `Cache-Control: private, max-age=1h`、`nosniff` 与 `inline` 响应头。
+
+源码入口：[轻量资源代理用例](../../service/file-service/src/main/java/com/calles/platform/file/application/content/FileProxyService.java)、[时效防盗链令牌服务](../../service/file-service/src/main/java/com/calles/platform/file/application/security/AssetTokenService.java)、[网关防盗刷限流过滤器](../../service/gateway-service/src/main/java/com/calles/platform/gateway/filter/AssetRateLimiterGlobalFilter.java)。
+
 ### 在本进程中打开内容
 
 文件服务内部可调用 `FileContentService.openForProcessing(actorUserId, fileId)`，按调用方已认证的用户 ID 查本人可见记录，要求正常且 `COMPLETED`，然后打开对象输入流，返回元数据快照和读取句柄。状态不允许时抛出 `409` 业务异常，不可见记录为 `404`；对象打开失败继续向调用方抛出异常，不提供自动重读。

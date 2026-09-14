@@ -22,11 +22,18 @@
 
 ### 哪些请求不需要已有访问令牌
 
-默认白名单为 `/api/auth/ping`、`/api/auth/login`、`/api/auth/register`、`/api/auth/refresh`、`/actuator/health` 和 `/actuator/info`。白名单按路径匹配，不是“整个认证模块匿名开放”，也不是按 HTTP 方法细分。
+默认白名单为 `/api/auth/ping`、`/api/auth/login`、`/api/auth/register`、`/api/auth/refresh`、`/api/files/assets/**`（前端标签防盗链直链）、`/actuator/health` 和 `/actuator/info`。白名单按路径匹配，不是“整个模块匿名开放”，也不是按 HTTP 方法细分。
 
-这些请求跳过访问令牌验证，但仍清除客户端提交的身份头。登录仍检查密码，刷新仍检查刷新凭据；白名单并不替代具体功能的输入验证。用户公开资料没有加入此白名单，因此仍需登录。
+这些请求跳过访问令牌验证，但仍清除客户端提交的身份头。登录仍检查密码，刷新仍检查刷新凭据；静态资源代理依靠 URL 签名防盗链鉴权。用户公开资料没有加入此白名单，因此仍需登录。
 
-源码入口：[网关路由与白名单](../../service/gateway-service/src/main/resources/application.yml)。
+### 静态资源防盗刷限流防护
+
+针对放行的静态资源路径 `/api/files/assets/**`，网关挂载了独立的防盗刷限流过滤器 `AssetRateLimiterGlobalFilter`（Order = -150，早于认证过滤器）：
+- 基于客户端真实 IP 执行秒级 Redis 原子限流（默认限制单 IP 每秒最多 30 次请求）；
+- 超过阈值直接返回 HTTP `429 Too Many Requests`，在网关入口直接挡住恶意爬虫与刷量攻击；
+- Redis 故障或不可达时优雅降级（fail-open）放行，保障正常业务连续性。
+
+源码入口：[网关路由与白名单](../../service/gateway-service/src/main/resources/application.yml)、[静态资源限流过滤器](../../service/gateway-service/src/main/java/com/calles/platform/gateway/filter/AssetRateLimiterGlobalFilter.java)。
 
 ## Part 2：身份校验与传递
 

@@ -38,6 +38,14 @@ public class MybatisFileAssetRepository implements FileAssetRepository {
   }
 
   /**
+   * @return 未进入删除流程的文件记录（供受控代理访问）
+   */
+  @Override
+  public Optional<FileAsset> findVisibleById(String id) {
+    return Optional.ofNullable(mapper.selectVisibleById(id));
+  }
+
+  /**
    * @return 包含墓碑的本人文件
    */
   @Override

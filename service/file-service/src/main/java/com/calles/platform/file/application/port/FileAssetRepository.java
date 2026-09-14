@@ -27,6 +27,12 @@ public interface FileAssetRepository {
 
   /**
    * @param id 文件 ID
+   * @return 未进入删除流程的文件记录（供通过时效防盗链验签的受控代理访问）
+   */
+  Optional<FileAsset> findVisibleById(String id);
+
+  /**
+   * @param id 文件 ID
    * @param owner 所属主体
    * @return 包含墓碑的本人文件，仅用于重复删除判断
    */

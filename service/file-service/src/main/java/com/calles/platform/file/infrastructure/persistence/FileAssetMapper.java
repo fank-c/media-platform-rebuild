@@ -49,6 +49,14 @@ public interface FileAssetMapper {
   @Select("SELECT " + COLUMNS + " FROM file_asset WHERE id=#{id} AND create_by=#{owner} LIMIT 1")
   FileAsset selectPhysicalByIdAndOwner(@Param("id") String id, @Param("owner") String owner);
 
+  /** 查询未进入删除流程的文件（不限所有者，供通过签名验签后的受控资源代理访问）。 */
+  @Select(
+      "SELECT "
+          + COLUMNS
+          + " FROM file_asset WHERE id=#{id} AND delete_requested_at IS NULL"
+          + " AND deleted_at IS NULL LIMIT 1")
+  FileAsset selectVisibleById(@Param("id") String id);
+
   /** 按确认期限扫描 PENDING/VERIFYING，避免确认中记录被普通清理遗漏。 */
   @Select(
       "<script>SELECT "
