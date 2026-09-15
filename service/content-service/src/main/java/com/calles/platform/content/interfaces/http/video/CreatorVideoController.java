@@ -5,6 +5,7 @@ import com.calles.platform.common.web.context.UserInfo;
 import com.calles.platform.content.application.security.ContentAccessPolicy;
 import com.calles.platform.content.application.video.VideoPublishApplicationService;
 import com.calles.platform.content.application.video.VideoQueryApplicationService;
+import com.calles.platform.content.domain.model.video.VideoContent;
 import com.calles.platform.content.interfaces.http.dto.VideoRequests;
 import com.calles.platform.content.interfaces.http.dto.VideoResponses;
 import jakarta.validation.Valid;
@@ -47,6 +48,9 @@ public class CreatorVideoController {
 
     /** 统一认证上下文与权限门禁策略。 */
     private final ContentAccessPolicy accessPolicy;
+
+    /** 视频流水线任务协调器。 */
+    private final com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
 
     /**
      * 创作者创建视频草稿。
@@ -151,4 +155,22 @@ public class CreatorVideoController {
         // 步骤 2：执行按创建时间倒序的分页查询
         return ApiResponse.ok(queryService.listMyVideos(user.userId(), publishStatus, page, size));
     }
+
+    /**
+     * 创作者工作台查询指定视频的发布流水线与细分子任务执行进度。
+     *
+     * @param id 视频内部全局主键 ID
+     * @return 流水线全景进度响应
+     */
+    @GetMapping("/{id}/tasks")
+    public ApiResponse<VideoResponses.PipelineProgress> getPipelineProgress(@PathVariable String id) {
+        // 步骤 1：校验调用主体必须持有有效创作者或管理员登录身份
+        UserInfo user = accessPolicy.requireUser();
+        // 步骤 2：定位视频并校验仅作者本人与管理员有权观测流水线任务状态
+        VideoContent video = queryService.findVideoOrThrow(id);
+        accessPolicy.requireOwnerOrAdmin(video.getAuthorId());
+        // 步骤 3：返回各子任务的执行进度与门禁就绪指标
+        return ApiResponse.ok(videoTaskCoordinator.getPipelineProgress(id));
+    }
 }
+

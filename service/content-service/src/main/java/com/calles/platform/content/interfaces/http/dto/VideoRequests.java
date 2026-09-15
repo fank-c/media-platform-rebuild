@@ -12,7 +12,7 @@ import jakarta.validation.constraints.Size;
  * <ul>
  *   <li><b>所属边界</b>：接口层入参契约定义，统一聚合创作者端、管理端与微服务内部回调的数据结构；</li>
  *   <li><b>校验规则</b>：通过 Jakarta Validation (JSR-303) 注解强制进行字段长度、非空与数值边界校验；</li>
- *   <li><b>协作对象</b>：供 {@link com.calles.platform.content.interfaces.http.VideoController} 接收客户端与外部服务请求。</li>
+ *   <li><b>协作对象</b>：供 {@link com.calles.platform.content.interfaces.http.video} 接收客户端与外部服务请求。</li>
  * </ul>
  * </p>
  */
@@ -168,4 +168,29 @@ public final class VideoRequests {
 
             String transcodeStatus
     ) { }
+
+    /**
+     * 外部流水线工作节点 (Worker) 异步执行状态与进度回调请求体。
+     *
+     * @param videoId 关联的视频内部全局主键 ID（必填）
+     * @param taskType 任务类型（必填，AUDIT, TRANSCODE_720P, TRANSCODE_1080P, TRANSCODE_4K, VECTOR_EMBEDDING）
+     * @param status 状态（必填，RUNNING, SUCCESS, FAILED）
+     * @param progress 进度百分比（选填，0-100）
+     * @param errorMessage 失败错误原因（选填）
+     */
+    public record TaskCallback(
+            @NotBlank(message = "视频 ID 不能为空")
+            String videoId,
+
+            @NotBlank(message = "任务类型不能为空")
+            String taskType,
+
+            @NotBlank(message = "任务状态不能为空")
+            String status,
+
+            Integer progress,
+
+            String errorMessage
+    ) { }
 }
+

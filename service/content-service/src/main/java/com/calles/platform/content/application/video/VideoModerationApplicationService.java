@@ -56,14 +56,11 @@ public class VideoModerationApplicationService {
 
         // 步骤 3：在本地事务中生成 content.video.banned 领域事件，写入发件箱以广播下游下线缓存与推荐位
         Instant now = Instant.now();
-        ContentOutboxRecord outbox = new ContentOutboxRecord(
-                UUID.randomUUID().toString().replace("-", ""),
+        ContentOutboxRecord outbox = ContentOutboxRecord.of(
                 video.getId(),
                 "content.video.banned",
-                1,
                 String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"adminId\":\"%s\",\"reason\":\"%s\"}",
                         video.getId(), video.getVid(), adminId, reason != null ? reason : ""),
-                null,
                 now
         );
         contentOutboxMapper.insert(outbox, Timestamp.from(now), "PENDING", Timestamp.from(now));
@@ -90,14 +87,11 @@ public class VideoModerationApplicationService {
 
         // 步骤 3：在本地事务中写入 content.video.unbanned 领域事件以同步下游恢复各渠道索引
         Instant now = Instant.now();
-        ContentOutboxRecord outbox = new ContentOutboxRecord(
-                UUID.randomUUID().toString().replace("-", ""),
+        ContentOutboxRecord outbox = ContentOutboxRecord.of(
                 video.getId(),
                 "content.video.unbanned",
-                1,
                 String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"adminId\":\"%s\"}",
                         video.getId(), video.getVid(), adminId),
-                null,
                 now
         );
         contentOutboxMapper.insert(outbox, Timestamp.from(now), "PENDING", Timestamp.from(now));

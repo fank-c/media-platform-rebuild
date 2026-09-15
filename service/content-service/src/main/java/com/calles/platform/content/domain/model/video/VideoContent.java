@@ -90,6 +90,16 @@ public class VideoContent {
     /** 逻辑删除标记：0=未删除，1=已删除。 */
     private Integer deleted;
 
+    /**
+     * 判断当前实体是否已被逻辑删除。
+     *
+     * @return true 若已标记删除
+     */
+    public boolean isDeleted() {
+        return deleted != null && deleted != 0;
+    }
+
+
     /** 乐观锁并发版本号。 */
     private Long revision;
 

@@ -30,4 +30,29 @@ public record ContentOutboxRecord(
         String traceId,
         Instant occurredAt
 ) {
+
+    /**
+     * 静态便捷工厂方法：自动生成 32 位 UUID eventId，并优先从 SLF4J MDC 提取分布式链路追踪 traceId。
+     *
+     * <p>若 MDC 中无 traceId（如在定时调度或独立异步线程中），回退使用 eventId 确保 traceId 永不为 null，符合全链路追踪规范。</p>
+     *
+     * @param aggregateId 视频聚合根主键 ID
+     * @param eventType 领域事件类型
+     * @param payload 事件载荷 JSON
+     * @param occurredAt 事件发生时间
+     * @return 完备的 ContentOutboxRecord 记录
+     */
+    public static ContentOutboxRecord of(
+            String aggregateId,
+            String eventType,
+            String payload,
+            Instant occurredAt
+    ) {
+        String eventId = java.util.UUID.randomUUID().toString().replace("-", "");
+        String traceId = org.slf4j.MDC.get("traceId");
+        if (traceId == null || traceId.isBlank()) {
+            traceId = eventId;
+        }
+        return new ContentOutboxRecord(eventId, aggregateId, eventType, 1, payload, traceId, occurredAt);
+    }
 }

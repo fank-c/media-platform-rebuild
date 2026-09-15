@@ -35,6 +35,9 @@ class InternalVideoControllerTest {
     /** 模拟多清晰度转码流服务。 */
     private VideoStreamApplicationService streamService;
 
+    /** 模拟流水线任务协调器。 */
+    private com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
+
     /**
      * 测试前置初始化。
      */
@@ -42,13 +45,17 @@ class InternalVideoControllerTest {
     void setUp() {
         auditCallbackService = Mockito.mock(VideoAuditCallbackApplicationService.class);
         streamService = Mockito.mock(VideoStreamApplicationService.class);
+        videoTaskCoordinator = Mockito.mock(com.calles.platform.content.application.task.VideoTaskCoordinator.class);
 
-        InternalVideoController controller = new InternalVideoController(auditCallbackService, streamService);
+        InternalVideoController controller = new InternalVideoController(
+                auditCallbackService, streamService, videoTaskCoordinator
+        );
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ContentExceptionHandler())
                 .build();
     }
+
 
     /**
      * 测试 POST /api/content/videos/internal/audit-callback 接收审核判定结果回调。
@@ -110,4 +117,29 @@ class InternalVideoControllerTest {
         // 步骤 3: 验证转码流注册服务调用
         verify(streamService).registerStream(any(VideoRequests.TranscodeCallback.class));
     }
+
+    /**
+     * 测试 POST /api/content/videos/internal/task-callback 接收通用子任务执行进度或成功回调。
+     */
+    @Test
+    @DisplayName("POST /api/content/videos/internal/task-callback 接收通用任务回调成功")
+    void taskCallbackSuccessfully() throws Exception {
+        String requestJson = """
+                {
+                    "videoId": "v_100",
+                    "taskType": "VECTOR_EMBEDDING",
+                    "status": "SUCCESS",
+                    "progress": 100
+                }
+                """;
+
+        mockMvc.perform(post("/api/content/videos/internal/task-callback")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestJson))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        verify(videoTaskCoordinator).completeTask("v_100", com.calles.platform.content.domain.model.task.TaskType.VECTOR_EMBEDDING);
+    }
 }
+

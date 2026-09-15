@@ -63,6 +63,9 @@ public class VideoPublishApplicationService {
     /** 事务性发件箱 Mapper。 */
     private final ContentOutboxMapper contentOutboxMapper;
 
+    /** 视频异步流水线任务协调器。 */
+    private final com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
+
     /**
      * 创建视频草稿。
      *
@@ -170,20 +173,21 @@ public class VideoPublishApplicationService {
 
         // 步骤 4：在本地事务中持久化 Outbox 记录，发布 content.video.submitted 供审核微服务消费
         Instant now = Instant.now();
-        ContentOutboxRecord outboxRecord = new ContentOutboxRecord(
-                UUID.randomUUID().toString().replace("-", ""),
+        ContentOutboxRecord outboxRecord = ContentOutboxRecord.of(
                 video.getId(),
                 "content.video.submitted",
-                1,
                 String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"authorId\":\"%s\",\"videoFileId\":\"%s\",\"coverFileId\":\"%s\"}",
                         video.getId(), video.getVid(), video.getAuthorId(), video.getVideoFileId(), video.getCoverFileId()),
-                null,
                 now
         );
         contentOutboxMapper.insert(outboxRecord, Timestamp.from(now), "PENDING", Timestamp.from(now));
 
-        log.info("视频 [{}] 已成功提交审核，并记录 Outbox 待发布事件", id);
+        // 步骤 5：初始化生成 5 个流水线子任务（审核、各规格转码、向量提取），进入就绪门禁管理
+        videoTaskCoordinator.initPipelineTasks(video.getId());
+
+        log.info("视频 [{}] 已成功提交审核，已初始化流水线任务并记录 Outbox 待发布事件", id);
     }
+
 
     /**
      * 创作者主动下架已发布的视频。
@@ -213,14 +217,11 @@ public class VideoPublishApplicationService {
 
         // 步骤 3：写入 content.video.offline 发件箱事件，通知搜索/推荐系统即时下线
         Instant now = Instant.now();
-        ContentOutboxRecord outboxRecord = new ContentOutboxRecord(
-                UUID.randomUUID().toString().replace("-", ""),
+        ContentOutboxRecord outboxRecord = ContentOutboxRecord.of(
                 video.getId(),
                 "content.video.offline",
-                1,
                 String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"reason\":\"%s\"}",
                         video.getId(), video.getVid(), reason != null ? reason : ""),
-                MDC.get("traceId"),
                 now
         );
         contentOutboxMapper.insert(outboxRecord, Timestamp.from(now), "PENDING", Timestamp.from(now));

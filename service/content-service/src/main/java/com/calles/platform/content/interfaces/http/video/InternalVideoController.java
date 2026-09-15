@@ -2,7 +2,10 @@ package com.calles.platform.content.interfaces.http.video;
 
 import com.calles.platform.common.core.ApiResponse;
 import com.calles.platform.content.application.stream.VideoStreamApplicationService;
+import com.calles.platform.content.application.task.VideoTaskCoordinator;
 import com.calles.platform.content.application.video.VideoAuditCallbackApplicationService;
+import com.calles.platform.content.domain.model.task.TaskStatus;
+import com.calles.platform.content.domain.model.task.TaskType;
 import com.calles.platform.content.interfaces.http.dto.VideoRequests;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +37,9 @@ public class InternalVideoController {
     /** 视频转码流注册与调度应用服务。 */
     private final VideoStreamApplicationService streamService;
 
+    /** 视频异步流水线任务协调器。 */
+    private final VideoTaskCoordinator videoTaskCoordinator;
+
     /**
      * 接收审核微服务 (audit-service) 的审核判定结果回调。
      *
@@ -59,4 +65,31 @@ public class InternalVideoController {
         streamService.registerStream(request);
         return ApiResponse.ok();
     }
+
+    /**
+     * 接收外部工作节点 (Worker) 异步执行状态与进度通用汇报回调。
+     *
+     * @param request 包含任务类型、目标状态、执行进度百分比与错误信息的回调参数
+     * @return 标准成功响应
+     */
+    @PostMapping("/task-callback")
+    public ApiResponse<Void> taskCallback(@Valid @RequestBody VideoRequests.TaskCallback request) {
+        TaskType taskType = TaskType.fromCode(request.taskType());
+        TaskStatus status = TaskStatus.fromCode(request.status());
+
+        if (status == TaskStatus.RUNNING) {
+            if (request.progress() != null) {
+                videoTaskCoordinator.updateProgress(request.videoId(), taskType, request.progress());
+            } else {
+                videoTaskCoordinator.startTask(request.videoId(), taskType);
+            }
+        } else if (status == TaskStatus.SUCCESS) {
+            videoTaskCoordinator.completeTask(request.videoId(), taskType);
+        } else if (status == TaskStatus.FAILED) {
+            videoTaskCoordinator.failTask(request.videoId(), taskType,
+                    request.errorMessage() != null ? request.errorMessage() : "Worker 汇报执行失败");
+        }
+        return ApiResponse.ok();
+    }
 }
+

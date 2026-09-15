@@ -5,6 +5,7 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.openfeign.EnableFeignClients;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 内容服务 (content-service) Spring Boot 启动引导入口。
@@ -15,6 +16,7 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
  *   <li><b>协作对象</b>：
  *     <ul>
  *       <li>{@link EnableFeignClients}：开启针对 {@code file-service} 的 OpenFeign 客户端扫描；</li>
+ *       <li>{@link EnableScheduling}：开启后台任务超时巡检定时任务；</li>
  *       <li>{@link MapperScan}：扫描内容持久化 Mapper 与事务性发件箱 (Outbox) Mapper；</li>
  *       <li>注册中心与配置中心：通过 Nacos 动态拉取配置并注册服务实例。</li>
  *     </ul>
@@ -24,8 +26,10 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
  * </p>
  */
 @SpringBootApplication
+@EnableScheduling
 @EnableFeignClients(basePackages = "com.calles.platform.content.application.client")
 @MapperScan(basePackages = "com.calles.platform.content.infrastructure", annotationClass = Mapper.class)
+
 public class ContentApplication {
 
     /**

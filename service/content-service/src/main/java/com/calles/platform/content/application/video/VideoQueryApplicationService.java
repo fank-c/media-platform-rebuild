@@ -261,4 +261,18 @@ public class VideoQueryApplicationService {
             throw new ContentException(HttpStatus.NOT_FOUND, "该视频为创作者私密内容");
         }
     }
+
+    /**
+     * 根据主键查询未删除的视频聚合根，不存在时抛出 404 异常。
+     *
+     * @param id 视频全局唯一主键 ID
+     * @return 视频聚合根实体
+     * @throws ContentException 404 NOT_FOUND
+     */
+    public VideoContent findVideoOrThrow(String id) {
+        return videoContentRepository.findById(id)
+                .filter(v -> !v.isDeleted())
+                .orElseThrow(() -> new ContentException(HttpStatus.NOT_FOUND, "未找到指定的视频内容: " + id));
+    }
 }
+

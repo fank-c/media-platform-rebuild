@@ -73,10 +73,17 @@ class VideoPublishApplicationServiceTest {
     private ContentOutboxMapper contentOutboxMapper;
 
     /**
+     * 模拟流水线任务协调器。
+     */
+    @Mock
+    private com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
+
+    /**
      * 被测发布应用服务。
      */
     @InjectMocks
     private VideoPublishApplicationService publishService;
+
 
     /**
      * 创作者上下文样例对象。
@@ -187,7 +194,9 @@ class VideoPublishApplicationServiceTest {
         assertThat(video.getPublishStatus()).isEqualTo(PublishStatus.AUDITING);
         verify(videoContentRepository).updateById(video);
         verify(contentOutboxMapper).insert(any(ContentOutboxRecord.class), any(Timestamp.class), eq("PENDING"), any(Timestamp.class));
+        verify(videoTaskCoordinator).initPipelineTasks("v_123");
     }
+
 
     /**
      * 测试提审防御：当源文件在 file-service 尚未就绪（如上传中或未确认）时阻断提审并返回 BAD_REQUEST。

@@ -48,6 +48,9 @@ class CreatorVideoControllerTest {
     /** 模拟权限门禁策略。 */
     private ContentAccessPolicy accessPolicy;
 
+    /** 模拟流水线任务协调器。 */
+    private com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
+
     /** 创作者上下文测试样例。 */
     private UserInfo sampleUser;
 
@@ -59,17 +62,19 @@ class CreatorVideoControllerTest {
         publishService = Mockito.mock(VideoPublishApplicationService.class);
         queryService = Mockito.mock(VideoQueryApplicationService.class);
         accessPolicy = Mockito.mock(ContentAccessPolicy.class);
+        videoTaskCoordinator = Mockito.mock(com.calles.platform.content.application.task.VideoTaskCoordinator.class);
 
         sampleUser = new UserInfo("user_001", "USER", "NORMAL", "session_1", "device_1");
 
         CreatorVideoController controller = new CreatorVideoController(
-                publishService, queryService, accessPolicy
+                publishService, queryService, accessPolicy, videoTaskCoordinator
         );
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ContentExceptionHandler())
                 .build();
     }
+
 
     /**
      * 测试 POST /api/content/videos/draft 创作者新建草稿，返回 201 与业务短码 vid。
@@ -222,4 +227,35 @@ class CreatorVideoControllerTest {
                 .andExpect(jsonPath("$.data.total").value(1))
                 .andExpect(jsonPath("$.data.records[0].vid").value("cv10086"));
     }
+
+    /**
+     * 测试 GET /api/content/videos/{id}/tasks 创作者查询发布流水线任务进度。
+     */
+    @Test
+    @DisplayName("GET /api/content/videos/{id}/tasks 查询流水线任务进度成功")
+    void getPipelineTasksSuccessfully() throws Exception {
+        when(accessPolicy.requireUser()).thenReturn(sampleUser);
+
+        com.calles.platform.content.domain.model.video.VideoContent video =
+                com.calles.platform.content.domain.model.video.VideoContent.createDraft(
+                        "v_100", "cv10086", "user_001", "标题", "简介", "fv", "fc", 120, "tag"
+                );
+        when(queryService.findVideoOrThrow("v_100")).thenReturn(video);
+
+        VideoResponses.TaskProgressItem item = new VideoResponses.TaskProgressItem(
+                "task_1", "AUDIT", "内容合规审核", "SUCCESS", 100, 0, null, null, null
+        );
+        VideoResponses.PipelineProgress progress = new VideoResponses.PipelineProgress(
+                "v_100", "AUDITING", false, List.of(item)
+        );
+        when(videoTaskCoordinator.getPipelineProgress("v_100")).thenReturn(progress);
+
+        mockMvc.perform(get("/api/content/videos/v_100/tasks"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.videoId").value("v_100"))
+                .andExpect(jsonPath("$.data.tasks[0].taskType").value("AUDIT"))
+                .andExpect(jsonPath("$.data.tasks[0].status").value("SUCCESS"));
+    }
 }
+

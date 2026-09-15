@@ -46,10 +46,17 @@ class VideoStreamApplicationServiceTest {
     private VideoContentRepository videoContentRepository;
 
     /**
+     * 模拟流水线任务协调器。
+     */
+    @Mock
+    private com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
+
+    /**
      * 被测转码流应用服务。
      */
     @InjectMocks
     private VideoStreamApplicationService streamService;
+
 
     /**
      * 测试全新转码规格（如首个 1080P MP4）流媒体记录的初始化与入库。

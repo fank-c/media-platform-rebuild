@@ -201,4 +201,45 @@ public final class VideoResponses {
             String name,
             long referenceCount
     ) { }
+
+    /**
+     * 流水线单项子任务执行进度明细。
+     *
+     * @param id 任务全局唯一主键 ID
+     * @param taskType 任务类型编码 (AUDIT, TRANSCODE_720P, TRANSCODE_1080P, TRANSCODE_4K, VECTOR_EMBEDDING)
+     * @param taskName 任务展示名称
+     * @param status 任务状态 (PENDING, RUNNING, SUCCESS, FAILED, CANCELED)
+     * @param progress 执行进度百分比 (0-100)
+     * @param retryCount 已重试次数
+     * @param errorMessage 失败错误说明
+     * @param startedAt 开始执行时间
+     * @param completedAt 完成时间
+     */
+    public record TaskProgressItem(
+            String id,
+            String taskType,
+            String taskName,
+            String status,
+            int progress,
+            int retryCount,
+            String errorMessage,
+            LocalDateTime startedAt,
+            LocalDateTime completedAt
+    ) { }
+
+    /**
+     * 视频发布流水线全景进度状态响应。
+     *
+     * @param videoId 视频全局唯一 ID
+     * @param publishStatus 视频当前发布生命周期 (AUDITING, PUBLISHED 等)
+     * @param eligibleForPublish 是否已满足分级就绪门禁
+     * @param tasks 所有子任务明细列表
+     */
+    public record PipelineProgress(
+            String videoId,
+            String publishStatus,
+            boolean eligibleForPublish,
+            List<TaskProgressItem> tasks
+    ) { }
 }
+

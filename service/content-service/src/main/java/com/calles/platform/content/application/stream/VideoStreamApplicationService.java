@@ -5,6 +5,7 @@ import com.calles.platform.content.domain.model.stream.StreamFormat;
 import com.calles.platform.content.domain.model.stream.StreamQuality;
 import com.calles.platform.content.domain.model.stream.TranscodeStatus;
 import com.calles.platform.content.domain.model.stream.VideoStream;
+import com.calles.platform.content.domain.model.task.TaskType;
 import com.calles.platform.content.domain.repository.VideoContentRepository;
 import com.calles.platform.content.domain.repository.VideoStreamRepository;
 import com.calles.platform.content.exception.ContentException;
@@ -39,6 +40,9 @@ public class VideoStreamApplicationService {
 
     /** 视频聚合根仓储，用于校验视频归属主体。 */
     private final VideoContentRepository videoContentRepository;
+
+    /** 视频异步流水线任务协调器。 */
+    private final com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
 
     /**
      * 注册或更新转码流媒体切片记录（幂等安全）。
@@ -89,5 +93,24 @@ public class VideoStreamApplicationService {
             videoStreamRepository.insert(stream);
             log.info("成功注册视频 [{}] 的新流媒体切片: [{} - {}], fileId=[{}]", request.videoId(), quality, format, request.fileId());
         }
+
+        // 步骤 5：同步驱动流水线转码子任务状态跃迁与发布门禁评估
+        TaskType mappedTaskType = switch (quality) {
+            case P720 -> TaskType.TRANSCODE_720P;
+            case P1080, P1080_60 -> TaskType.TRANSCODE_1080P;
+            case P4K -> TaskType.TRANSCODE_4K;
+            default -> null;
+        };
+
+        if (mappedTaskType != null) {
+            if (transcodeStatus == TranscodeStatus.COMPLETED) {
+                videoTaskCoordinator.completeTask(request.videoId(), mappedTaskType);
+            } else if (transcodeStatus == TranscodeStatus.FAILED) {
+                videoTaskCoordinator.failTask(request.videoId(), mappedTaskType, "转码切片处理失败");
+            } else if (transcodeStatus == TranscodeStatus.PROCESSING) {
+                videoTaskCoordinator.startTask(request.videoId(), mappedTaskType);
+            }
+        }
     }
 }
+
