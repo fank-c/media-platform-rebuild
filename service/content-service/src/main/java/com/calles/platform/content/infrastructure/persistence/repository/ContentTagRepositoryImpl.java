@@ -4,6 +4,7 @@ import com.calles.platform.content.domain.model.tag.ContentTag;
 import com.calles.platform.content.domain.repository.ContentTagRepository;
 import com.calles.platform.content.infrastructure.persistence.entity.ContentTagPO;
 import com.calles.platform.content.infrastructure.persistence.mapper.ContentTagMapper;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -132,18 +133,22 @@ public class ContentTagRepositoryImpl implements ContentTagRepository {
         Map<String, ContentTagPO> existingMap = existing.stream()
                 .collect(Collectors.toMap(ContentTagPO::getName, po -> po, (a, b) -> a));
 
-        // 步骤 3：识别缺失的标签并原子执行 insertIgnore 避免并发主键/唯一索引冲突
-        boolean hasNew = false;
+        // 步骤 3：识别缺失的标签并构建待插入持久化实体列表
+        List<ContentTagPO> toInsert = new ArrayList<>();
         for (String name : cleanNames) {
             if (!existingMap.containsKey(name)) {
-                String generatedId = UUID.randomUUID().toString().replace("-", "");
-                contentTagMapper.insertIgnore(generatedId, name);
-                hasNew = true;
+                toInsert.add(ContentTagPO.builder()
+                        .id(UUID.randomUUID().toString().replace("-", ""))
+                        .name(name)
+                        .referenceCount(0L)
+                        .status("ACTIVE")
+                        .build());
             }
         }
 
-        // 步骤 4：若存在新插入的词条，重新批量检索补齐；否则直接返回已有实体
-        if (hasNew) {
+        // 步骤 4：若存在新词条，一次性批量执行 INSERT IGNORE，并重新批量检索补全；否则直接返回已有实体
+        if (!toInsert.isEmpty()) {
+            contentTagMapper.batchInsertIgnore(toInsert);
             return contentTagMapper.selectByNames(cleanNames).stream()
                     .map(ContentTagPO::toDomain)
                     .toList();

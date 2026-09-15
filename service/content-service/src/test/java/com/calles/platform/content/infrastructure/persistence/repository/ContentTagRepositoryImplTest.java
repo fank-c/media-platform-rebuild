@@ -4,6 +4,7 @@ import com.calles.platform.content.domain.model.CommonStatus;
 import com.calles.platform.content.domain.model.tag.ContentTag;
 import com.calles.platform.content.infrastructure.persistence.entity.ContentTagPO;
 import com.calles.platform.content.infrastructure.persistence.mapper.ContentTagMapper;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -187,20 +188,24 @@ class ContentTagRepositoryImplTest {
     }
 
     /**
-     * 测试批量 findOrCreateBatch：部分存在部分不存在时的处理。
+     * 测试批量 findOrCreateBatch：部分存在部分不存在时的处理（单次批量写入缺失项）。
      */
     @Test
-    @DisplayName("findOrCreateBatch：部分存在部分不存在时幂等补全并返回全量")
+    @DisplayName("findOrCreateBatch：部分存在部分不存在时单次批量插入补全并返回全量")
     void shouldFindOrCreateBatch() {
         ContentTagPO existing = ContentTagPO.builder().id("tag_001").name("Java").referenceCount(10L).status("ACTIVE").build();
         ContentTagPO created = ContentTagPO.builder().id("tag_002").name("Go").referenceCount(0L).status("ACTIVE").build();
 
         when(contentTagMapper.selectByNames(any())).thenReturn(List.of(existing)).thenReturn(List.of(existing, created));
-        when(contentTagMapper.insertIgnore(any(), eq("Go"))).thenReturn(1);
+        when(contentTagMapper.batchInsertIgnore(any())).thenReturn(1);
 
         List<ContentTag> result = repository.findOrCreateBatch(List.of("Java", "Go"));
 
         assertThat(result).hasSize(2);
-        verify(contentTagMapper).insertIgnore(any(), eq("Go"));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<ContentTagPO>> captor = ArgumentCaptor.forClass(Collection.class);
+        verify(contentTagMapper).batchInsertIgnore(captor.capture());
+        assertThat(captor.getValue()).hasSize(1);
+        assertThat(captor.getValue().iterator().next().getName()).isEqualTo("Go");
     }
 }

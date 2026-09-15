@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -219,7 +220,7 @@ public class VideoPublishApplicationService {
                 1,
                 String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"reason\":\"%s\"}",
                         video.getId(), video.getVid(), reason != null ? reason : ""),
-                null,
+                MDC.get("traceId"),
                 now
         );
         contentOutboxMapper.insert(outboxRecord, Timestamp.from(now), "PENDING", Timestamp.from(now));

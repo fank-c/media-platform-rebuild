@@ -2,6 +2,7 @@ package com.calles.platform.content.infrastructure.persistence.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.calles.platform.content.infrastructure.persistence.entity.ContentTagPO;
+import java.util.Collection;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -40,6 +41,23 @@ public interface ContentTagMapper extends BaseMapper<ContentTagPO> {
      */
     @Insert("INSERT IGNORE INTO content_tag(id, name, reference_count, status) VALUES(#{id}, #{name}, 0, 'ACTIVE')")
     int insertIgnore(@Param("id") String id, @Param("name") String name);
+
+    /**
+     * 批量幂等插入新标签词条；若遇到唯一键冲突 (uk_content_tag_name) 则静默忽略。
+     *
+     * @param list 待插入的标签持久化实体列表
+     * @return 实际成功插入的记录行数
+     */
+    @Insert("""
+            <script>
+            INSERT IGNORE INTO content_tag (id, name, reference_count, status)
+            VALUES
+            <foreach collection='list' item='item' separator=','>
+                (#{item.id}, #{item.name}, 0, 'ACTIVE')
+            </foreach>
+            </script>
+            """)
+    int batchInsertIgnore(@Param("list") Collection<ContentTagPO> list);
 
     /**
      * 原子自增或自减标签的引用热度计数（保底非负数）。
