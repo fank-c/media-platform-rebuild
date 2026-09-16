@@ -10,7 +10,7 @@ import com.calles.platform.audit.domain.engine.TextAuditEngine;
 import com.calles.platform.audit.domain.engine.VideoAuditEngine;
 import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.domain.service.AuditDecisionAggregator;
-import lombok.RequiredArgsConstructor;
+import com.calles.platform.audit.domain.model.enums.ReviewLevel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 /**
  * 视频业务专属审核执行器实现 (VideoAuditExecutor)。
@@ -83,71 +85,25 @@ public class VideoAuditExecutor implements AuditExecutor {
 
         Map<AuditDimension, EngineAuditResult> reusableResults = context.reusableResults();
 
-        // 步骤 1：阶段一 - 文本合规审查（标题 + 简介）
-        CompletableFuture<List<EngineAuditResult>> textFuture;
-        if (reusableResults.containsKey(AuditDimension.TEXT)) {
-            log.info("视频 [{}] 文本维度命中历史通过结果，直接免审复用", context.bizId());
-            textFuture = CompletableFuture.completedFuture(List.of(reusableResults.get(AuditDimension.TEXT)));
-        } else {
-            textFuture = CompletableFuture.supplyAsync(() -> {
-                List<EngineAuditResult> textResults = new ArrayList<>();
-                textResults.add(textAuditEngine.audit(context.title(), AuditDimension.TEXT));
-                if (context.description() != null && !context.description().isBlank()) {
-                    textResults.add(textAuditEngine.audit(context.description(), AuditDimension.TEXT));
-                }
-                return textResults;
-            }, auditEngineExecutor).exceptionally(ex -> {
-                log.error("文本机审引擎执行异常, 自动降级为人工复审: videoId=[{}]", context.bizId(), ex);
-                return List.of(EngineAuditResult.of(
-                        AuditDimension.TEXT, "LOCAL_DFA", com.calles.platform.audit.domain.model.enums.ReviewLevel.SUSPICIOUS,
-                        BigDecimal.ZERO, List.of(), "文本机审异常自动降级: " + ex.getMessage()));
-            });
-        }
+        // 步骤 1：三阶段异步并发调度（内部自动处理历史免审跳过与异常优雅降级）
+        CompletableFuture<List<EngineAuditResult>> textFuture = executeOrReuse(
+                AuditDimension.TEXT, reusableResults, () -> auditTexts(context), "LOCAL_DFA", "文本", context.bizId());
 
-        // 步骤 2：阶段二 - 封面图片多媒体合规审查
-        CompletableFuture<EngineAuditResult> imageFuture;
-        if (reusableResults.containsKey(AuditDimension.IMAGE)) {
-            log.info("视频 [{}] 封面维度命中历史通过结果，直接免审复用: coverFileId=[{}]", context.bizId(), context.coverFileId());
-            imageFuture = CompletableFuture.completedFuture(reusableResults.get(AuditDimension.IMAGE));
-        } else {
-            imageFuture = CompletableFuture.supplyAsync(
-                    () -> imageAuditEngine.auditCover(context.coverFileId()),
-                    auditEngineExecutor
-            ).exceptionally(ex -> {
-                log.error("封面多媒体机审引擎执行异常, 自动降级为人工复审: coverFileId=[{}]", context.coverFileId(), ex);
-                return EngineAuditResult.of(
-                        AuditDimension.IMAGE, "RULE_IMAGE", com.calles.platform.audit.domain.model.enums.ReviewLevel.SUSPICIOUS,
-                        BigDecimal.ZERO, List.of(), "封面机审异常自动降级: " + ex.getMessage());
-            });
-        }
+        CompletableFuture<List<EngineAuditResult>> imageFuture = executeOrReuse(
+                AuditDimension.IMAGE, reusableResults, () -> List.of(imageAuditEngine.auditCover(context.coverFileId())), "RULE_IMAGE", "封面", context.bizId());
 
-        // 步骤 3：阶段三 - 视频流多媒体资产合规审查
-        CompletableFuture<EngineAuditResult> videoFuture;
-        if (reusableResults.containsKey(AuditDimension.VIDEO)) {
-            log.info("视频 [{}] 视频资产命中历史通过结果，直接免审复用: videoFileId=[{}]", context.bizId(), context.videoFileId());
-            videoFuture = CompletableFuture.completedFuture(reusableResults.get(AuditDimension.VIDEO));
-        } else {
-            videoFuture = CompletableFuture.supplyAsync(
-                    () -> videoAuditEngine.auditVideo(context.videoFileId()),
-                    auditEngineExecutor
-            ).exceptionally(ex -> {
-                log.error("主视频多媒体机审引擎执行异常, 自动降级为人工复审: videoFileId=[{}]", context.videoFileId(), ex);
-                return EngineAuditResult.of(
-                        AuditDimension.VIDEO, "RULE_VIDEO", com.calles.platform.audit.domain.model.enums.ReviewLevel.SUSPICIOUS,
-                        BigDecimal.ZERO, List.of(), "视频机审异常自动降级: " + ex.getMessage());
-            });
-        }
+        CompletableFuture<List<EngineAuditResult>> videoFuture = executeOrReuse(
+                AuditDimension.VIDEO, reusableResults, () -> List.of(videoAuditEngine.auditVideo(context.videoFileId())), "RULE_VIDEO", "视频", context.bizId());
 
-        // 步骤 4：统一等待三阶段任务全部完成
+        // 步骤 2：统一等待三阶段任务全部完成
         CompletableFuture.allOf(textFuture, imageFuture, videoFuture).join();
 
-        // 步骤 5：汇聚多维度审查明细
-        List<EngineAuditResult> engineResults = new ArrayList<>();
-        engineResults.addAll(textFuture.join());
-        engineResults.add(imageFuture.join());
-        engineResults.add(videoFuture.join());
+        // 步骤 3：汇聚多维度审查明细
+        List<EngineAuditResult> engineResults = Stream.of(textFuture, imageFuture, videoFuture)
+                .flatMap(f -> f.join().stream())
+                .toList();
 
-        // 步骤 6：基于最高安全优先级进行综合仲裁
+        // 步骤 4：基于最高安全优先级进行综合仲裁
         AuditDecisionAggregator.Decision decision = decisionAggregator.aggregate(engineResults);
 
         log.info("视频 [{}] 机审综合判定达成: level=[{}], reason=[{}]",
@@ -158,5 +114,60 @@ public class VideoAuditExecutor implements AuditExecutor {
                 .summaryReason(decision.summaryReason())
                 .details(engineResults)
                 .build();
+    }
+
+    /**
+     * 执行特定维度的审查任务：命中历史通过结论时直接免审复用，否则提交线程池并发执行并在异常时优雅降级。
+     *
+     * @param dimension 审查维度
+     * @param reusableResults 可复用的历史判定映射
+     * @param supplier 审查任务执行供给器
+     * @param engineType 降级兜底的引擎标识
+     * @param fallbackPrefix 降级原因前缀描述
+     * @param bizId 业务标的 ID
+     * @return 异步审查结果 Future
+     */
+    private CompletableFuture<List<EngineAuditResult>> executeOrReuse(
+            AuditDimension dimension,
+            Map<AuditDimension, EngineAuditResult> reusableResults,
+            Supplier<List<EngineAuditResult>> supplier,
+            String engineType,
+            String fallbackPrefix,
+            String bizId
+    ) {
+        // 步骤 1：若命中历史免审结论，跳过计算直接返回
+        if (reusableResults.containsKey(dimension)) {
+            log.info("视频 [{}] {}维度命中历史通过结果，直接免审复用", bizId, fallbackPrefix);
+            return CompletableFuture.completedFuture(List.of(reusableResults.get(dimension)));
+        }
+
+        // 步骤 2：提交隔离线程池并发计算，并挂载高可用异常降级
+        return CompletableFuture.supplyAsync(supplier, auditEngineExecutor)
+                .exceptionally(ex -> {
+                    log.error("视频 [{}] {}机审引擎执行异常, 自动降级为人工复审", bizId, fallbackPrefix, ex);
+                    return List.of(EngineAuditResult.of(
+                            dimension,
+                            engineType,
+                            ReviewLevel.SUSPICIOUS,
+                            BigDecimal.ZERO,
+                            List.of(),
+                            fallbackPrefix + "机审异常自动降级: " + ex.getMessage()
+                    ));
+                });
+    }
+
+    /**
+     * 针对视频标题与简介执行敏感词审查。
+     *
+     * @param context 审核执行上下文
+     * @return 文本维度审查明细列表
+     */
+    private List<EngineAuditResult> auditTexts(AuditContext context) {
+        List<EngineAuditResult> textResults = new ArrayList<>();
+        textResults.add(textAuditEngine.audit(context.title(), AuditDimension.TEXT));
+        if (context.description() != null && !context.description().isBlank()) {
+            textResults.add(textAuditEngine.audit(context.description(), AuditDimension.TEXT));
+        }
+        return textResults;
     }
 }

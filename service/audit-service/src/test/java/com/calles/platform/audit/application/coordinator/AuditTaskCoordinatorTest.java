@@ -11,6 +11,7 @@ import com.calles.platform.audit.domain.engine.VideoAuditEngine;
 import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.domain.model.enums.AuditResult;
 import com.calles.platform.audit.domain.model.enums.AuditStage;
+import com.calles.platform.audit.domain.model.AuditDetail;
 import com.calles.platform.audit.domain.model.AuditTask;
 import com.calles.platform.audit.domain.model.enums.ReviewLevel;
 import com.calles.platform.audit.domain.repository.AuditDetailRepository;
@@ -177,15 +178,15 @@ class AuditTaskCoordinatorTest {
         previousTask.completeMachineAudit(ReviewLevel.ILLEGAL, "违规标题被打回");
 
         // 上一轮明细：文本违规，但封面和视频均通过 (NORMAL)
-        com.calles.platform.audit.domain.model.AuditDetail textDetail = com.calles.platform.audit.domain.model.AuditDetail.of(
+        AuditDetail textDetail = AuditDetail.of(
                 previousTask.getId(), AuditDimension.TEXT, "LOCAL_DFA", ReviewLevel.ILLEGAL,
                 BigDecimal.valueOf(100), "涉嫌违禁", "旧标题违禁"
         );
-        com.calles.platform.audit.domain.model.AuditDetail coverDetail = com.calles.platform.audit.domain.model.AuditDetail.of(
+        AuditDetail coverDetail = AuditDetail.of(
                 previousTask.getId(), AuditDimension.IMAGE, "RULE_IMAGE", ReviewLevel.NORMAL,
                 BigDecimal.valueOf(100), null, "封面正常"
         );
-        com.calles.platform.audit.domain.model.AuditDetail videoDetail = com.calles.platform.audit.domain.model.AuditDetail.of(
+        AuditDetail videoDetail = AuditDetail.of(
                 previousTask.getId(), AuditDimension.VIDEO, "RULE_VIDEO", ReviewLevel.NORMAL,
                 BigDecimal.valueOf(100), null, "视频正常"
         );

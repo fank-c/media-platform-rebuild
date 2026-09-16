@@ -5,9 +5,12 @@ import com.calles.platform.audit.application.executor.model.AuditExecutionResult
 import com.calles.platform.audit.application.executor.AuditExecutor;
 import com.calles.platform.audit.application.executor.AuditExecutorRouter;
 import com.calles.platform.audit.application.service.AuditCallbackService;
+import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.model.AuditDetail;
+import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.domain.model.enums.AuditStage;
 import com.calles.platform.audit.domain.model.AuditTask;
+import com.calles.platform.audit.domain.model.enums.ReviewLevel;
 import com.calles.platform.audit.domain.repository.AuditDetailRepository;
 import com.calles.platform.audit.domain.repository.AuditTaskRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,8 +18,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * 审核业务总协调编排器 (AuditTaskCoordinator)。
@@ -72,62 +79,16 @@ public class AuditTaskCoordinator {
         log.info("开始受理通用提审任务: bizType=[{}], bizId=[{}], bizVid=[{}], authorId=[{}]",
                 context.bizType(), context.bizId(), context.bizVid(), context.authorId());
 
-        // 步骤 1：幂等防重检查：检查是否已有同一业务标的处于 RECEIVED 或 MACHINE_AUDITING
+        // 步骤 1：幂等防重检查：检查是否已有同一业务标的处于进行中（RECEIVED 或 MACHINE_AUDITING）
         Optional<AuditTask> latestOpt = auditTaskRepository.findLatestByBiz(context.bizTypeCode(), context.bizId());
-        if (latestOpt.isPresent()) {
-            AuditTask existing = latestOpt.get();
-            if (existing.getStage() == AuditStage.RECEIVED || existing.getStage() == AuditStage.MACHINE_AUDITING) {
-                log.warn("业务 [{}:{}] 已存在正在执行中的审核任务 [{}], 忽略重复提交",
-                        context.bizTypeCode(), context.bizId(), existing.getTaskNo());
-                return existing;
-            }
+        if (latestOpt.isPresent() && isTaskRunning(latestOpt.get())) {
+            log.warn("业务 [{}:{}] 已存在正在执行中的审核任务 [{}], 忽略重复提交",
+                    context.bizTypeCode(), context.bizId(), latestOpt.get().getTaskNo());
+            return latestOpt.get();
         }
 
         // 步骤 2：检查前序终局任务并进行资产指纹比对，提取增量免审复用结果
-        java.util.Map<com.calles.platform.audit.domain.model.enums.AuditDimension, com.calles.platform.audit.domain.engine.model.EngineAuditResult> reusableResults = new java.util.HashMap<>();
-        if (context.reusableResults() != null) {
-            reusableResults.putAll(context.reusableResults());
-        }
-        if (latestOpt.isPresent()) {
-            AuditTask previousTask = latestOpt.get();
-            if (previousTask.getStage() == AuditStage.FINISHED) {
-                List<AuditDetail> previousDetails = auditDetailRepository.findByTaskId(previousTask.getId());
-                java.util.Map<com.calles.platform.audit.domain.model.enums.AuditDimension, List<AuditDetail>> detailsByDimension =
-                        previousDetails.stream().collect(java.util.stream.Collectors.groupingBy(AuditDetail::getDimension));
-
-                // 2.1 封面图免审比对：文件 ID 一致且历史判定全为 NORMAL
-                if (context.coverFileId() != null && java.util.Objects.equals(context.coverFileId(), previousTask.getCoverFileId())) {
-                    List<AuditDetail> coverDetails = detailsByDimension.get(com.calles.platform.audit.domain.model.enums.AuditDimension.IMAGE);
-                    if (coverDetails != null && !coverDetails.isEmpty() && coverDetails.stream().allMatch(d -> d.getLevel() == com.calles.platform.audit.domain.model.enums.ReviewLevel.NORMAL)) {
-                        log.info("提审任务命中封面免审复用: bizId=[{}], coverFileId=[{}]", context.bizId(), context.coverFileId());
-                        reusableResults.put(com.calles.platform.audit.domain.model.enums.AuditDimension.IMAGE,
-                                com.calles.platform.audit.domain.engine.model.EngineAuditResult.fromAuditDetail(coverDetails.get(0), "[免审复用] "));
-                    }
-                }
-
-                // 2.2 视频流免审比对：文件 ID 一致且历史判定全为 NORMAL
-                if (context.videoFileId() != null && java.util.Objects.equals(context.videoFileId(), previousTask.getVideoFileId())) {
-                    List<AuditDetail> videoDetails = detailsByDimension.get(com.calles.platform.audit.domain.model.enums.AuditDimension.VIDEO);
-                    if (videoDetails != null && !videoDetails.isEmpty() && videoDetails.stream().allMatch(d -> d.getLevel() == com.calles.platform.audit.domain.model.enums.ReviewLevel.NORMAL)) {
-                        log.info("提审任务命中视频资产免审复用: bizId=[{}], videoFileId=[{}]", context.bizId(), context.videoFileId());
-                        reusableResults.put(com.calles.platform.audit.domain.model.enums.AuditDimension.VIDEO,
-                                com.calles.platform.audit.domain.engine.model.EngineAuditResult.fromAuditDetail(videoDetails.get(0), "[免审复用] "));
-                    }
-                }
-
-                // 2.3 文本维度免审比对：标题与简介文本快照一致且历史判定全为 NORMAL
-                boolean titleMatch = java.util.Objects.equals(context.title(), previousTask.getTitleSnapshot());
-                boolean descMatch = java.util.Objects.equals(context.description(), previousTask.getDescriptionSnapshot());
-                if (titleMatch && descMatch) {
-                    List<AuditDetail> textDetails = detailsByDimension.get(com.calles.platform.audit.domain.model.enums.AuditDimension.TEXT);
-                    if (textDetails != null && !textDetails.isEmpty() && textDetails.stream().allMatch(d -> d.getLevel() == com.calles.platform.audit.domain.model.enums.ReviewLevel.NORMAL)) {
-                        log.info("提审任务命中文本快照免审复用: bizId=[{}]", context.bizId());
-                        reusableResults.put(com.calles.platform.audit.domain.model.enums.AuditDimension.TEXT,
-                                com.calles.platform.audit.domain.engine.model.EngineAuditResult.fromAuditDetail(textDetails.get(0), "[免审复用] "));
-                    }
-                }
-            }
-        }
+        Map<AuditDimension, EngineAuditResult> reusableResults = resolveReusableResults(context, latestOpt);
 
         // 步骤 3：工厂方法创建初始审核任务聚合根并完成持久化
         AuditTask task = AuditTask.createTask(
@@ -210,5 +171,118 @@ public class AuditTaskCoordinator {
                 null, videoId, vid, authorId, title, description, coverFileId, videoFileId
         );
         return submitTask(context);
+    }
+
+    /**
+     * 判断审核任务是否正处于未完结的进行中状态。
+     *
+     * @param task 审核任务聚合根实体
+     * @return true 若处于 RECEIVED（已接收）或 MACHINE_AUDITING（机审中）
+     */
+    private boolean isTaskRunning(AuditTask task) {
+        return task.getStage() == AuditStage.RECEIVED || task.getStage() == AuditStage.MACHINE_AUDITING;
+    }
+
+    /**
+     * 比对前序终局任务资产指纹，解析可免审复用的多维度判定结果。
+     *
+     * @param context 当前提审执行上下文
+     * @param latestOpt 最近一次历史任务 Optional
+     * @return 可安全复用的维度判定映射集合
+     */
+    private Map<AuditDimension, EngineAuditResult> resolveReusableResults(
+            AuditContext context,
+            Optional<AuditTask> latestOpt
+    ) {
+        Map<AuditDimension, EngineAuditResult> reusableResults = new HashMap<>(context.reusableResults());
+        if (latestOpt.isEmpty() || latestOpt.get().getStage() != AuditStage.FINISHED) {
+            return reusableResults;
+        }
+
+        AuditTask previousTask = latestOpt.get();
+        List<AuditDetail> previousDetails = auditDetailRepository.findByTaskId(previousTask.getId());
+        Map<AuditDimension, List<AuditDetail>> detailsByDimension = previousDetails.stream()
+                .collect(Collectors.groupingBy(AuditDetail::getDimension));
+
+        // 步骤 1：比对封面图片资产指纹与历史判定
+        checkFileReusable(
+                AuditDimension.IMAGE,
+                context.coverFileId(),
+                previousTask.getCoverFileId(),
+                detailsByDimension,
+                reusableResults,
+                context.bizId(),
+                "封面"
+        );
+
+        // 步骤 2：比对主视频流媒体资产指纹与历史判定
+        checkFileReusable(
+                AuditDimension.VIDEO,
+                context.videoFileId(),
+                previousTask.getVideoFileId(),
+                detailsByDimension,
+                reusableResults,
+                context.bizId(),
+                "视频资产"
+        );
+
+        // 步骤 3：比对文本元数据快照（标题 + 简介）
+        checkTextReusable(context, previousTask, detailsByDimension, reusableResults);
+
+        return reusableResults;
+    }
+
+    /**
+     * 通用文件资产（封面、视频等）免审复用比对逻辑。
+     *
+     * @param dimension 审查维度
+     * @param currentFileId 当前提审文件 ID
+     * @param previousFileId 前序任务文件 ID
+     * @param detailsByDimension 按维度分组的历史证据映射
+     * @param reusable 可复用结果收集容器
+     * @param bizId 业务标的 ID
+     * @param assetDesc 资产描述文本（用于日志追踪）
+     */
+    private void checkFileReusable(
+            AuditDimension dimension,
+            String currentFileId,
+            String previousFileId,
+            Map<AuditDimension, List<AuditDetail>> detailsByDimension,
+            Map<AuditDimension, EngineAuditResult> reusable,
+            String bizId,
+            String assetDesc
+    ) {
+        if (currentFileId != null && Objects.equals(currentFileId, previousFileId)) {
+            List<AuditDetail> details = detailsByDimension.get(dimension);
+            if (details != null && !details.isEmpty() && details.stream().allMatch(d -> d.getLevel() == ReviewLevel.NORMAL)) {
+                log.info("提审任务命中{}免审复用: bizId=[{}], fileId=[{}]", assetDesc, bizId, currentFileId);
+                reusable.put(dimension, EngineAuditResult.fromAuditDetail(details.get(0), "[免审复用] "));
+            }
+        }
+    }
+
+    /**
+     * 文本元数据快照（标题与简介）免审复用比对逻辑。
+     *
+     * @param context 当前提审执行上下文
+     * @param previousTask 前序终局审核任务聚合根
+     * @param detailsByDimension 按维度分组的历史证据映射
+     * @param reusable 可复用结果收集容器
+     */
+    private void checkTextReusable(
+            AuditContext context,
+            AuditTask previousTask,
+            Map<AuditDimension, List<AuditDetail>> detailsByDimension,
+            Map<AuditDimension, EngineAuditResult> reusable
+    ) {
+        boolean titleMatch = Objects.equals(context.title(), previousTask.getTitleSnapshot());
+        boolean descMatch = Objects.equals(context.description(), previousTask.getDescriptionSnapshot());
+        if (titleMatch && descMatch) {
+            List<AuditDetail> textDetails = detailsByDimension.get(AuditDimension.TEXT);
+            if (textDetails != null && !textDetails.isEmpty() && textDetails.stream().allMatch(d -> d.getLevel() == ReviewLevel.NORMAL)) {
+                log.info("提审任务命中文本快照免审复用: bizId=[{}]", context.bizId());
+                reusable.put(AuditDimension.TEXT, EngineAuditResult.fromAuditDetail(textDetails.get(0), "[免审复用] "));
+            }
+        }
     }
 }

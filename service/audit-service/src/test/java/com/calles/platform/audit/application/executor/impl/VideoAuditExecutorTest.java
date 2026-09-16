@@ -1,5 +1,6 @@
 package com.calles.platform.audit.application.executor.impl;
 
+import com.calles.platform.audit.application.executor.model.AuditBizType;
 import com.calles.platform.audit.application.executor.model.AuditContext;
 import com.calles.platform.audit.application.executor.model.AuditExecutionResult;
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
@@ -18,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -56,9 +58,9 @@ class VideoAuditExecutorTest {
     @Test
     @DisplayName("getBizType 与 supports 准确绑定 VIDEO 业务类型")
     void shouldBindVideoBizType() {
-        assertThat(executor.getBizType()).isEqualTo(com.calles.platform.audit.application.executor.model.AuditBizType.VIDEO);
-        assertThat(executor.supports(com.calles.platform.audit.application.executor.model.AuditBizType.VIDEO)).isTrue();
-        assertThat(executor.supports(com.calles.platform.audit.application.executor.model.AuditBizType.COMMENT)).isFalse();
+        assertThat(executor.getBizType()).isEqualTo(AuditBizType.VIDEO);
+        assertThat(executor.supports(AuditBizType.VIDEO)).isTrue();
+        assertThat(executor.supports(AuditBizType.COMMENT)).isFalse();
         assertThat(executor.supports("VIDEO")).isTrue();
         assertThat(executor.supports("video")).isTrue();
         assertThat(executor.supports("COMMENT")).isFalse();
@@ -117,7 +119,7 @@ class VideoAuditExecutorTest {
 
         AuditContext context = AuditContext.forVideo(
                 "task_03", "v_03", "cv_03", "u_01", "新修改的合规标题", null, "f_cover_old", "f_video_old",
-                java.util.Map.of(
+                Map.of(
                         AuditDimension.IMAGE, reusedCover,
                         AuditDimension.VIDEO, reusedVideo
                 )
