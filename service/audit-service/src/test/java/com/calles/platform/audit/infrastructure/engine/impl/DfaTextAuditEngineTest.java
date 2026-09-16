@@ -1,8 +1,8 @@
-package com.calles.platform.audit.infrastructure.engine;
+package com.calles.platform.audit.infrastructure.engine.impl;
 
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
-import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.domain.model.AuditSensitiveWord;
+import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.domain.model.enums.CommonStatus;
 import com.calles.platform.audit.domain.model.enums.ReviewLevel;
 import com.calles.platform.audit.domain.model.enums.WordCategory;
@@ -42,6 +42,15 @@ class DfaTextAuditEngineTest {
 
         engine = new DfaTextAuditEngine(sensitiveWordRepository);
         engine.init();
+    }
+
+    @Test
+    @DisplayName("验证 AuditEngine 顶层契约元数据")
+    void shouldVerifyEngineMetadata() {
+        assertThat(engine.getDimension()).isEqualTo(AuditDimension.TEXT);
+        assertThat(engine.getEngineType()).isEqualTo("LOCAL_DFA");
+        assertThat(engine.supports(AuditDimension.TEXT)).isTrue();
+        assertThat(engine.supports(AuditDimension.IMAGE)).isFalse();
     }
 
     @Test

@@ -199,4 +199,30 @@ class VideoTaskCoordinatorTest {
         assertThat(progress.tasks().get(0).taskType()).isEqualTo("AUDIT");
         assertThat(progress.tasks().get(0).status()).isEqualTo("SUCCESS");
     }
+
+    @Test
+    @DisplayName("resetPipelineTasksForResubmit 成功重置 FAILED 与 CANCELED 任务为 PENDING")
+    void shouldResetPipelineTasksForResubmit() {
+        VideoTask failedAudit = VideoTask.create("v_100", TaskType.AUDIT);
+        failedAudit.fail("违禁驳回");
+
+        VideoTask canceledTranscode = VideoTask.create("v_100", TaskType.TRANSCODE_720P);
+        canceledTranscode.cancel("熔断取消");
+
+        VideoTask pendingVector = VideoTask.create("v_100", TaskType.VECTOR_EMBEDDING);
+
+        when(videoTaskRepository.findByVideoId("v_100"))
+                .thenReturn(List.of(failedAudit, canceledTranscode, pendingVector));
+
+        coordinator.resetPipelineTasksForResubmit("v_100");
+
+        assertThat(failedAudit.getStatus()).isEqualTo(TaskStatus.PENDING);
+        assertThat(failedAudit.getErrorMessage()).isNull();
+        assertThat(canceledTranscode.getStatus()).isEqualTo(TaskStatus.PENDING);
+        assertThat(canceledTranscode.getErrorMessage()).isNull();
+        assertThat(pendingVector.getStatus()).isEqualTo(TaskStatus.PENDING);
+
+        verify(videoTaskRepository).updateById(failedAudit);
+        verify(videoTaskRepository).updateById(canceledTranscode);
+    }
 }

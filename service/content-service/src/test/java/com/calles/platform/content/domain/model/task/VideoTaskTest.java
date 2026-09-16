@@ -163,4 +163,25 @@ class VideoTaskTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("任务不可重试");
     }
+
+    @Test
+    @DisplayName("重新提审复苏：resetToPending 可将 FAILED 或 CANCELED 任务重置回 PENDING")
+    void shouldResetToPendingForResubmit() {
+        VideoTask failedTask = VideoTask.create("v_100", TaskType.AUDIT);
+        failedTask.fail("历史违规驳回");
+        assertThat(failedTask.getStatus()).isEqualTo(TaskStatus.FAILED);
+
+        failedTask.resetToPending();
+        assertThat(failedTask.getStatus()).isEqualTo(TaskStatus.PENDING);
+        assertThat(failedTask.getErrorMessage()).isNull();
+        assertThat(failedTask.getProgress()).isZero();
+
+        VideoTask canceledTask = VideoTask.create("v_100", TaskType.TRANSCODE_720P);
+        canceledTask.cancel("因审核打回熔断取消");
+        assertThat(canceledTask.getStatus()).isEqualTo(TaskStatus.CANCELED);
+
+        canceledTask.resetToPending();
+        assertThat(canceledTask.getStatus()).isEqualTo(TaskStatus.PENDING);
+        assertThat(canceledTask.getErrorMessage()).isNull();
+    }
 }

@@ -227,4 +227,19 @@ public class VideoTask {
         this.completedAt = null;
         this.updatedAt = LocalDateTime.now();
     }
+
+    /**
+     * 重新提审时复苏并重置任务为排队就绪状态 (PENDING)。
+     *
+     * <p><b>业务说明</b>：用于创作者被驳回后重新提审，将 {@link TaskStatus#FAILED} 或 {@link TaskStatus#CANCELED} 状态的流水线任务复苏；<br>
+     * <b>副作用</b>：重置状态为 PENDING，清空错误说明与完成时间戳，重置进度为 0。</p>
+     */
+    public void resetToPending() {
+        this.status = TaskStatus.PENDING;
+        this.progress = 0;
+        this.errorMessage = null;
+        this.startedAt = null;
+        this.completedAt = null;
+        this.updatedAt = LocalDateTime.now();
+    }
 }

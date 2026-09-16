@@ -165,4 +165,49 @@ class AuditTaskCoordinatorTest {
         assertThat(result).isSameAs(running);
         verify(textAuditEngine, never()).audit(any(), any());
     }
+
+    @Test
+    @DisplayName("重新提审时，未变更且历史已通过的封面与视频自动免审跳过，仅重审文本")
+    void resubmissionShouldReuseHistoricalApprovedDimensions() {
+        // 构造上一轮驳回任务
+        AuditTask previousTask = AuditTask.createVideoAuditTask(
+                "v_400", "cv_abc400", "u_001", "违禁标题", null, "f_cover_same", "f_video_same"
+        );
+        previousTask.startMachineAudit();
+        previousTask.completeMachineAudit(ReviewLevel.ILLEGAL, "违规标题被打回");
+
+        // 上一轮明细：文本违规，但封面和视频均通过 (NORMAL)
+        com.calles.platform.audit.domain.model.AuditDetail textDetail = com.calles.platform.audit.domain.model.AuditDetail.of(
+                previousTask.getId(), AuditDimension.TEXT, "LOCAL_DFA", ReviewLevel.ILLEGAL,
+                BigDecimal.valueOf(100), "涉嫌违禁", "旧标题违禁"
+        );
+        com.calles.platform.audit.domain.model.AuditDetail coverDetail = com.calles.platform.audit.domain.model.AuditDetail.of(
+                previousTask.getId(), AuditDimension.IMAGE, "RULE_IMAGE", ReviewLevel.NORMAL,
+                BigDecimal.valueOf(100), null, "封面正常"
+        );
+        com.calles.platform.audit.domain.model.AuditDetail videoDetail = com.calles.platform.audit.domain.model.AuditDetail.of(
+                previousTask.getId(), AuditDimension.VIDEO, "RULE_VIDEO", ReviewLevel.NORMAL,
+                BigDecimal.valueOf(100), null, "视频正常"
+        );
+
+        when(auditTaskRepository.findLatestByBiz("VIDEO", "v_400")).thenReturn(Optional.of(previousTask));
+        when(auditDetailRepository.findByTaskId(previousTask.getId())).thenReturn(List.of(textDetail, coverDetail, videoDetail));
+
+        // 重新提审改了标题为合规，封面和视频文件 ID 不变
+        when(textAuditEngine.audit(eq("已修改为合规标题"), any()))
+                .thenReturn(EngineAuditResult.normal(AuditDimension.TEXT, "LOCAL_DFA", "文本正常"));
+
+        AuditTask resultTask = coordinator.processVideoSubmission(
+                "v_400", "cv_abc400", "u_001", "已修改为合规标题", null, "f_cover_same", "f_video_same"
+        );
+
+        assertThat(resultTask.getStage()).isEqualTo(AuditStage.FINISHED);
+        assertThat(resultTask.getResult()).isEqualTo(AuditResult.PASSED);
+
+        // 核心断言：仅文本引擎被执行，封面与视频引擎完全被跳过免审！
+        verify(textAuditEngine).audit(eq("已修改为合规标题"), any());
+        verify(imageAuditEngine, never()).auditCover(any());
+        verify(videoAuditEngine, never()).auditVideo(any());
+        verify(callbackService).callbackContentService(any());
+    }
 }

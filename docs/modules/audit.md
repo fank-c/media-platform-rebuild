@@ -123,7 +123,9 @@ stateDiagram-v2
 - **领域决策仲裁服务**（`domain/service/`）：
   - **`AuditDecisionAggregator`**：综合仲裁器，基于安全最高优先级汇总判定与驳回理由；
 - **业务专属执行器路由分派体系**（`application/executor/`）：
-  - 基于策略模式与路由组件（`AuditExecutorRouter`）解耦通用流程与业务类型特化逻辑，包含 `AuditExecutor`、`VideoAuditExecutor`、`AuditContext` 与 `AuditExecutionResult`。
+  - 基于策略模式与路由组件（`AuditExecutorRouter`）解耦通用流程与业务类型特化逻辑，包含 `AuditExecutor`、`VideoAuditExecutor`、`AuditContext` 与 `AuditExecutionResult`；
+  - **三阶段异步并发与容灾降级**：`VideoAuditExecutor` 基于 `auditEngineExecutor` 专有线程池将文本（标题/简介）、封面图片与主视频资产审查异步并发调度，统一 `CompletableFuture.allOf` 等待，并将单项异常降级为 `SUSPICIOUS`（人工复审）；
+  - **重提增量免审复用机制**：`AuditTaskCoordinator` 在接收到重新提审事件时，自动比对前序终局驳回记录的资产指纹，若封面图或视频文件未发生变动且历史判定已为 `NORMAL`，则直接继承历史合规结论，跳过相应引擎的重复计算。
 
 ### 4.2 跨服务通信与回调契约
 1. **提审事件消费**：
@@ -149,6 +151,9 @@ stateDiagram-v2
 ## 5. 源码核心入口索引
 
 - **引导入口**：[`AuditApplication.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/AuditApplication.java)（开启 OpenFeign 与 定时调度 `@EnableScheduling`）；
+- **基础设施与线程池配置**：
+  - 线程池配置：[`AuditThreadPoolConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditThreadPoolConfiguration.java)（定义 `auditEngineExecutor` 专有线程池，core=8, max=32, queue=500, CallerRunsPolicy）；
+  - 消息队列拓扑：[`AuditMessagingConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditMessagingConfiguration.java)
 - **DTO 契约传输层**：
   - 入参契约：[`AuditRequests.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/dto/AuditRequests.java)
   - 出参契约：[`AuditResponses.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/dto/AuditResponses.java)
@@ -162,17 +167,19 @@ stateDiagram-v2
   - 状态与维度枚举：[`domain/model/enums/`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/model/enums/)（包含 `AuditStage`、`AuditResult`、`ReviewLevel`、`AuditDimension`、`CallbackStatus`、`CommonStatus`、`WordCategory`、`WordLevel`）
   - 仲裁决策领域服务：[`AuditDecisionAggregator.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/service/AuditDecisionAggregator.java)
 - **审查引擎契约与实现**：
-  - 领域契约接口：[`TextAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/TextAuditEngine.java)、[`ImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/ImageAuditEngine.java)、[`VideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/VideoAuditEngine.java)
+  - 顶层统一契约：[`AuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/AuditEngine.java)
+  - 维度契约接口：[`TextAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/TextAuditEngine.java)、[`ImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/ImageAuditEngine.java)、[`VideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/VideoAuditEngine.java)
   - 判定结果值对象模型：[`EngineAuditResult.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/model/EngineAuditResult.java)
-  - DFA 文本引擎实现：[`DfaTextAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/DfaTextAuditEngine.java)
-  - 封面规则引擎实现：[`DefaultRuleImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/DefaultRuleImageAuditEngine.java)
-  - 视频规则引擎实现：[`DefaultVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/DefaultVideoAuditEngine.java)
+  - 基础设施规则基类模板：[`AbstractRuleAssetAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/base/AbstractRuleAssetAuditEngine.java)
+  - DFA 文本引擎实现：[`DfaTextAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DfaTextAuditEngine.java)
+  - 封面规则引擎实现：[`DefaultRuleImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DefaultRuleImageAuditEngine.java)
+  - 视频规则引擎实现：[`DefaultVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DefaultVideoAuditEngine.java)
 - **应用协调、执行与调度**：
-  - 通用工作流协调器：[`AuditTaskCoordinator.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/coordinator/AuditTaskCoordinator.java)
+  - 通用工作流协调器：[`AuditTaskCoordinator.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/coordinator/AuditTaskCoordinator.java)（内含增量免审指纹比对）
   - 业务执行器体系：
     - 策略契约与路由：[`AuditExecutor.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/AuditExecutor.java)、[`AuditExecutorRouter.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/AuditExecutorRouter.java)
     - 业务类型与模型：[`AuditBizType.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditBizType.java)、[`AuditContext.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditContext.java)、[`AuditExecutionResult.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditExecutionResult.java)
-    - 业务执行实现：[`VideoAuditExecutor.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/impl/VideoAuditExecutor.java)
+    - 业务执行实现：[`VideoAuditExecutor.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/impl/VideoAuditExecutor.java)（三阶段异步并发调度）
   - 人审应用服务：[`AuditManualReviewApplicationService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AuditManualReviewApplicationService.java)
   - 回调服务：[`AuditCallbackService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AuditCallbackService.java)
   - 容灾补偿定时器：[`AuditCallbackRetryScheduler.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/scheduler/AuditCallbackRetryScheduler.java)
@@ -186,20 +193,21 @@ stateDiagram-v2
 
 ## 6. 验证方式与测试覆盖
 
-模块内置 **47 项单元与集成测试用例**（12 个测试类），测试套件涵盖：
-1. **`DfaTextAuditEngineTest`**（5 项）：验证正常文本放行、严重违禁词拦截、疑似词识别、干扰符过滤及空串边界；
-2. **`AuditDecisionAggregatorTest`**（3 项）：验证全正常仲裁、包含违规最高优先级判定、疑似转人审仲裁；
-3. **`VideoAuditExecutorTest`**（3 项）：验证视频专属执行器业务类型声明与多维度机审编排判定输出；
-4. **`AuditExecutorRouterTest`**（4 项）：验证执行器路由按 AuditBizType 枚举 O(1) 派发、字符串兼容路由及非法业务类型拦截防护；
-5. **`AuditTaskTest`**（5 项）：验证聚合根全生命周期状态流转、人工审批/驳回跃迁及非法跃迁异常；
-6. **`AuditCallbackServiceTest`**（3 项）：验证 Feign 远程回调成功更新状态、网络超时异常标记失败重试及未完结状态拦截；
-7. **`AuditTaskCoordinatorTest`**（4 项）：验证全流程协调流水线、合规通过自动回调、违规拦截自动打回、疑似可疑转待人审及提审幂等保护；
-8. **`AuditCallbackRetrySchedulerTest`**（1 项）：验证定时补偿器扫描并重试失败任务；
-9. **`VideoSubmittedConsumerTest`**（4 项）：验证标准信封嵌套结构、扁平直传载荷、未知扩展字段兼容及缺失 ID 守卫校验；
-10. **`InternalAuditControllerTest`**（3 项）：验证 MockMvc HTTP 模拟提交与任务明细查询（防腐 DTO 结构）；
-11. **`AdminAuditControllerTest`**（5 项）：验证管理端分页检索工单、全景详情、人工通过/驳回、非法参数校验拦截；
-12. **`AuditManualReviewApplicationServiceTest`**（7 项）：验证人审应用服务全景组装、分页查询、审批流转、驳回原因校验及状态机保护。
+模块内置 **55 项单元与集成测试用例**（13 个测试类），测试套件涵盖：
+1. **`DfaTextAuditEngineTest`**（6 项）：验证 AuditEngine 顶层契约元数据、正常文本放行、严重违禁词拦截、疑似词识别、干扰符过滤及空串边界；
+2. **`AbstractRuleAssetAuditEngineTest`**（4 项）：验证图片与视频规则审查引擎基类的维度支持、空资产拦截、违规特征桩拦截、疑似敏感转人审及合规放行；
+3. **`AuditDecisionAggregatorTest`**（3 项）：验证全正常仲裁、包含违规最高优先级判定、疑似转人审仲裁；
+4. **`VideoAuditExecutorTest`**（5 项）：验证视频专属执行器业务类型声明、多维度机审编排输出、历史免审跳过与引擎异常自动降级为 SUSPICIOUS；
+5. **`AuditExecutorRouterTest`**（4 项）：验证执行器路由按 AuditBizType 枚举 O(1) 派发、字符串兼容路由及非法业务类型拦截防护；
+6. **`AuditTaskTest`**（5 项）：验证聚合根全生命周期状态流转、人工审批/驳回跃迁及非法跃迁异常；
+7. **`AuditCallbackServiceTest`**（3 项）：验证 Feign 远程回调成功更新状态、网络超时异常标记失败重试及未完结状态拦截；
+8. **`AuditTaskCoordinatorTest`**（5 项）：验证全流程协调流水线、合规通过自动回调、违规拦截自动打回、疑似可疑转待人审、提审幂等保护及重新提审增量免审复用；
+9. **`AuditCallbackRetrySchedulerTest`**（1 项）：验证定时补偿器扫描并重试失败任务；
+10. **`VideoSubmittedConsumerTest`**（4 项）：验证标准信封嵌套结构、扁平直传载荷、未知扩展字段兼容及缺失 ID 守卫校验；
+11. **`InternalAuditControllerTest`**（3 项）：验证 MockMvc HTTP 模拟提交与任务明细查询（防腐 DTO 结构）；
+12. **`AdminAuditControllerTest`**（5 项）：验证管理端分页检索工单、全景详情、人工通过/驳回、非法参数校验拦截；
+13. **`AuditManualReviewApplicationServiceTest`**（7 项）：验证人审应用服务全景组装、分页查询、审批流转、驳回原因校验及状态机保护。
 
 **全量回归测试指令**：
-- 审核模块测试：`./mvnw -f service/audit-service/pom.xml test`（47 项用例 100% 通过）
-- 内容模块协同回归：`./mvnw -f service/content-service/pom.xml test`（109 项用例 100% 通过）
+- 审核模块测试：`./mvnw -f service/audit-service/pom.xml test`（55 项用例 100% 通过）
+- 内容模块协同回归：`./mvnw -f service/content-service/pom.xml test`（112 项用例 100% 通过）

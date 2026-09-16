@@ -382,18 +382,18 @@ CREATE TABLE IF NOT EXISTS `video_tag_rel` (
 
 ## 8. 验证方式与测试覆盖
 
-模块内置全面的单元测试与防腐校验，共计 **107 项测试用例**，测试套件涵盖：
+模块内置全面的单元测试与防腐校验，共计 **112 项测试用例**，测试套件涵盖：
 1. **`VideoContentTest`**：聚合根状态跃迁合法性校验（草稿提审、发布、驳回原因校验、乐观锁版本）；
 2. **`Base62VidGeneratorTest`**：24 位前缀 `cv` 高熵短码生成、无字符碰撞与并发安全性；
-3. **`VideoTaskTest`**：子任务创建、执行中进度限制（0–100）、成功/失败终止态及可重试边界；
+3. **`VideoTaskTest`**：子任务创建、执行中进度限制（0–100）、成功/失败终止态、可重试边界及重新提审时的复苏重置 (`resetToPending`)；
 4. **`PublishGatekeeperTest`**：审核、基准清晰度流与语义向量三者与关系的门禁就绪决策；4K 异步非阻塞发布；审核未通过时的全流水线级联熔断取消；
-5. **`VideoTaskCoordinatorTest`**：提审批量初始化 5 类任务网格、工作节点进度更新及就绪自动发布触发；
+5. **`VideoTaskCoordinatorTest`**：提审批量初始化 5 类任务网格、工作节点进度更新、重新提审时失败与取消子任务复苏 (`resetPipelineTasksForResubmit`) 及就绪自动发布触发；
 6. **`VideoTaskTimeoutSchedulerTest`**：超时未汇报任务的自动识别、自增重试及超限置失败兜底；
-7. **`VideoPublishApplicationServiceTest`**：草稿新建、元数据维护、Feign 文件探活阻断、提审发布及 Outbox 原子写入；
+7. **`VideoPublishApplicationServiceTest`**：草稿新建、元数据维护、Feign 文件探活阻断、提审发布、Outbox 标题与简介快照原子写入及重新提审协同流水线复苏；
 8. **`VideoQueryApplicationServiceTest`**：详情读取权限门禁（他人私密/草稿拦截脱敏为 404）、多画质流切片组装；
 9. **`CreatorVideoControllerTest` / `InternalVideoControllerTest` / `PortalVideoControllerTest` / `AdminVideoControllerTest`**：MockMvc 端到端 HTTP 接口参数绑定、统一响应结构与任务进度端点透出；
 10. **仓储与持久化映射测试**：`VideoContentRepositoryImplTest`、`VideoStreamRepositoryImplTest`、`VideoTaskRepositoryImplTest`、`ContentTagRepositoryImplTest`、`VideoTagRelRepositoryImplTest`。
 
 **全量回归指令**：
-- 模块测试：`./mvnw test -pl service/content-service`
-- 全系统 11 个模块协同回归：`./mvnw test`
+- 模块测试：`./mvnw -f service/content-service/pom.xml test`（112 项用例 100% 通过）
+- 审核模块协同回归：`./mvnw -f service/audit-service/pom.xml test`（55 项用例 100% 通过）

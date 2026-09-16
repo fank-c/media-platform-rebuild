@@ -1,9 +1,9 @@
-package com.calles.platform.audit.infrastructure.engine;
+package com.calles.platform.audit.infrastructure.engine.impl;
 
-import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.engine.TextAuditEngine;
-import com.calles.platform.audit.domain.model.enums.AuditDimension;
+import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.model.AuditSensitiveWord;
+import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.domain.model.enums.CommonStatus;
 import com.calles.platform.audit.domain.model.enums.ReviewLevel;
 import com.calles.platform.audit.domain.model.enums.WordCategory;
@@ -16,7 +16,6 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -29,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>核心特点：
  * <ul>
+ *   <li>实现 {@link TextAuditEngine} 契约规范，审查维度固定为 {@link AuditDimension#TEXT}；</li>
  *   <li>时间复杂度为 O(N)，匹配速度不受词库规模膨胀影响；</li>
  *   <li>支持多级威胁判定：命中 {@link WordLevel#ILLEGAL} 直接阻断，命中 {@link WordLevel#SUSPICIOUS} 升级人审；</li>
  *   <li>支持数据库敏感词字典热加载与默认应急安全打底词库。</li>
@@ -39,7 +39,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class DfaTextAuditEngine implements TextAuditEngine {
 
-    private static final String ENGINE_NAME = "LOCAL_DFA";
+    /** 引擎标识名称。 */
+    public static final String ENGINE_NAME = "LOCAL_DFA";
     private static final String IS_END = "isEnd";
     private static final String WORD_LEVEL = "wordLevel";
 
@@ -55,6 +56,16 @@ public class DfaTextAuditEngine implements TextAuditEngine {
 
     public DfaTextAuditEngine() {
         this.sensitiveWordRepository = null;
+    }
+
+    @Override
+    public AuditDimension getDimension() {
+        return AuditDimension.TEXT;
+    }
+
+    @Override
+    public String getEngineType() {
+        return ENGINE_NAME;
     }
 
     @PostConstruct
@@ -93,9 +104,10 @@ public class DfaTextAuditEngine implements TextAuditEngine {
     @Override
     public EngineAuditResult audit(String text, AuditDimension dimension) {
         if (text == null || text.isBlank()) {
-            return EngineAuditResult.normal(dimension, ENGINE_NAME, "文本内容为空，通过");
+            return EngineAuditResult.normal(dimension != null ? dimension : AuditDimension.TEXT, ENGINE_NAME, "文本内容为空，通过");
         }
 
+        AuditDimension targetDim = dimension != null ? dimension : AuditDimension.TEXT;
         String normalizedText = text.toLowerCase();
         Set<String> hitIllegalWords = new HashSet<>();
         Set<String> hitSuspiciousWords = new HashSet<>();
@@ -122,7 +134,7 @@ public class DfaTextAuditEngine implements TextAuditEngine {
             allHits.addAll(hitSuspiciousWords);
             String logMsg = String.format("命中严重违规违禁词: %s", hitIllegalWords);
             return EngineAuditResult.of(
-                    dimension,
+                    targetDim,
                     ENGINE_NAME,
                     ReviewLevel.ILLEGAL,
                     BigDecimal.valueOf(99.00),
@@ -135,7 +147,7 @@ public class DfaTextAuditEngine implements TextAuditEngine {
             List<String> hits = new ArrayList<>(hitSuspiciousWords);
             String logMsg = String.format("命中疑似可疑词条，建议转人审: %s", hitSuspiciousWords);
             return EngineAuditResult.of(
-                    dimension,
+                    targetDim,
                     ENGINE_NAME,
                     ReviewLevel.SUSPICIOUS,
                     BigDecimal.valueOf(75.00),
@@ -144,7 +156,7 @@ public class DfaTextAuditEngine implements TextAuditEngine {
             );
         }
 
-        return EngineAuditResult.normal(dimension, ENGINE_NAME, "文本合规，未命中任何敏感词");
+        return EngineAuditResult.normal(targetDim, ENGINE_NAME, "文本合规，未命中任何敏感词");
     }
 
     /**

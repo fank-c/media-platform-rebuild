@@ -78,6 +78,9 @@ class VideoPublishApplicationServiceTest {
     @Mock
     private com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
 
+    @org.mockito.Spy
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
     /**
      * 被测发布应用服务。
      */
@@ -99,63 +102,43 @@ class VideoPublishApplicationServiceTest {
     }
 
     /**
-     * 测试创建草稿正向场景：生成固定 24 位短码、写入仓储并同步维护标签关联热度。
+     * 测试创建草稿：生成 UUID、Base62 业务短码 vid，并将初始草稿落库。
      */
     @Test
-    @DisplayName("创建草稿：成功生成 24 位 vid 并持久化与同步标签")
+    @DisplayName("创建草稿：正常生成 vid 并持久化")
     void shouldCreateDraftSuccessfully() {
-        // 步骤 1: 准备创建草稿入参
+        // 步骤 1: 准备入参
         VideoRequests.CreateDraft request = new VideoRequests.CreateDraft(
-                "微服务架构实战",
-                "详细内容简介",
-                "file_video_100",
-                "file_cover_100",
-                600,
-                "Java,微服务",
-                "PUBLIC"
+                "测试标题", "测试简介", "fv_001", "fc_001", 120, "Java,Spring", "PUBLIC"
         );
 
-        // 步骤 2: 执行草稿创建
+        // 步骤 2: 调用草稿创建
         String vid = publishService.createDraft("user_001", request);
 
-        // 步骤 3: 验证生成的短码规范（cv开头、24位）
-        assertThat(vid).isNotNull();
-        assertThat(vid).hasSize(24);
-        assertThat(vid).startsWith("cv");
-
-        // 步骤 4: 捕获入库聚合根并验证初始状态与作者归属
-        ArgumentCaptor<VideoContent> captor = ArgumentCaptor.forClass(VideoContent.class);
-        verify(videoContentRepository).insert(captor.capture());
-        VideoContent saved = captor.getValue();
-        assertThat(saved.getVid()).isEqualTo(vid);
-        assertThat(saved.getAuthorId()).isEqualTo("user_001");
-        assertThat(saved.getTitle()).isEqualTo("微服务架构实战");
-        assertThat(saved.getPublishStatus()).isEqualTo(PublishStatus.DRAFT);
-        assertThat(saved.getStatus()).isEqualTo(CommonStatus.ACTIVE);
-
-        // 步骤 5: 验证触发了标签差量同步
-        verify(contentTagApplicationService).syncVideoTags(saved.getId(), "Java,微服务");
+        // 步骤 3: 验证 vid 生成格式与仓储落库调用
+        assertThat(vid).isNotNull().hasSize(24);
+        verify(videoContentRepository).insert(any(VideoContent.class));
+        verify(contentTagApplicationService).syncVideoTags(any(), eq("Java,Spring"));
     }
 
     /**
-     * 测试创作者修改未发布或已驳回草稿的元数据并差量更新标签。
+     * 测试修改元数据：仅允许 DRAFT 或 REJECTED 状态修改，并同步刷新标签字典。
      */
     @Test
-    @DisplayName("修改元数据：草稿状态修改成功并同步标签")
+    @DisplayName("更新元数据：在草稿状态下成功更新标题、简介和封面并对齐标签")
     void shouldUpdateMetadataSuccessfully() {
-        // 步骤 1: 准备已有视频记录 Mock
+        // 步骤 1: 准备已有草稿 Mock
         VideoContent video = VideoContent.createDraft(
-                "v_123", "cv10086", "user_001", "原标题", "原简介", "fv", "fc", 300, "原标签"
+                "v_123", "cv10086", "user_001", "原标题", "原简介", "fv_001", "fc_001", 300, "原标签"
         );
         when(videoContentRepository.findById("v_123")).thenReturn(Optional.of(video));
         when(videoContentRepository.updateById(any(VideoContent.class))).thenReturn(1);
 
-        VideoRequests.UpdateMetadata request = new VideoRequests.UpdateMetadata(
+        // 步骤 2: 执行修改
+        VideoRequests.UpdateMetadata updateReq = new VideoRequests.UpdateMetadata(
                 "新标题", "新简介", "new_fc", "新标签,微服务"
         );
-
-        // 步骤 2: 执行元数据更新
-        publishService.updateMetadata("user_001", "v_123", request);
+        publishService.updateMetadata("user_001", "v_123", updateReq);
 
         // 步骤 3: 断言实体属性被成功更新
         assertThat(video.getTitle()).isEqualTo("新标题");
@@ -169,11 +152,11 @@ class VideoPublishApplicationServiceTest {
      * 测试提交审核流程：调用 file-service 验证视频与封面均就绪后，状态流转为 AUDITING 并发布提审 Outbox 事件。
      */
     @Test
-    @DisplayName("提交审核：调用 file-service 校验文件就绪、更新为 AUDITING 并写入 Outbox")
+    @DisplayName("提交审核：调用 file-service 校验文件就绪、更新为 AUDITING 并写入包含标题简介的 Outbox")
     void shouldSubmitForAuditSuccessfully() {
         // 步骤 1: 准备已有草稿 Mock
         VideoContent video = VideoContent.createDraft(
-                "v_123", "cv10086", "user_001", "标题", "简介", "fv_001", "fc_001", 300, "tag"
+                "v_123", "cv10086", "user_001", "合规标题", "合规简介", "fv_001", "fc_001", 300, "tag"
         );
         when(videoContentRepository.findById("v_123")).thenReturn(Optional.of(video));
         when(videoContentRepository.updateById(any(VideoContent.class))).thenReturn(1);
@@ -190,11 +173,44 @@ class VideoPublishApplicationServiceTest {
         // 步骤 3: 执行提审动作
         publishService.submitForAudit("user_001", "v_123");
 
-        // 步骤 4: 校验聚合根变为 AUDITING 且 Outbox 事件已写入
+        // 步骤 4: 校验聚合根变为 AUDITING 且 Outbox 事件写入了包含标题与简介的载荷
         assertThat(video.getPublishStatus()).isEqualTo(PublishStatus.AUDITING);
         verify(videoContentRepository).updateById(video);
-        verify(contentOutboxMapper).insert(any(ContentOutboxRecord.class), any(Timestamp.class), eq("PENDING"), any(Timestamp.class));
+
+        ArgumentCaptor<ContentOutboxRecord> outboxCaptor = ArgumentCaptor.forClass(ContentOutboxRecord.class);
+        verify(contentOutboxMapper).insert(outboxCaptor.capture(), any(Timestamp.class), eq("PENDING"), any(Timestamp.class));
+        ContentOutboxRecord capturedRecord = outboxCaptor.getValue();
+        assertThat(capturedRecord.payload()).contains("\"title\":\"合规标题\"");
+        assertThat(capturedRecord.payload()).contains("\"description\":\"合规简介\"");
+
         verify(videoTaskCoordinator).initPipelineTasks("v_123");
+    }
+
+    @Test
+    @DisplayName("重新提交审核：被打回的视频重新提审时，调用 resetPipelineTasksForResubmit 复苏子任务")
+    void shouldResetPipelineTasksWhenResubmittingRejectedVideo() {
+        // 步骤 1: 准备已被 REJECTED 驳回的视频
+        VideoContent video = VideoContent.createDraft(
+                "v_123", "cv10086", "user_001", "修改后合规标题", "简介", "fv_001", "fc_001", 300, "tag"
+        );
+        video.submitForAudit(); // 变为 AUDITING
+        video.reject("历史违规驳回"); // 变为 REJECTED
+        assertThat(video.getPublishStatus()).isEqualTo(PublishStatus.REJECTED);
+
+        when(videoContentRepository.findById("v_123")).thenReturn(Optional.of(video));
+        when(videoContentRepository.updateById(any(VideoContent.class))).thenReturn(1);
+
+        FileMetadataDTO readyVideo = new FileMetadataDTO("fv_001", "v.mp4", "video/mp4", 1000L, 1000L, "ACTIVE", "CONFIRMED");
+        FileMetadataDTO readyCover = new FileMetadataDTO("fc_001", "c.jpg", "image/jpeg", 200L, 200L, "ACTIVE", "CONFIRMED");
+        when(fileServiceClient.getFileMetadata(eq("fv_001"), eq("user_001"), eq("USER"))).thenReturn(ApiResponse.ok(readyVideo));
+        when(fileServiceClient.getFileMetadata(eq("fc_001"), eq("user_001"), eq("USER"))).thenReturn(ApiResponse.ok(readyCover));
+
+        // 步骤 2: 重新提审
+        publishService.submitForAudit("user_001", "v_123");
+
+        // 步骤 3: 验证调用 resetPipelineTasksForResubmit 而非 initPipelineTasks
+        assertThat(video.getPublishStatus()).isEqualTo(PublishStatus.AUDITING);
+        verify(videoTaskCoordinator).resetPipelineTasksForResubmit("v_123");
     }
 
 

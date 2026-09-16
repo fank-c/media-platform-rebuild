@@ -66,6 +66,9 @@ public class VideoPublishApplicationService {
     /** 视频异步流水线任务协调器。 */
     private final com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
 
+    /** JSON 序列化工具。 */
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
     /**
      * 创建视频草稿。
      *
@@ -101,7 +104,7 @@ public class VideoPublishApplicationService {
             }
         }
 
-        // 步骤 4：持久化草稿聚合根并异步/同步建立标签字典关联
+        // 步骤 4：持久化草稿聚合根并同步建立标签字典关联
         videoContentRepository.insert(video);
         contentTagApplicationService.syncVideoTags(id, request.tags());
 
@@ -110,22 +113,23 @@ public class VideoPublishApplicationService {
     }
 
     /**
-     * 修改视频元数据（仅允许草稿或被驳回状态修改）。
+     * 修改视频图文元数据。
      *
-     * @param authorId 当前登录账号 ID
-     * @param id 视频内部主键 ID
-     * @param request 元数据更新内容请求体
-     * @throws ContentException 当非草稿/驳回状态修改，或发生并发修改冲突时抛出
+     * @param authorId 当前登录创作者账号 ID
+     * @param id 视频内部全局主键 ID
+     * @param request 更新元数据传输对象
+     * @throws ContentException 当非草稿/驳回状态、非所有者或乐观锁冲突时抛出
      */
     @Transactional
     public void updateMetadata(String authorId, String id, VideoRequests.UpdateMetadata request) {
-        // 步骤 1：定位目标视频并校验创作者本人操作权限
+        // 步骤 1：定位视频实体并进行创作者身份鉴权
         VideoContent video = findVideoOrThrow(id);
         accessPolicy.requireOwnerOrAdmin(video.getAuthorId());
 
-        // 步骤 2：状态机约束校验：已发布或审核中的内容禁止直接修改元数据
+        // 步骤 2：状态前置校验：仅 DRAFT 草稿态或 REJECTED 审核驳回态允许修订元数据
         if (video.getPublishStatus() != PublishStatus.DRAFT && video.getPublishStatus() != PublishStatus.REJECTED) {
-            throw new ContentException(HttpStatus.BAD_REQUEST, "只有草稿或被驳回状态的视频才允许修改元数据");
+            throw new ContentException(HttpStatus.BAD_REQUEST,
+                    "当前状态不可编辑元数据，仅 DRAFT 或 REJECTED 状态允许修改: " + video.getPublishStatus());
         }
 
         // 步骤 3：修改领域实体属性并执行乐观锁版本更新
@@ -139,6 +143,7 @@ public class VideoPublishApplicationService {
         if (request.tags() != null) {
             contentTagApplicationService.syncVideoTags(id, request.tags());
         }
+
         log.info("创作者 [{}] 更新了视频 [{}] 元数据", authorId, id);
     }
 
@@ -159,7 +164,8 @@ public class VideoPublishApplicationService {
         verifyFileAssetReady(video.getVideoFileId(), authorId, "主视频文件");
         verifyFileAssetReady(video.getCoverFileId(), authorId, "封面图片文件");
 
-        // 步骤 3：聚合根内部状态跃迁至 AUDITING 审核中状态
+        // 步骤 3：聚合根内部状态跃迁至 AUDITING 审核中状态，保留前置生命周期状态以便判断是否重提
+        PublishStatus previousStatus = video.getPublishStatus();
         try {
             video.submitForAudit();
         } catch (IllegalStateException e) {
@@ -171,23 +177,41 @@ public class VideoPublishApplicationService {
             throw new ContentException(HttpStatus.CONFLICT, "状态更新冲突，请刷新重试");
         }
 
-        // 步骤 4：在本地事务中持久化 Outbox 记录，发布 content.video.submitted 供审核微服务消费
+        // 步骤 4：在本地事务中持久化 Outbox 记录，发布 content.video.submitted 供审核微服务消费（补全标题与描述快照）
         Instant now = Instant.now();
+        String payloadJson;
+        try {
+            java.util.Map<String, Object> payloadMap = new java.util.LinkedHashMap<>();
+            payloadMap.put("videoId", video.getId());
+            payloadMap.put("vid", video.getVid());
+            payloadMap.put("authorId", video.getAuthorId());
+            payloadMap.put("title", video.getTitle() != null ? video.getTitle() : "");
+            payloadMap.put("description", video.getDescription() != null ? video.getDescription() : "");
+            payloadMap.put("videoFileId", video.getVideoFileId());
+            payloadMap.put("coverFileId", video.getCoverFileId());
+            payloadJson = objectMapper.writeValueAsString(payloadMap);
+        } catch (Exception e) {
+            log.error("构建视频提审 Outbox 载荷序列化异常: videoId={}", video.getId(), e);
+            throw new ContentException(HttpStatus.INTERNAL_SERVER_ERROR, "提审事件构建失败");
+        }
+
         ContentOutboxRecord outboxRecord = ContentOutboxRecord.of(
                 video.getId(),
                 "content.video.submitted",
-                String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"authorId\":\"%s\",\"videoFileId\":\"%s\",\"coverFileId\":\"%s\"}",
-                        video.getId(), video.getVid(), video.getAuthorId(), video.getVideoFileId(), video.getCoverFileId()),
+                payloadJson,
                 now
         );
         contentOutboxMapper.insert(outboxRecord, Timestamp.from(now), "PENDING", Timestamp.from(now));
 
-        // 步骤 5：初始化生成 5 个流水线子任务（审核、各规格转码、向量提取），进入就绪门禁管理
-        videoTaskCoordinator.initPipelineTasks(video.getId());
+        // 步骤 5：流水线子任务管理：初次提审生成初始任务网格，被驳回重提时复苏重置子任务
+        if (previousStatus == PublishStatus.REJECTED) {
+            videoTaskCoordinator.resetPipelineTasksForResubmit(video.getId());
+        } else {
+            videoTaskCoordinator.initPipelineTasks(video.getId());
+        }
 
-        log.info("视频 [{}] 已成功提交审核，已初始化流水线任务并记录 Outbox 待发布事件", id);
+        log.info("视频 [{}] 已成功提交审核 (原生命周期={})，已协同流水线任务并记录 Outbox 待发布事件", id, previousStatus);
     }
-
 
     /**
      * 创作者主动下架已发布的视频。

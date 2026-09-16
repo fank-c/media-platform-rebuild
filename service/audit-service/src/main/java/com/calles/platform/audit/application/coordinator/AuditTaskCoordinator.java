@@ -83,7 +83,53 @@ public class AuditTaskCoordinator {
             }
         }
 
-        // 步骤 2：工厂方法创建初始审核任务聚合根并完成持久化
+        // 步骤 2：检查前序终局任务并进行资产指纹比对，提取增量免审复用结果
+        java.util.Map<com.calles.platform.audit.domain.model.enums.AuditDimension, com.calles.platform.audit.domain.engine.model.EngineAuditResult> reusableResults = new java.util.HashMap<>();
+        if (context.reusableResults() != null) {
+            reusableResults.putAll(context.reusableResults());
+        }
+        if (latestOpt.isPresent()) {
+            AuditTask previousTask = latestOpt.get();
+            if (previousTask.getStage() == AuditStage.FINISHED) {
+                List<AuditDetail> previousDetails = auditDetailRepository.findByTaskId(previousTask.getId());
+                java.util.Map<com.calles.platform.audit.domain.model.enums.AuditDimension, List<AuditDetail>> detailsByDimension =
+                        previousDetails.stream().collect(java.util.stream.Collectors.groupingBy(AuditDetail::getDimension));
+
+                // 2.1 封面图免审比对：文件 ID 一致且历史判定全为 NORMAL
+                if (context.coverFileId() != null && java.util.Objects.equals(context.coverFileId(), previousTask.getCoverFileId())) {
+                    List<AuditDetail> coverDetails = detailsByDimension.get(com.calles.platform.audit.domain.model.enums.AuditDimension.IMAGE);
+                    if (coverDetails != null && !coverDetails.isEmpty() && coverDetails.stream().allMatch(d -> d.getLevel() == com.calles.platform.audit.domain.model.enums.ReviewLevel.NORMAL)) {
+                        log.info("提审任务命中封面免审复用: bizId=[{}], coverFileId=[{}]", context.bizId(), context.coverFileId());
+                        reusableResults.put(com.calles.platform.audit.domain.model.enums.AuditDimension.IMAGE,
+                                com.calles.platform.audit.domain.engine.model.EngineAuditResult.fromAuditDetail(coverDetails.get(0), "[免审复用] "));
+                    }
+                }
+
+                // 2.2 视频流免审比对：文件 ID 一致且历史判定全为 NORMAL
+                if (context.videoFileId() != null && java.util.Objects.equals(context.videoFileId(), previousTask.getVideoFileId())) {
+                    List<AuditDetail> videoDetails = detailsByDimension.get(com.calles.platform.audit.domain.model.enums.AuditDimension.VIDEO);
+                    if (videoDetails != null && !videoDetails.isEmpty() && videoDetails.stream().allMatch(d -> d.getLevel() == com.calles.platform.audit.domain.model.enums.ReviewLevel.NORMAL)) {
+                        log.info("提审任务命中视频资产免审复用: bizId=[{}], videoFileId=[{}]", context.bizId(), context.videoFileId());
+                        reusableResults.put(com.calles.platform.audit.domain.model.enums.AuditDimension.VIDEO,
+                                com.calles.platform.audit.domain.engine.model.EngineAuditResult.fromAuditDetail(videoDetails.get(0), "[免审复用] "));
+                    }
+                }
+
+                // 2.3 文本维度免审比对：标题与简介文本快照一致且历史判定全为 NORMAL
+                boolean titleMatch = java.util.Objects.equals(context.title(), previousTask.getTitleSnapshot());
+                boolean descMatch = java.util.Objects.equals(context.description(), previousTask.getDescriptionSnapshot());
+                if (titleMatch && descMatch) {
+                    List<AuditDetail> textDetails = detailsByDimension.get(com.calles.platform.audit.domain.model.enums.AuditDimension.TEXT);
+                    if (textDetails != null && !textDetails.isEmpty() && textDetails.stream().allMatch(d -> d.getLevel() == com.calles.platform.audit.domain.model.enums.ReviewLevel.NORMAL)) {
+                        log.info("提审任务命中文本快照免审复用: bizId=[{}]", context.bizId());
+                        reusableResults.put(com.calles.platform.audit.domain.model.enums.AuditDimension.TEXT,
+                                com.calles.platform.audit.domain.engine.model.EngineAuditResult.fromAuditDetail(textDetails.get(0), "[免审复用] "));
+                    }
+                }
+            }
+        }
+
+        // 步骤 3：工厂方法创建初始审核任务聚合根并完成持久化
         AuditTask task = AuditTask.createTask(
                 context.bizTypeCode(),
                 context.bizId(),
@@ -96,11 +142,11 @@ public class AuditTaskCoordinator {
         );
         auditTaskRepository.insert(task);
 
-        // 步骤 3：状态机流转：进入机审中 (MACHINE_AUDITING)
+        // 步骤 4：状态机流转：进入机审中 (MACHINE_AUDITING)
         task.startMachineAudit();
         auditTaskRepository.updateById(task);
 
-        // 步骤 4：补充 taskId 后构建执行上下文，并通过路由器分派给专属业务执行器执行机审流水线
+        // 步骤 5：补充 taskId 与 reusableResults 后构建执行上下文，并通过路由器分派给专属业务执行器执行机审流水线
         AuditContext executionContext = AuditContext.builder()
                 .taskId(task.getId())
                 .bizType(context.bizType())
@@ -111,6 +157,7 @@ public class AuditTaskCoordinator {
                 .description(context.description())
                 .coverFileId(context.coverFileId())
                 .videoFileId(context.videoFileId())
+                .reusableResults(reusableResults)
                 .build();
         AuditExecutor executor = executorRouter.route(context.bizType());
         AuditExecutionResult executionResult = executor.execute(executionContext);

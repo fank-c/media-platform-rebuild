@@ -77,6 +77,33 @@ public class VideoTaskCoordinator {
     }
 
     /**
+     * 视频重新提交审核时复苏流水线子任务网格。
+     *
+     * <p>若视频子任务已存在，将处于 {@link TaskStatus#FAILED} 或 {@link TaskStatus#CANCELED} 状态的历史任务重置为 {@link TaskStatus#PENDING}，清空失败原因，
+     * 确保本次审核通过后各转码子任务与就绪门禁能够重新触发；若尚未初始化任务，则走初始构建逻辑。</p>
+     *
+     * @param videoId 视频全局唯一主键 ID
+     */
+    @Transactional
+    public void resetPipelineTasksForResubmit(String videoId) {
+        List<VideoTask> existing = videoTaskRepository.findByVideoId(videoId);
+        if (existing.isEmpty()) {
+            initPipelineTasks(videoId);
+            return;
+        }
+
+        int resetCount = 0;
+        for (VideoTask task : existing) {
+            if (task.getStatus() == TaskStatus.FAILED || task.getStatus() == TaskStatus.CANCELED) {
+                task.resetToPending();
+                videoTaskRepository.updateById(task);
+                resetCount++;
+            }
+        }
+        log.info("视频 [{}] 重新提审，已成功复苏并重置 [{}] 个流水线子任务为 PENDING", videoId, resetCount);
+    }
+
+    /**
      * 标记指定子任务开始执行，流转为 RUNNING 状态。
      *
      * <p><b>防御性容错</b>：若任务记录尚未落库，先兜底创建后流转。</p>

@@ -70,4 +70,26 @@ public record EngineAuditResult(
                 detailLog
         );
     }
+
+    /**
+     * 从历史持久化审核明细还原为引擎结果（用于重提增量免审复用）。
+     *
+     * @param detail 历史审核明细
+     * @param prefixLog 前缀备注说明
+     * @return 引擎审核结果值对象
+     */
+    public static EngineAuditResult fromAuditDetail(AuditDetail detail, String prefixLog) {
+        List<String> hits = (detail.getHitWords() != null && !detail.getHitWords().isBlank())
+                ? List.of(detail.getHitWords().split(","))
+                : Collections.emptyList();
+        String log = (prefixLog != null ? prefixLog : "") + (detail.getDetailLog() != null ? detail.getDetailLog() : "");
+        return EngineAuditResult.builder()
+                .dimension(detail.getDimension())
+                .engineType(detail.getEngineType())
+                .level(detail.getLevel())
+                .confidence(detail.getConfidence())
+                .hitWords(hits)
+                .detailLog(log)
+                .build();
+    }
 }

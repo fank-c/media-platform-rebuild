@@ -108,4 +108,52 @@ class VideoAuditExecutorTest {
         assertThat(result.overallLevel()).isEqualTo(ReviewLevel.ILLEGAL);
         assertThat(result.summaryReason()).contains("枪支弹药");
     }
+
+    @Test
+    @DisplayName("命中历史通过判定时，直接复用结果且跳过引擎计算")
+    void shouldReuseHistoricalApprovedResultsWithoutCallingEngine() {
+        EngineAuditResult reusedCover = EngineAuditResult.normal(AuditDimension.IMAGE, "RULE_IMAGE", "[免审复用] 历史合规");
+        EngineAuditResult reusedVideo = EngineAuditResult.normal(AuditDimension.VIDEO, "RULE_VIDEO", "[免审复用] 历史合规");
+
+        AuditContext context = AuditContext.forVideo(
+                "task_03", "v_03", "cv_03", "u_01", "新修改的合规标题", null, "f_cover_old", "f_video_old",
+                java.util.Map.of(
+                        AuditDimension.IMAGE, reusedCover,
+                        AuditDimension.VIDEO, reusedVideo
+                )
+        );
+
+        when(textAuditEngine.audit(eq("新修改的合规标题"), any()))
+                .thenReturn(EngineAuditResult.normal(AuditDimension.TEXT, "LOCAL_DFA", "文本正常"));
+
+        AuditExecutionResult result = executor.execute(context);
+
+        assertThat(result.overallLevel()).isEqualTo(ReviewLevel.NORMAL);
+        assertThat(result.details()).hasSize(3);
+
+        // 验证封面与视频引擎被完全跳过
+        org.mockito.Mockito.verify(imageAuditEngine, org.mockito.Mockito.never()).auditCover(any());
+        org.mockito.Mockito.verify(videoAuditEngine, org.mockito.Mockito.never()).auditVideo(any());
+    }
+
+    @Test
+    @DisplayName("引擎执行崩溃时，自动降级为 SUSPICIOUS 人工复审")
+    void shouldFallbackToSuspiciousWhenEngineThrowsException() {
+        AuditContext context = AuditContext.forVideo(
+                "task_04", "v_04", "cv_04", "u_01", "合规标题", null, "f_cover", "f_video"
+        );
+
+        when(textAuditEngine.audit(any(), any()))
+                .thenReturn(EngineAuditResult.normal(AuditDimension.TEXT, "LOCAL_DFA", "文本正常"));
+        when(imageAuditEngine.auditCover("f_cover"))
+                .thenReturn(EngineAuditResult.normal(AuditDimension.IMAGE, "RULE_IMAGE", "封面正常"));
+        // 模拟视频抽帧服务异常崩溃
+        when(videoAuditEngine.auditVideo("f_video"))
+                .thenThrow(new RuntimeException("FFmpeg 连接超时或远程机审服务断连"));
+
+        AuditExecutionResult result = executor.execute(context);
+
+        assertThat(result.overallLevel()).isEqualTo(ReviewLevel.SUSPICIOUS);
+        assertThat(result.summaryReason()).contains("视频机审异常自动降级");
+    }
 }
