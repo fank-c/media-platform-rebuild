@@ -73,19 +73,19 @@ public class AuditTaskCoordinator {
                 context.bizType(), context.bizId(), context.bizVid(), context.authorId());
 
         // 步骤 1：幂等防重检查：检查是否已有同一业务标的处于 RECEIVED 或 MACHINE_AUDITING
-        Optional<AuditTask> latestOpt = auditTaskRepository.findLatestByBiz(context.bizType(), context.bizId());
+        Optional<AuditTask> latestOpt = auditTaskRepository.findLatestByBiz(context.bizTypeCode(), context.bizId());
         if (latestOpt.isPresent()) {
             AuditTask existing = latestOpt.get();
             if (existing.getStage() == AuditStage.RECEIVED || existing.getStage() == AuditStage.MACHINE_AUDITING) {
                 log.warn("业务 [{}:{}] 已存在正在执行中的审核任务 [{}], 忽略重复提交",
-                        context.bizType(), context.bizId(), existing.getTaskNo());
+                        context.bizTypeCode(), context.bizId(), existing.getTaskNo());
                 return existing;
             }
         }
 
         // 步骤 2：工厂方法创建初始审核任务聚合根并完成持久化
         AuditTask task = AuditTask.createTask(
-                context.bizType(),
+                context.bizTypeCode(),
                 context.bizId(),
                 context.bizVid(),
                 context.authorId(),
@@ -112,7 +112,7 @@ public class AuditTaskCoordinator {
                 .coverFileId(context.coverFileId())
                 .videoFileId(context.videoFileId())
                 .build();
-        AuditExecutor executor = executorRouter.route(task.getBizType());
+        AuditExecutor executor = executorRouter.route(context.bizType());
         AuditExecutionResult executionResult = executor.execute(executionContext);
 
         // 步骤 5：将引擎执行明细转为领域证据实体并批量持久化

@@ -1,6 +1,7 @@
 package com.calles.platform.audit.application.executor.impl;
 
 import com.calles.platform.audit.application.executor.AuditExecutor;
+import com.calles.platform.audit.application.executor.model.AuditBizType;
 import com.calles.platform.audit.application.executor.model.AuditContext;
 import com.calles.platform.audit.application.executor.model.AuditExecutionResult;
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
@@ -26,16 +27,14 @@ import java.util.List;
 @RequiredArgsConstructor
 public class VideoAuditExecutor implements AuditExecutor {
 
-    public static final String BIZ_TYPE_VIDEO = "VIDEO";
-
     private final TextAuditEngine textAuditEngine;
     private final ImageAuditEngine imageAuditEngine;
     private final VideoAuditEngine videoAuditEngine;
     private final AuditDecisionAggregator decisionAggregator;
 
     @Override
-    public boolean supports(String bizType) {
-        return BIZ_TYPE_VIDEO.equalsIgnoreCase(bizType);
+    public AuditBizType getBizType() {
+        return AuditBizType.VIDEO;
     }
 
     @Override

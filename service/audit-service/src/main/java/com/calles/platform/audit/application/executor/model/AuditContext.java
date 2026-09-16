@@ -10,7 +10,7 @@ import lombok.Builder;
 @Builder
 public record AuditContext(
         String taskId,
-        String bizType,
+        AuditBizType bizType,
         String bizId,
         String bizVid,
         String authorId,
@@ -19,6 +19,13 @@ public record AuditContext(
         String coverFileId,
         String videoFileId
 ) {
+    /**
+     * 获取业务类型的字符串编码，若为空则返回 null。
+     */
+    public String bizTypeCode() {
+        return bizType != null ? bizType.getCode() : null;
+    }
+
     /**
      * 构建视频审核上下文辅助工厂方法。
      */
@@ -34,7 +41,7 @@ public record AuditContext(
     ) {
         return AuditContext.builder()
                 .taskId(taskId)
-                .bizType("VIDEO")
+                .bizType(AuditBizType.VIDEO)
                 .bizId(videoId)
                 .bizVid(vid)
                 .authorId(authorId)

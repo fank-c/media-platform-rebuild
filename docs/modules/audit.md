@@ -171,7 +171,7 @@ stateDiagram-v2
   - 通用工作流协调器：[`AuditTaskCoordinator.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/coordinator/AuditTaskCoordinator.java)
   - 业务执行器体系：
     - 策略契约与路由：[`AuditExecutor.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/AuditExecutor.java)、[`AuditExecutorRouter.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/AuditExecutorRouter.java)
-    - 执行上下文与结果模型：[`AuditContext.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditContext.java)、[`AuditExecutionResult.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditExecutionResult.java)
+    - 业务类型与模型：[`AuditBizType.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditBizType.java)、[`AuditContext.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditContext.java)、[`AuditExecutionResult.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditExecutionResult.java)
     - 业务执行实现：[`VideoAuditExecutor.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/impl/VideoAuditExecutor.java)
   - 人审应用服务：[`AuditManualReviewApplicationService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AuditManualReviewApplicationService.java)
   - 回调服务：[`AuditCallbackService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AuditCallbackService.java)
@@ -186,19 +186,20 @@ stateDiagram-v2
 
 ## 6. 验证方式与测试覆盖
 
-模块内置 **43 项单元与集成测试用例**（11 个测试类），测试套件涵盖：
+模块内置 **47 项单元与集成测试用例**（12 个测试类），测试套件涵盖：
 1. **`DfaTextAuditEngineTest`**（5 项）：验证正常文本放行、严重违禁词拦截、疑似词识别、干扰符过滤及空串边界；
 2. **`AuditDecisionAggregatorTest`**（3 项）：验证全正常仲裁、包含违规最高优先级判定、疑似转人审仲裁；
-3. **`VideoAuditExecutorTest`**（3 项）：验证视频专属执行器多维度机审编排与判定输出；
-4. **`AuditTaskTest`**（5 项）：验证聚合根全生命周期状态流转、人工审批/驳回跃迁及非法跃迁异常；
-5. **`AuditCallbackServiceTest`**（3 项）：验证 Feign 远程回调成功更新状态、网络超时异常标记失败重试及未完结状态拦截；
-6. **`AuditTaskCoordinatorTest`**（4 项）：验证全流程协调流水线、合规通过自动回调、违规拦截自动打回、疑似可疑转待人审及提审幂等保护；
-7. **`AuditCallbackRetrySchedulerTest`**（1 项）：验证定时补偿器扫描并重试失败任务；
-8. **`VideoSubmittedConsumerTest`**（4 项）：验证标准信封嵌套结构、扁平直传载荷、未知扩展字段兼容及缺失 ID 守卫校验；
-9. **`InternalAuditControllerTest`**（3 项）：验证 MockMvc HTTP 模拟提交与任务明细查询（防腐 DTO 结构）；
-10. **`AdminAuditControllerTest`**（5 项）：验证管理端分页检索工单、全景详情、人工通过/驳回、非法参数校验拦截；
-11. **`AuditManualReviewApplicationServiceTest`**（7 项）：验证人审应用服务全景组装、分页查询、审批流转、驳回原因校验及状态机保护。
+3. **`VideoAuditExecutorTest`**（3 项）：验证视频专属执行器业务类型声明与多维度机审编排判定输出；
+4. **`AuditExecutorRouterTest`**（4 项）：验证执行器路由按 AuditBizType 枚举 O(1) 派发、字符串兼容路由及非法业务类型拦截防护；
+5. **`AuditTaskTest`**（5 项）：验证聚合根全生命周期状态流转、人工审批/驳回跃迁及非法跃迁异常；
+6. **`AuditCallbackServiceTest`**（3 项）：验证 Feign 远程回调成功更新状态、网络超时异常标记失败重试及未完结状态拦截；
+7. **`AuditTaskCoordinatorTest`**（4 项）：验证全流程协调流水线、合规通过自动回调、违规拦截自动打回、疑似可疑转待人审及提审幂等保护；
+8. **`AuditCallbackRetrySchedulerTest`**（1 项）：验证定时补偿器扫描并重试失败任务；
+9. **`VideoSubmittedConsumerTest`**（4 项）：验证标准信封嵌套结构、扁平直传载荷、未知扩展字段兼容及缺失 ID 守卫校验；
+10. **`InternalAuditControllerTest`**（3 项）：验证 MockMvc HTTP 模拟提交与任务明细查询（防腐 DTO 结构）；
+11. **`AdminAuditControllerTest`**（5 项）：验证管理端分页检索工单、全景详情、人工通过/驳回、非法参数校验拦截；
+12. **`AuditManualReviewApplicationServiceTest`**（7 项）：验证人审应用服务全景组装、分页查询、审批流转、驳回原因校验及状态机保护。
 
 **全量回归测试指令**：
-- 审核模块测试：`./mvnw -f service/audit-service/pom.xml test`（43 项用例 100% 通过）
+- 审核模块测试：`./mvnw -f service/audit-service/pom.xml test`（47 项用例 100% 通过）
 - 内容模块协同回归：`./mvnw -f service/content-service/pom.xml test`（109 项用例 100% 通过）

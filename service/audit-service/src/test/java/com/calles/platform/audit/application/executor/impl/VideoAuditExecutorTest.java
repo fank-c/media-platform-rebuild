@@ -54,8 +54,11 @@ class VideoAuditExecutorTest {
     }
 
     @Test
-    @DisplayName("supports 仅对 VIDEO 业务类型生效")
-    void supportsOnlyVideo() {
+    @DisplayName("getBizType 与 supports 准确绑定 VIDEO 业务类型")
+    void shouldBindVideoBizType() {
+        assertThat(executor.getBizType()).isEqualTo(com.calles.platform.audit.application.executor.model.AuditBizType.VIDEO);
+        assertThat(executor.supports(com.calles.platform.audit.application.executor.model.AuditBizType.VIDEO)).isTrue();
+        assertThat(executor.supports(com.calles.platform.audit.application.executor.model.AuditBizType.COMMENT)).isFalse();
         assertThat(executor.supports("VIDEO")).isTrue();
         assertThat(executor.supports("video")).isTrue();
         assertThat(executor.supports("COMMENT")).isFalse();
