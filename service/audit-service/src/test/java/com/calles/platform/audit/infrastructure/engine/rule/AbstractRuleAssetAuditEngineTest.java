@@ -1,10 +1,8 @@
-package com.calles.platform.audit.infrastructure.engine.base;
+package com.calles.platform.audit.infrastructure.engine.rule;
 
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.domain.model.enums.ReviewLevel;
-import com.calles.platform.audit.infrastructure.engine.impl.DefaultRuleImageAuditEngine;
-import com.calles.platform.audit.infrastructure.engine.impl.DefaultVideoAuditEngine;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

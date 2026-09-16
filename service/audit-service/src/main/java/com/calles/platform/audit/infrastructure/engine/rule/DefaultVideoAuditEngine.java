@@ -1,9 +1,8 @@
-package com.calles.platform.audit.infrastructure.engine.impl;
+package com.calles.platform.audit.infrastructure.engine.rule;
 
 import com.calles.platform.audit.domain.engine.VideoAuditEngine;
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.model.enums.AuditDimension;
-import com.calles.platform.audit.infrastructure.engine.base.AbstractRuleAssetAuditEngine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;

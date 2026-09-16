@@ -1,6 +1,6 @@
-package com.calles.platform.audit.interfaces.http.controller;
+package com.calles.platform.audit.interfaces.http.controller.callback;
 
-import com.calles.platform.audit.application.service.AliyunAuditCallbackApplicationService;
+import com.calles.platform.audit.application.service.callback.AliyunAuditCallbackApplicationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;

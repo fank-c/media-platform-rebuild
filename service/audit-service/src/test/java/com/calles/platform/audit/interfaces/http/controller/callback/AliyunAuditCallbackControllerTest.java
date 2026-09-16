@@ -1,6 +1,6 @@
-package com.calles.platform.audit.interfaces.http.controller;
+package com.calles.platform.audit.interfaces.http.controller.callback;
 
-import com.calles.platform.audit.application.service.AliyunAuditCallbackApplicationService;
+import com.calles.platform.audit.application.service.callback.AliyunAuditCallbackApplicationService;
 import com.calles.platform.audit.interfaces.http.advice.AuditExceptionHandler;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

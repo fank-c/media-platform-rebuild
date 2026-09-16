@@ -1,4 +1,4 @@
-package com.calles.platform.audit.infrastructure.engine.base;
+package com.calles.platform.audit.infrastructure.engine.rule;
 
 import com.calles.platform.audit.domain.engine.AuditEngine;
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;

@@ -1,4 +1,4 @@
-package com.calles.platform.audit.infrastructure.engine.impl;
+package com.calles.platform.audit.infrastructure.engine.text;
 
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.model.AuditSensitiveWord;

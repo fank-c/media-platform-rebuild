@@ -1,4 +1,4 @@
-package com.calles.platform.audit.interfaces.http.controller;
+package com.calles.platform.audit.interfaces.http.controller.internal;
 
 import com.calles.platform.audit.application.coordinator.AuditTaskCoordinator;
 import com.calles.platform.audit.application.service.AuditManualReviewApplicationService;

@@ -1,4 +1,4 @@
-package com.calles.platform.audit.config;
+package com.calles.platform.audit.config.aliyun;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

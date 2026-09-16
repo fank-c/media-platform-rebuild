@@ -1,4 +1,4 @@
-package com.calles.platform.audit.config;
+package com.calles.platform.audit.config.aliyun;
 
 import com.aliyun.green20220302.Client;
 import com.aliyun.teaopenapi.models.Config;

@@ -180,7 +180,7 @@ stateDiagram-v2
 - **引导入口**：[`AuditApplication.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/AuditApplication.java)（开启 OpenFeign 与 定时调度 `@EnableScheduling`）；
 - **基础设施与线程池配置**：
   - 线程池配置：[`AuditThreadPoolConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditThreadPoolConfiguration.java)（定义 `auditEngineExecutor` 专有线程池，core=8, max=32, queue=500, CallerRunsPolicy）；
-  - 阿里云 Green 客户端配置：[`AliyunGreenProperties.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AliyunGreenProperties.java)、[`AliyunGreenClientConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AliyunGreenClientConfiguration.java)；
+  - 阿里云 Green 客户端配置：[`AliyunGreenProperties.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/aliyun/AliyunGreenProperties.java)、[`AliyunGreenClientConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/aliyun/AliyunGreenClientConfiguration.java)；
   - 消息队列拓扑：[`AuditMessagingConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditMessagingConfiguration.java)
 - **跨服务通信与上下文**：
   - 文件服务拉流客户端：[`FileServiceClient.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/client/FileServiceClient.java) 与 [`FileDownloadUrlDTO.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/client/dto/FileDownloadUrlDTO.java)
@@ -201,12 +201,12 @@ stateDiagram-v2
   - 顶层统一契约：[`AuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/AuditEngine.java)
   - 维度契约接口：[`TextAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/TextAuditEngine.java)、[`ImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/ImageAuditEngine.java)、[`VideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/VideoAuditEngine.java)
   - 判定结果值对象模型：[`EngineAuditResult.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/model/EngineAuditResult.java)
-  - 基础设施规则基类模板：[`AbstractRuleAssetAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/base/AbstractRuleAssetAuditEngine.java)
-  - DFA 文本引擎实现：[`DfaTextAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DfaTextAuditEngine.java)
-  - 封面规则引擎桩实现：[`DefaultRuleImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DefaultRuleImageAuditEngine.java)
-  - 阿里云图片审核引擎：[`AliyunGreenImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/AliyunGreenImageAuditEngine.java)
-  - 视频规则引擎桩实现：[`DefaultVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DefaultVideoAuditEngine.java)
-  - 阿里云视频机审引擎：[`AliyunGreenVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/AliyunGreenVideoAuditEngine.java)
+  - 基础设施规则基类模板：[`AbstractRuleAssetAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/rule/AbstractRuleAssetAuditEngine.java)
+  - DFA 文本引擎实现：[`DfaTextAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/text/DfaTextAuditEngine.java)
+  - 封面规则引擎桩实现：[`DefaultRuleImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/rule/DefaultRuleImageAuditEngine.java)
+  - 阿里云图片审核引擎：[`AliyunGreenImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/aliyun/AliyunGreenImageAuditEngine.java)
+  - 视频规则引擎桩实现：[`DefaultVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/rule/DefaultVideoAuditEngine.java)
+  - 阿里云视频机审引擎：[`AliyunGreenVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/aliyun/AliyunGreenVideoAuditEngine.java)
 - **应用协调、执行与调度**：
   - 通用工作流协调器：[`AuditTaskCoordinator.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/coordinator/AuditTaskCoordinator.java)（内含增量免审指纹比对）
   - 业务执行器体系：
@@ -214,15 +214,15 @@ stateDiagram-v2
     - 业务类型与模型：[`AuditBizType.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditBizType.java)、[`AuditContext.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditContext.java)、[`AuditExecutionResult.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditExecutionResult.java)
     - 业务执行实现：[`VideoAuditExecutor.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/impl/VideoAuditExecutor.java)（三阶段异步并发调度）
   - 人审应用服务：[`AuditManualReviewApplicationService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AuditManualReviewApplicationService.java)
-  - 阿里云 Webhook 应用服务：[`AliyunAuditCallbackApplicationService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AliyunAuditCallbackApplicationService.java)
+  - 阿里云 Webhook 应用服务：[`AliyunAuditCallbackApplicationService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/callback/AliyunAuditCallbackApplicationService.java)
   - 回调服务：[`AuditCallbackService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AuditCallbackService.java)
   - 容灾补偿定时器：[`AuditCallbackRetryScheduler.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/scheduler/AuditCallbackRetryScheduler.java)
 - **消息与控制器**：
   - 提审消息强类型模型：[`VideoSubmittedMessage.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/messaging/event/VideoSubmittedMessage.java) 与 [`VideoSubmittedPayload.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/messaging/event/VideoSubmittedPayload.java)
   - 提审消息消费者：[`VideoSubmittedConsumer.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/messaging/consumer/VideoSubmittedConsumer.java)
-  - 内部端点控制器：[`InternalAuditController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/InternalAuditController.java)
-  - 管理端端点控制器：[`AdminAuditController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/AdminAuditController.java)
-  - 阿里云回调控制器：[`AliyunAuditCallbackController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/AliyunAuditCallbackController.java)
+  - 内部端点控制器：[`InternalAuditController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/internal/InternalAuditController.java)
+  - 管理端端点控制器：[`AdminAuditController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/admin/AdminAuditController.java)
+  - 阿里云回调控制器：[`AliyunAuditCallbackController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/callback/AliyunAuditCallbackController.java)
 
 ---
 

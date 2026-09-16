@@ -1,4 +1,4 @@
-package com.calles.platform.audit.infrastructure.engine.impl;
+package com.calles.platform.audit.infrastructure.engine.aliyun;
 
 import com.aliyun.green20220302.Client;
 import com.aliyun.green20220302.models.ImageModerationRequest;
@@ -6,7 +6,7 @@ import com.aliyun.green20220302.models.ImageModerationResponse;
 import com.aliyun.green20220302.models.ImageModerationResponseBody;
 import com.calles.platform.audit.application.client.FileServiceClient;
 import com.calles.platform.audit.application.client.dto.FileDownloadUrlDTO;
-import com.calles.platform.audit.config.AliyunGreenProperties;
+import com.calles.platform.audit.config.aliyun.AliyunGreenProperties;
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.domain.model.enums.ReviewLevel;
