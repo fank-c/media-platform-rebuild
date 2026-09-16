@@ -18,6 +18,19 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:media}
     password: ${RABBITMQ_PASSWORD:media}
+  datasource:
+    # 数据库连接配置：第一阶段共用同一 MySQL 实例，通过 audit_* 前缀隔离表所有权
+    url: ${AUDIT_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${AUDIT_DB_USERNAME:media}
+    password: ${AUDIT_DB_PASSWORD:media}
+
+# 审核业务定制配置
+audit:
+  callback:
+    # 回调内容服务超时重试最大次数
+    max-retries: 5
+    # 僵死未回调补偿重试定时扫描间隔 (毫秒，默认 30 秒)
+    retry-interval-ms: 30000
 management:
   endpoints:
     web:

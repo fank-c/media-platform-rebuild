@@ -121,21 +121,52 @@
 
 说明：[内容模块](modules/content.md)。
 
-### 基础入口
+### 领域模型与仓储持久化
 
-- [x] 提供服务启动入口与注册配置（工程骨架，无内容业务接口）。
+- [x] 建立物理主键与 24 位高熵 Base62 业务短码（`vid`）双 ID 体系。
+- [x] 视频聚合根状态机、转码流切片模型与标签引用热度增量同步。
+- [x] 基于 MyBatis-Plus 的表结构映射与仓储层落地。
 
-具体业务需求尚未细化，待讨论后拆分功能，不把服务骨架当作内容功能完成。
+### 创作者工作台与播放分发
+
+- [x] 创作者草稿箱新建、元数据更新、Feign 远程文件资产探活与提审发布。
+- [x] 前台公开多清晰度切片播放流分发与按可见性策略安全脱敏。
+- [x] 管理端作品多维检索与封禁/解封治理。
+
+### 异步任务流水线与门禁
+
+- [x] 视频提审分解为 5 类细粒度子任务（审核、基准转码、4K 转码、向量提取）。
+- [x] 落地工业级分级就绪门禁（`PublishGatekeeper`）：审核通过 + 基准画质就绪 + 向量就绪即放行，4K 异步非阻塞追加。
+- [x] 超时未完成任务自愈巡检与重试调度器（`VideoTaskTimeoutScheduler`）。
+- [x] 事务性发件箱（`content_outbox`）事件驱动与 MDC 全链路追踪。
 
 ## 审核模块 · audit-service
 
 说明：[审核模块](modules/audit.md)。
 
-### 基础入口
+### 领域模型与数据持久化
 
-- [x] 提供服务启动入口与注册配置（工程骨架，无审核业务接口）。
+- [x] 建立审核任务（`AuditTask`）、多维度明细证据（`AuditDetail`）与敏感词字典（`AuditSensitiveWord`）聚合模型。
+- [x] 完成对应数据表 DDL 定义与 MyBatis-Plus 仓储持久化落地。
 
-具体业务需求尚未细化，待讨论后拆分功能。
+### 自动化机审流水线与仲裁
+
+- [x] 实现基于确定有限状态机（DFA）前缀树的高性能敏感词扫描引擎（`DfaTextAuditEngine`），支持分级拦截（`ILLEGAL` vs `SUSPICIOUS`）与热重载。
+- [x] 实现多媒体封面规则审查引擎（`DefaultRuleImageAuditEngine`），支持测试桩模拟与云厂商可插拔扩展。
+- [x] 实现基于安全最高优先级（`ILLEGAL` > `SUSPICIOUS` > `NORMAL`）的多维度判定仲裁决策器（`AuditDecisionAggregator`）。
+
+### 提审事件消费与闭环回调
+
+- [x] 监听 RabbitMQ `content.video.submitted` 提审事件，自动启动机审并建立证据日志。
+- [x] 通过 OpenFeign（`ContentServiceClient`）回调内容服务内部端点 `POST /api/content/videos/internal/audit-callback`，驱动视频门禁流转。
+- [x] 实现回调超时重试与状态对齐自愈调度器（`AuditCallbackRetryScheduler`）。
+- [x] 提供内部提审演练调试接口与任务证据明细查询端点。
+
+### 人工复审与词库治理（阶段二规划）
+
+- [x] 管理端人工审核待办工单池分页检索与审批/驳回接口。
+- [ ] 敏感词字典动态增删查接口。
+- [ ] 对接阿里云内容安全等真实第三方云机审 SDK 适配器。
 
 ## 互动模块 · interaction-service
 

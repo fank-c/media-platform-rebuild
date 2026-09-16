@@ -270,3 +270,69 @@ CREATE TABLE IF NOT EXISTS `video_tag_rel` (
     UNIQUE KEY `uk_video_tag` (`video_id`, `tag_id`),
     KEY `idx_tag_video` (`tag_id`, `created_at` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频与标签关联多对多表';
+
+-- audit-service: 内容安全审核主任务表
+CREATE TABLE IF NOT EXISTS `audit_task` (
+    `id` CHAR(32) NOT NULL COMMENT '任务主键ID (UUID)',
+    `task_no` VARCHAR(64) NOT NULL COMMENT '业务流水号 (如 aud_20260915_xxxx)',
+    `biz_type` VARCHAR(32) NOT NULL DEFAULT 'VIDEO' COMMENT '业务类型: VIDEO, COMMENT, AVATAR',
+    `biz_id` CHAR(32) NOT NULL COMMENT '业务内部主键 (对应 video_content.id)',
+    `biz_vid` VARCHAR(32) NULL COMMENT '业务公开短码 (对应 video_content.vid)',
+    `author_id` CHAR(32) NOT NULL COMMENT '作者账号ID',
+    `title_snapshot` VARCHAR(128) NOT NULL COMMENT '标题快照',
+    `description_snapshot` VARCHAR(2000) NULL COMMENT '简介快照',
+    `cover_file_id` CHAR(32) NOT NULL COMMENT '封面图片文件ID',
+    `video_file_id` CHAR(32) NOT NULL COMMENT '视频文件ID',
+    `stage` VARCHAR(32) NOT NULL DEFAULT 'RECEIVED' COMMENT '审核阶段: RECEIVED, MACHINE_AUDITING, MANUAL_PENDING, FINISHED',
+    `result` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '审核结果: PENDING, PASSED, REJECTED',
+    `reject_reason` VARCHAR(255) NULL COMMENT '审核驳回原因',
+    `review_level` VARCHAR(16) NOT NULL DEFAULT 'NORMAL' COMMENT '风险级别: NORMAL, SUSPICIOUS, ILLEGAL',
+    `operator_id` VARCHAR(64) NOT NULL DEFAULT 'SYSTEM' COMMENT '终审操作人 (SYSTEM 或 管理员ID)',
+    `callback_status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '回调状态: PENDING, SUCCESS, FAILED',
+    `callback_retries` INT NOT NULL DEFAULT 0 COMMENT '回调已重试次数',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_audit_task_no` (`task_no`),
+    KEY `idx_audit_biz` (`biz_type`, `biz_id`, `created_at`),
+    KEY `idx_audit_stage_result` (`stage`, `result`, `created_at`),
+    KEY `idx_audit_callback` (`callback_status`, `updated_at`),
+    CONSTRAINT `ck_audit_task_stage` CHECK (`stage` IN ('RECEIVED', 'MACHINE_AUDITING', 'MANUAL_PENDING', 'FINISHED')),
+    CONSTRAINT `ck_audit_task_result` CHECK (`result` IN ('PENDING', 'PASSED', 'REJECTED')),
+    CONSTRAINT `ck_audit_task_review_level` CHECK (`review_level` IN ('NORMAL', 'SUSPICIOUS', 'ILLEGAL')),
+    CONSTRAINT `ck_audit_task_callback_status` CHECK (`callback_status` IN ('PENDING', 'SUCCESS', 'FAILED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内容安全审核主任务表';
+
+-- audit-service: 审核多维度判定明细与证据表
+CREATE TABLE IF NOT EXISTS `audit_detail` (
+    `id` CHAR(32) NOT NULL COMMENT '明细主键ID (UUID)',
+    `task_id` CHAR(32) NOT NULL COMMENT '关联主任务ID (关联 audit_task.id)',
+    `dimension` VARCHAR(32) NOT NULL COMMENT '审查维度: TEXT, IMAGE, VIDEO',
+    `engine_type` VARCHAR(32) NOT NULL COMMENT '判审引擎: LOCAL_DFA, RULE, ALIYUN_GREEN, MANUAL',
+    `level` VARCHAR(16) NOT NULL COMMENT '该项判定级别: NORMAL, SUSPICIOUS, ILLEGAL',
+    `confidence` DECIMAL(5,2) NOT NULL DEFAULT 100.00 COMMENT '置信度分值 (0.00 - 100.00)',
+    `hit_words` VARCHAR(500) NULL COMMENT '命中的敏感词或规则标签快照 (逗号分隔)',
+    `detail_log` TEXT NULL COMMENT '引擎原始判定结果或原因记录',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    KEY `idx_detail_task` (`task_id`, `dimension`),
+    CONSTRAINT `ck_audit_detail_dimension` CHECK (`dimension` IN ('TEXT', 'IMAGE', 'VIDEO')),
+    CONSTRAINT `ck_audit_detail_level` CHECK (`level` IN ('NORMAL', 'SUSPICIOUS', 'ILLEGAL'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='审核多维度判定明细与证据表';
+
+-- audit-service: 敏感词库与合规规则字典表
+CREATE TABLE IF NOT EXISTS `audit_sensitive_word` (
+    `id` CHAR(32) NOT NULL COMMENT '敏感词ID (UUID)',
+    `word` VARCHAR(64) NOT NULL COMMENT '敏感词条',
+    `category` VARCHAR(32) NOT NULL DEFAULT 'GENERAL' COMMENT '类别: POLITICS, PORN, VIOLENCE, ABUSE, AD, GENERAL',
+    `level` VARCHAR(16) NOT NULL DEFAULT 'ILLEGAL' COMMENT '拦截级别: ILLEGAL, SUSPICIOUS',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE=生效, DISABLED=停用',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_sensitive_word` (`word`),
+    KEY `idx_word_lookup` (`status`, `level`),
+    CONSTRAINT `ck_audit_word_level` CHECK (`level` IN ('ILLEGAL', 'SUSPICIOUS')),
+    CONSTRAINT `ck_audit_word_status` CHECK (`status` IN ('ACTIVE', 'DISABLED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感词库与合规规则字典表';
+
