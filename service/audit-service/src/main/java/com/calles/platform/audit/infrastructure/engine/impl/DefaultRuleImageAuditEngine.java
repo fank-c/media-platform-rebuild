@@ -5,6 +5,7 @@ import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.model.enums.AuditDimension;
 import com.calles.platform.audit.infrastructure.engine.base.AbstractRuleAssetAuditEngine;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ import java.util.List;
  */
 @Slf4j
 @Component
+@ConditionalOnProperty(name = "audit.aliyun.enabled", havingValue = "false", matchIfMissing = true)
 public class DefaultRuleImageAuditEngine extends AbstractRuleAssetAuditEngine implements ImageAuditEngine {
 
     /** 引擎标识名称。 */

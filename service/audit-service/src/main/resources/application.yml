@@ -31,6 +31,20 @@ audit:
     max-retries: 5
     # 僵死未回调补偿重试定时扫描间隔 (毫秒，默认 30 秒)
     retry-interval-ms: 30000
+  aliyun:
+    # 是否开启阿里云内容安全 2.0 增强版检测（默认 false，回退为本地规则测试桩）
+    enabled: ${AUDIT_ALIYUN_ENABLED:false}
+    access-key-id: ${ALIYUN_ACCESS_KEY_ID:}
+    access-key-secret: ${ALIYUN_ACCESS_KEY_SECRET:}
+    endpoint: ${AUDIT_ALIYUN_ENDPOINT:green-cip.cn-shanghai.aliyuncs.com}
+    uid: ${AUDIT_ALIYUN_UID:}
+    callback-url: ${AUDIT_ALIYUN_CALLBACK_URL:}
+    callback-seed: ${AUDIT_ALIYUN_CALLBACK_SEED:}
+    image-service: ${AUDIT_ALIYUN_IMAGE_SERVICE:baselineCheck}
+    video-service: ${AUDIT_ALIYUN_VIDEO_SERVICE:video_detection}
+    poll-timeout-seconds: ${AUDIT_ALIYUN_POLL_TIMEOUT_SECONDS:15}
+    poll-interval-millis: ${AUDIT_ALIYUN_POLL_INTERVAL_MILLIS:1500}
+    short-probe-timeout-seconds: ${AUDIT_ALIYUN_SHORT_PROBE_TIMEOUT_SECONDS:3}
 management:
   endpoints:
     web:

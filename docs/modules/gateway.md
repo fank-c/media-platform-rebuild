@@ -22,9 +22,9 @@
 
 ### 哪些请求不需要已有访问令牌
 
-默认白名单为 `/api/auth/ping`、`/api/auth/login`、`/api/auth/register`、`/api/auth/refresh`、`/api/files/assets/**`（前端标签防盗链直链）、`/actuator/health` 和 `/actuator/info`。白名单按路径匹配，不是“整个模块匿名开放”，也不是按 HTTP 方法细分。
+默认白名单为 `/api/auth/ping`、`/api/auth/login`、`/api/auth/register`、`/api/auth/refresh`、`/api/files/assets/**`（前端标签防盗链直链）、`/api/audit/callback/**`（外部机审 Webhook 回调，由应用层验签）、`/actuator/health` 和 `/actuator/info`。白名单按路径匹配，不是“整个模块匿名开放”，也不是按 HTTP 方法细分。
 
-这些请求跳过访问令牌验证，但仍清除客户端提交的身份头。登录仍检查密码，刷新仍检查刷新凭据；静态资源代理依靠 URL 签名防盗链鉴权。用户公开资料没有加入此白名单，因此仍需登录。
+这些请求跳过访问令牌验证，但仍清除客户端提交的身份头。登录仍检查密码，刷新仍检查刷新凭据；静态资源代理依靠 URL 签名防盗链鉴权；审核回调依靠 SHA-256 消息摘要验签防篡改。用户公开资料没有加入此白名单，因此仍需登录。
 
 ### 静态资源防盗刷限流防护
 

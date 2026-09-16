@@ -10,8 +10,8 @@
 - **提审事件异步受理**：通过 RabbitMQ 消费来自 `content-service` 的 `content.video.submitted` 提审事件，解析视频主键、公开编码、作者信息及关联文件资产凭证；
 - **分级自动化机审流水线**：
   - **文本元数据审查**：基于确定有限状态自动机（DFA）前缀树算法，对标题、简介等文本进行毫秒级敏感词过滤与分级研判；
-  - **多媒体封面审查**：基于规则校验与可插拔适配器（支持本地规则桩演练与第三方云内容安全 SDK 适配层）校验封面图合规性；
-  - **视频流资产合规性**：对主视频文件进行基础规则合法性探测；
+  - **多媒体封面审查**：基于规则校验与可插拔适配器（支持本地规则桩演练与**阿里云内容安全 2.0 增强版** `imageModeration` 适配层）校验封面图合规性，通过 `file-service` 换取 MinIO 短期预签名 URL 拉流；
+  - **视频流资产合规性**：支持本地规则桩与**阿里云内容安全 2.0 增强版** `videoModeration` 双轨结果接收（开发环境本地主动轮询降级 + 生产环境异步 Webhook 回调带 SHA-256 防篡改验签）；
 - **聚合仲裁决策**：采用最高风险等级优先策略（`ILLEGAL` > `SUSPICIOUS` > `NORMAL`）聚合各维度明细，判定是直接通过、违规驳回还是转入人工复审；
 - **高韧性下游回调与状态对齐**：通过 OpenFeign 调用内容服务专属内部回调端点 `POST /api/content/videos/internal/audit-callback`，驱动内容状态流转；内置指数退避定时重试调度器（`AuditCallbackRetryScheduler`），避免瞬时网络抖动导致任务卡死。
 
@@ -118,8 +118,10 @@ stateDiagram-v2
   - `TextAuditEngine`、`ImageAuditEngine`、`VideoAuditEngine`、`EngineAuditResult`
 - **引擎基础设施具体实现**（`infrastructure/engine/`）：
   - **`DfaTextAuditEngine`**：基于确定有限状态机（DFA）敏感词前缀树扫描，时间复杂度为 $O(N)$；支持大小写与噪声干扰字符过滤；支持数据库热重载与本地内置默认兜底词库；
-  - **`DefaultRuleImageAuditEngine`**：封面多媒体合规规则引擎，支持测试桩模拟演练与第三方云内容安全接口插拔适配；
-  - **`DefaultVideoAuditEngine`**：视频资产基础规格与合规性审查；
+  - **`DefaultRuleImageAuditEngine`**：封面多媒体规则审查桩（`audit.aliyun.enabled: false` 时生效），用于离线规则演练与无外部网络测试；
+  - **`AliyunGreenImageAuditEngine`**：阿里云内容安全 2.0 增强版图片审核引擎（`audit.aliyun.enabled: true` 时生效）；通过 OpenFeign 调取 `file-service` 获取 MinIO 预签名拉流 URL，向阿里云提交 `imageModeration`（服务编码 `baselineCheck`），解析多标签违规项并聚合全局风险级别；
+  - **`DefaultVideoAuditEngine`**：视频规格与合规性审查桩（`audit.aliyun.enabled: false` 时生效）；
+  - **`AliyunGreenVideoAuditEngine`**：阿里云内容安全 2.0 增强版视频机审引擎（`audit.aliyun.enabled: true` 时生效）；通过 `file-service` 获取视频拉流直链并提交 `videoModeration` 任务，支持双轨结果接收；
 - **领域决策仲裁服务**（`domain/service/`）：
   - **`AuditDecisionAggregator`**：综合仲裁器，基于安全最高优先级汇总判定与驳回理由；
 - **业务专属执行器路由分派体系**（`application/executor/`）：
@@ -127,7 +129,27 @@ stateDiagram-v2
   - **三阶段异步并发与容灾降级**：`VideoAuditExecutor` 基于 `auditEngineExecutor` 专有线程池将文本（标题/简介）、封面图片与主视频资产审查异步并发调度，统一 `CompletableFuture.allOf` 等待，并将单项异常降级为 `SUSPICIOUS`（人工复审）；
   - **重提增量免审复用机制**：`AuditTaskCoordinator` 在接收到重新提审事件时，自动比对前序终局驳回记录的资产指纹，若封面图或视频文件未发生变动且历史判定已为 `NORMAL`，则直接继承历史合规结论，跳过相应引擎的重复计算。
 
-### 4.2 跨服务通信与回调契约
+### 4.2 阿里云内容安全 2.0 配置与双轨接收架构
+
+#### 4.2.1 环境变量与配置项
+配置项统一位于 `audit.aliyun.*`，默认处于脱网安全状态（`enabled: false`）：
+- `audit.aliyun.enabled`：总开关，默认 `false`（回退为本地规则桩）；
+- `audit.aliyun.access-key-id` / `access-key-secret`：阿里云 RAM 凭证（生产通过环境变量 `ALICLOUD_ACCESS_KEY_ID` / `ALICLOUD_ACCESS_KEY_SECRET` 注入）；
+- `audit.aliyun.endpoint`：Green API 服务地址，默认 `green-cip.cn-shanghai.aliyuncs.com`；
+- `audit.aliyun.uid` / `audit.aliyun.seed`：异步 Webhook 回调签名防篡改校验参数（通过 `ALICLOUD_GREEN_UID` / `ALICLOUD_GREEN_SEED` 注入）；
+- `audit.aliyun.callback-url`：云端 Webhook 回调接收地址（如 `https://example.com/api/audit/callback/aliyun/video`）；
+- `audit.aliyun.image-service-code` / `video-service-code`：机审服务策略，默认均为 `baselineCheck`；
+- `audit.aliyun.polling-timeout-seconds`：本地内网轮询最大等待时间（默认 15 秒）；
+- `audit.aliyun.short-probe-timeout-seconds`：云端模式前置短探测等待时间（默认 3 秒）。
+
+#### 4.2.2 双轨结果接收架构
+针对开发者本地内网（无公网 IP）与云端线上部署差异，设计“双轨结果接收机制”：
+- **轨道 A（本地内网轮询模式，`callback-url` 为空）**：
+  引擎提交检测任务后，每隔 1.5 秒主动轮询 `client.videoModerationResult(...)`。若在 15 秒超时内出结果则直接完结；若超时则优雅返回 `SUSPICIOUS`（人工复审保底），不阻断流水线。
+- **轨道 B（云端异步 Webhook 模式，`callback-url` 已配置）**：
+  引擎先执行 3 秒短探测（覆盖小视频秒级出结果场景）；若未出结果则返回中间挂起态 `SUSPICIOUS`。当阿里云机审完成后，主动回调网关放行的端点 `POST /api/audit/callback/aliyun/video`。应用层通过 `AliyunAuditCallbackApplicationService` 执行 `SHA-256(uid + seed + content)` 签名防篡改校验，持久化视频维度判定证据，并调用 `AuditTask.completeAsyncMachineAudit(...)` 完成终局跃迁并驱动下游门禁回调。
+
+### 4.3 跨服务通信与回调契约
 1. **提审事件消费**：
    - 监听 RabbitMQ Exchange `media.platform.events`，Queue `audit-service.content-video-submitted.v1`，Routing Key `content.video.submitted`；
    - 具备死信队列 `audit-service.content-video-submitted.v1.dlq` 保证异常消息可追溯。
@@ -135,8 +157,12 @@ stateDiagram-v2
    - 客户端：[`ContentServiceClient.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/client/ContentServiceClient.java)；
    - 目标端点：`POST /api/content/videos/internal/audit-callback`；
    - 载荷参数：`videoId`、`passed`、`rejectReason`。
+3. **文件服务拉流授权调用**：
+   - 客户端：[`FileServiceClient.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/client/FileServiceClient.java)；
+   - 目标端点：`GET /api/files/{id}/download-url`；
+   - 载荷参数：获取 MinIO 具备受控有效期的预签名 GET 直链供阿里云异步拉流检测。
 
-### 4.3 HTTP 接口清单
+### 4.4 HTTP 接口清单
 
 | 方法 | URI 路径 | 权限控制 | 说明 |
 | :--- | :--- | :--- | :--- |
@@ -145,6 +171,7 @@ stateDiagram-v2
 | `GET` | `/api/audit/admin/tasks` | 管理员 / 审核员 | 运营后台复合条件分页检索工单列表 |
 | `GET` | `/api/audit/admin/tasks/{id}` | 管理员 / 审核员 | 运营后台查看工单全景信息与多维度证据 |
 | `POST` | `/api/audit/admin/tasks/{id}/review` | 管理员 / 审核员 | 人工审核放行/驳回裁决并联动下游内容服务 |
+| `POST` | `/api/audit/callback/aliyun/video` | 匿名（SHA-256 签名鉴权） | 阿里云内容安全 2.0 视频机审异步 Webhook 回调通知 |
 
 ---
 
@@ -153,7 +180,11 @@ stateDiagram-v2
 - **引导入口**：[`AuditApplication.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/AuditApplication.java)（开启 OpenFeign 与 定时调度 `@EnableScheduling`）；
 - **基础设施与线程池配置**：
   - 线程池配置：[`AuditThreadPoolConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditThreadPoolConfiguration.java)（定义 `auditEngineExecutor` 专有线程池，core=8, max=32, queue=500, CallerRunsPolicy）；
+  - 阿里云 Green 客户端配置：[`AliyunGreenProperties.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AliyunGreenProperties.java)、[`AliyunGreenClientConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AliyunGreenClientConfiguration.java)；
   - 消息队列拓扑：[`AuditMessagingConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditMessagingConfiguration.java)
+- **跨服务通信与上下文**：
+  - 文件服务拉流客户端：[`FileServiceClient.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/client/FileServiceClient.java) 与 [`FileDownloadUrlDTO.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/client/dto/FileDownloadUrlDTO.java)
+  - 异步机审线程上下文传递：[`AuditContextHolder.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditContextHolder.java)
 - **DTO 契约传输层**：
   - 入参契约：[`AuditRequests.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/dto/AuditRequests.java)
   - 出参契约：[`AuditResponses.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/dto/AuditResponses.java)
@@ -161,7 +192,7 @@ stateDiagram-v2
   - 业务异常：[`AuditException.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/exception/AuditException.java)
   - 全局异常切面：[`AuditExceptionHandler.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/advice/AuditExceptionHandler.java)
 - **领域模型与服务**：
-  - 任务聚合根：[`AuditTask.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/model/AuditTask.java)
+  - 任务聚合根：[`AuditTask.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/model/AuditTask.java)（新增 `completeAsyncMachineAudit` 异步机审终局跃迁）
   - 明细实体：[`AuditDetail.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/model/AuditDetail.java)
   - 敏感词实体：[`AuditSensitiveWord.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/model/AuditSensitiveWord.java)
   - 状态与维度枚举：[`domain/model/enums/`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/model/enums/)（包含 `AuditStage`、`AuditResult`、`ReviewLevel`、`AuditDimension`、`CallbackStatus`、`CommonStatus`、`WordCategory`、`WordLevel`）
@@ -172,8 +203,10 @@ stateDiagram-v2
   - 判定结果值对象模型：[`EngineAuditResult.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/domain/engine/model/EngineAuditResult.java)
   - 基础设施规则基类模板：[`AbstractRuleAssetAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/base/AbstractRuleAssetAuditEngine.java)
   - DFA 文本引擎实现：[`DfaTextAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DfaTextAuditEngine.java)
-  - 封面规则引擎实现：[`DefaultRuleImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DefaultRuleImageAuditEngine.java)
-  - 视频规则引擎实现：[`DefaultVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DefaultVideoAuditEngine.java)
+  - 封面规则引擎桩实现：[`DefaultRuleImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DefaultRuleImageAuditEngine.java)
+  - 阿里云图片审核引擎：[`AliyunGreenImageAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/AliyunGreenImageAuditEngine.java)
+  - 视频规则引擎桩实现：[`DefaultVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/DefaultVideoAuditEngine.java)
+  - 阿里云视频机审引擎：[`AliyunGreenVideoAuditEngine.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/infrastructure/engine/impl/AliyunGreenVideoAuditEngine.java)
 - **应用协调、执行与调度**：
   - 通用工作流协调器：[`AuditTaskCoordinator.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/coordinator/AuditTaskCoordinator.java)（内含增量免审指纹比对）
   - 业务执行器体系：
@@ -181,6 +214,7 @@ stateDiagram-v2
     - 业务类型与模型：[`AuditBizType.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditBizType.java)、[`AuditContext.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditContext.java)、[`AuditExecutionResult.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/model/AuditExecutionResult.java)
     - 业务执行实现：[`VideoAuditExecutor.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/executor/impl/VideoAuditExecutor.java)（三阶段异步并发调度）
   - 人审应用服务：[`AuditManualReviewApplicationService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AuditManualReviewApplicationService.java)
+  - 阿里云 Webhook 应用服务：[`AliyunAuditCallbackApplicationService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AliyunAuditCallbackApplicationService.java)
   - 回调服务：[`AuditCallbackService.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/service/AuditCallbackService.java)
   - 容灾补偿定时器：[`AuditCallbackRetryScheduler.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/application/scheduler/AuditCallbackRetryScheduler.java)
 - **消息与控制器**：
@@ -188,12 +222,13 @@ stateDiagram-v2
   - 提审消息消费者：[`VideoSubmittedConsumer.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/messaging/consumer/VideoSubmittedConsumer.java)
   - 内部端点控制器：[`InternalAuditController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/InternalAuditController.java)
   - 管理端端点控制器：[`AdminAuditController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/AdminAuditController.java)
+  - 阿里云回调控制器：[`AliyunAuditCallbackController.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/AliyunAuditCallbackController.java)
 
 ---
 
 ## 6. 验证方式与测试覆盖
 
-模块内置 **55 项单元与集成测试用例**（13 个测试类），测试套件涵盖：
+模块内置 **70 项单元与集成测试用例**（17 个测试类），测试套件涵盖：
 1. **`DfaTextAuditEngineTest`**（6 项）：验证 AuditEngine 顶层契约元数据、正常文本放行、严重违禁词拦截、疑似词识别、干扰符过滤及空串边界；
 2. **`AbstractRuleAssetAuditEngineTest`**（4 项）：验证图片与视频规则审查引擎基类的维度支持、空资产拦截、违规特征桩拦截、疑似敏感转人审及合规放行；
 3. **`AuditDecisionAggregatorTest`**（3 项）：验证全正常仲裁、包含违规最高优先级判定、疑似转人审仲裁；
@@ -206,8 +241,12 @@ stateDiagram-v2
 10. **`VideoSubmittedConsumerTest`**（4 项）：验证标准信封嵌套结构、扁平直传载荷、未知扩展字段兼容及缺失 ID 守卫校验；
 11. **`InternalAuditControllerTest`**（3 项）：验证 MockMvc HTTP 模拟提交与任务明细查询（防腐 DTO 结构）；
 12. **`AdminAuditControllerTest`**（5 项）：验证管理端分页检索工单、全景详情、人工通过/驳回、非法参数校验拦截；
-13. **`AuditManualReviewApplicationServiceTest`**（7 项）：验证人审应用服务全景组装、分页查询、审批流转、驳回原因校验及状态机保护。
+13. **`AuditManualReviewApplicationServiceTest`**（7 项）：验证人审应用服务全景组装、分页查询、审批流转、驳回原因校验及状态机保护；
+14. **`AliyunGreenImageAuditEngineTest`**（5 项）：验证 Client 未初始化降级、正常合规放行、违规标签拦截、疑似敏感转人审、文件拉流 URL 获取失败降级；
+15. **`AliyunGreenVideoAuditEngineTest`**（4 项）：验证云端异步 Webhook 探测挂起、内网主动轮询检测通过、内网轮询超时降级转人工、文件拉流失败降级；
+16. **`AliyunAuditCallbackApplicationServiceTest`**（4 项）：验证 SHA-256 签名鉴权拦截、未知任务幂等忽略、视频违规自动驳回并驱动下游门禁、视频合规自动放行；
+17. **`AliyunAuditCallbackControllerTest`**（2 项）：验证 HTTP 接口成功接收 Webhook、签名校验未通过返回 401。
 
 **全量回归测试指令**：
-- 审核模块测试：`./mvnw -f service/audit-service/pom.xml test`（55 项用例 100% 通过）
+- 审核模块测试：`./mvnw -f service/audit-service/pom.xml test`（70 项用例 100% 通过）
 - 内容模块协同回归：`./mvnw -f service/content-service/pom.xml test`（112 项用例 100% 通过）

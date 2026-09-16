@@ -87,13 +87,13 @@ public class VideoAuditExecutor implements AuditExecutor {
 
         // 步骤 1：三阶段异步并发调度（内部自动处理历史免审跳过与异常优雅降级）
         CompletableFuture<List<EngineAuditResult>> textFuture = executeOrReuse(
-                AuditDimension.TEXT, reusableResults, () -> auditTexts(context), "LOCAL_DFA", "文本", context.bizId());
+                AuditDimension.TEXT, reusableResults, () -> auditTexts(context), "LOCAL_DFA", "文本", context);
 
         CompletableFuture<List<EngineAuditResult>> imageFuture = executeOrReuse(
-                AuditDimension.IMAGE, reusableResults, () -> List.of(imageAuditEngine.auditCover(context.coverFileId())), "RULE_IMAGE", "封面", context.bizId());
+                AuditDimension.IMAGE, reusableResults, () -> List.of(imageAuditEngine.auditCover(context.coverFileId())), "RULE_IMAGE", "封面", context);
 
         CompletableFuture<List<EngineAuditResult>> videoFuture = executeOrReuse(
-                AuditDimension.VIDEO, reusableResults, () -> List.of(videoAuditEngine.auditVideo(context.videoFileId())), "RULE_VIDEO", "视频", context.bizId());
+                AuditDimension.VIDEO, reusableResults, () -> List.of(videoAuditEngine.auditVideo(context.videoFileId())), "RULE_VIDEO", "视频", context);
 
         // 步骤 2：统一等待三阶段任务全部完成
         CompletableFuture.allOf(textFuture, imageFuture, videoFuture).join();
@@ -124,7 +124,7 @@ public class VideoAuditExecutor implements AuditExecutor {
      * @param supplier 审查任务执行供给器
      * @param engineType 降级兜底的引擎标识
      * @param fallbackPrefix 降级原因前缀描述
-     * @param bizId 业务标的 ID
+     * @param context 当前审核执行上下文
      * @return 异步审查结果 Future
      */
     private CompletableFuture<List<EngineAuditResult>> executeOrReuse(
@@ -133,18 +133,25 @@ public class VideoAuditExecutor implements AuditExecutor {
             Supplier<List<EngineAuditResult>> supplier,
             String engineType,
             String fallbackPrefix,
-            String bizId
+            AuditContext context
     ) {
         // 步骤 1：若命中历史免审结论，跳过计算直接返回
         if (reusableResults.containsKey(dimension)) {
-            log.info("视频 [{}] {}维度命中历史通过结果，直接免审复用", bizId, fallbackPrefix);
+            log.info("视频 [{}] {}维度命中历史通过结果，直接免审复用", context.bizId(), fallbackPrefix);
             return CompletableFuture.completedFuture(List.of(reusableResults.get(dimension)));
         }
 
-        // 步骤 2：提交隔离线程池并发计算，并挂载高可用异常降级
-        return CompletableFuture.supplyAsync(supplier, auditEngineExecutor)
+        // 步骤 2：提交隔离线程池并发计算，挂载线程局部上下文与高可用异常降级
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                com.calles.platform.audit.application.executor.model.AuditContextHolder.set(context);
+                return supplier.get();
+            } finally {
+                com.calles.platform.audit.application.executor.model.AuditContextHolder.clear();
+            }
+        }, auditEngineExecutor)
                 .exceptionally(ex -> {
-                    log.error("视频 [{}] {}机审引擎执行异常, 自动降级为人工复审", bizId, fallbackPrefix, ex);
+                    log.error("视频 [{}] {}机审引擎执行异常, 自动降级为人工复审", context.bizId(), fallbackPrefix, ex);
                     return List.of(EngineAuditResult.of(
                             dimension,
                             engineType,

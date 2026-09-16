@@ -32,4 +32,16 @@ public interface ImageAuditEngine extends AuditEngine {
     default EngineAuditResult auditCover(String coverFileId) {
         return audit(coverFileId);
     }
+
+    /**
+     * 对封面图片执行安全合规审查（支持透传创作者与任务上下文）。
+     *
+     * @param coverFileId 封面文件资产 ID
+     * @param authorId 创作者唯一标识
+     * @param taskId 关联审核任务全局唯一 ID
+     * @return 审查判定明细结果
+     */
+    default EngineAuditResult auditCover(String coverFileId, String authorId, String taskId) {
+        return auditCover(coverFileId);
+    }
 }

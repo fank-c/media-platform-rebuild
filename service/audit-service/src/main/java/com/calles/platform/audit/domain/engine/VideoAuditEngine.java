@@ -32,4 +32,16 @@ public interface VideoAuditEngine extends AuditEngine {
     default EngineAuditResult auditVideo(String videoFileId) {
         return audit(videoFileId);
     }
+
+    /**
+     * 对主视频资产执行安全合规审查（支持透传创作者与任务上下文）。
+     *
+     * @param videoFileId 视频文件资产 ID
+     * @param authorId 创作者唯一标识
+     * @param taskId 关联审核任务全局唯一 ID
+     * @return 审查判定明细结果
+     */
+    default EngineAuditResult auditVideo(String videoFileId, String authorId, String taskId) {
+        return auditVideo(videoFileId);
+    }
 }

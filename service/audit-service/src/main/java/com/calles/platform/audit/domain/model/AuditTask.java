@@ -246,6 +246,52 @@ public class AuditTask {
     }
 
     /**
+     * 异步机审结果回调裁决完成，驱动状态机从机审中或待复审中间态跃迁至终局。
+     *
+     * <p><b>幂等性保障</b>：若任务已处于 {@link AuditStage#FINISHED}（例如已被人工先行处理或历史回调已消费），
+     * 保持既有结论不变，具备幂等无害性。</p>
+     *
+     * @param level 综合研判风险级别
+     * @param reason 驳回或疑点原因摘要
+     * @param operator 操作者标识（如 ALIYUN_CALLBACK）
+     */
+    public void completeAsyncMachineAudit(ReviewLevel level, String reason, String operator) {
+        // 步骤 1：幂等守卫：若任务已产生终局归档，直接忽略本次异步回调流转
+        if (this.stage == AuditStage.FINISHED) {
+            return;
+        }
+
+        // 步骤 2：仅允许从 MACHINE_AUDITING 或 MANUAL_PENDING 中间态跃迁
+        if (this.stage != AuditStage.MACHINE_AUDITING && this.stage != AuditStage.MANUAL_PENDING) {
+            throw new IllegalStateException("当前状态不支持异步机审回调裁决: " + this.stage);
+        }
+
+        // 步骤 3：更新风险等级与操作人
+        this.reviewLevel = level;
+        this.operatorId = (operator != null && !operator.isBlank()) ? operator : "ALIYUN_CALLBACK";
+        this.updatedAt = Instant.now();
+
+        // 步骤 4：根据综合风险级别执行状态流转
+        switch (level) {
+            case ILLEGAL -> {
+                this.stage = AuditStage.FINISHED;
+                this.result = AuditResult.REJECTED;
+                this.rejectReason = (reason != null && !reason.isBlank()) ? reason : "内容包含严重违规信息，机审驳回";
+            }
+            case SUSPICIOUS -> {
+                this.stage = AuditStage.MANUAL_PENDING;
+                this.result = AuditResult.PENDING;
+                this.rejectReason = reason;
+            }
+            case NORMAL -> {
+                this.stage = AuditStage.FINISHED;
+                this.result = AuditResult.PASSED;
+                this.rejectReason = null;
+            }
+        }
+    }
+
+    /**
      * 管理员人工审核判定：审批通过。
      *
      * <p><b>状态机跃迁</b>：阶段由 MANUAL_PENDING -> FINISHED，结论设为 PASSED，记录操作人。</p>

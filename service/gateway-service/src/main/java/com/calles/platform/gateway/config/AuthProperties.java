@@ -25,6 +25,7 @@ public class AuthProperties {
             "/api/auth/register",
             "/api/auth/refresh",
             "/api/files/assets/**",
+            "/api/audit/callback/**",
             "/actuator/health",
             "/actuator/info");
 
