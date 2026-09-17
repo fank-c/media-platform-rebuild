@@ -49,8 +49,7 @@ sequenceDiagram
     participant CS as content-service
 
     %% 第一步：网关防刷拦截
-    rect rgb(240, 248, 255)
-    Note over Audience,CS: 步骤一 网关入口高频 IP 限流防护
+    Note over Audience,CS: 阶段一 网关入口高频 IP 限流防护
     Audience->>GW: GET /api/content/videos/cv05hG9Kq2RtLw7XbPmZv4Ya
     Note over GW: 提取真实IP并执行滑动窗口限流
     GW->>Redis: 单 IP 阈值检查 (30 QPS)
@@ -60,11 +59,9 @@ sequenceDiagram
     else 限流通过或降级
         GW->>GW: 提取可选登录凭据注入上下文
     end
-    end
 
     %% 第二步：短码寻址与可见性裁决
-    rect rgb(255, 250, 240)
-    Note over Audience,CS: 步骤二 Base62 短码寻址与防嗅探脱敏
+    Note over Audience,CS: 阶段二 Base62 短码寻址与防嗅探脱敏
     GW->>CS: 转发 GET /api/content/videos/{vid}
     CS->>CS: 查询 video_content 记录并校验 ContentAccessPolicy
     alt 访问权限不满足 (非作者访问未发布或封禁视频)
@@ -74,17 +71,14 @@ sequenceDiagram
         CS-->>GW: 返回 200 OK (公开元数据：标题/简介/作者/时长)
         GW-->>Audience: 前端渲染播放器外壳与详情
     end
-    end
 
     %% 第三步：多清晰度播放流切片汇聚
-    rect rgb(240, 255, 240)
-    Note over Audience,CS: 步骤三 汇聚可用流媒体切片列表
+    Note over Audience,CS: 阶段三 汇聚可用流媒体切片列表
     Audience->>GW: GET /api/content/videos/{vid}/streams
     GW->>CS: 转发流列表查询请求
     CS->>CS: 查询 COMPLETED 状态切片并按 4K>1080P>720P 排序
     CS-->>GW: 返回 200 OK (清晰度与播放地址列表)
     GW-->>Audience: 播放器加载清晰度菜单并启动播放
-    end
 ```
 
 ---

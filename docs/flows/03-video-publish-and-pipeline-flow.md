@@ -61,6 +61,7 @@ graph TD
 
 ## 2. 端到端执行时序图 (End-to-End Sequence)
 
+### 2.1 提审受理、Feign 资产强探活与事件派发
 ```mermaid
 sequenceDiagram
     autonumber
@@ -69,65 +70,48 @@ sequenceDiagram
     participant CS as content-service
     participant FS as file-service
     participant MQ as RabbitMQ
-    participant Audit as audit-service
-    participant TS as transcode-service
 
-    %% 第一步：创建草稿与提审探活
-    rect rgb(240, 248, 255)
-    Note over Creator,TS: 步骤一 创作者提审与文件资产前置强探活
     Creator->>GW: POST /api/content/videos/{id}/submit
     GW->>CS: 转发提审请求 (透传 X-User-Id)
-    CS->>CS: 校验作者所有权与状态 (必须为 DRAFT 或 REJECTED)
-    CS->>FS: OpenFeign: GET /api/files/{videoFileId}/metadata
-    FS-->>CS: 检查通过 (status=ACTIVE 且 uploadStatus=COMPLETED)
-    CS->>FS: OpenFeign: GET /api/files/{coverFileId}/metadata
-    FS-->>CS: 检查通过 (封面资产有效且就绪)
-    CS->>CS: 本地数据库事务：<br/>1. 视频状态更新为 AUDITING<br/>2. 批量初始化 5 大流水线子任务 (AUDIT, 720P, 1080P, 4K, VECTOR)<br/>3. 写入 content_outbox 发件箱表
-    CS-->>GW: 返回 200 OK (受理成功，状态转入 AUDITING)
-    GW-->>Creator: 响应提审受理成功，前端展示流水线进度条
-    end
+    CS->>CS: 校验作者所有权与状态 (DRAFT/REJECTED)
+    CS->>FS: Feign: GET /api/files/{videoFileId}/metadata (探活原片)
+    FS-->>CS: 资产有效且 COMPLETED
+    CS->>FS: Feign: GET /api/files/{coverFileId}/metadata (探活封面)
+    FS-->>CS: 封面有效且就绪
+    CS->>CS: 事务更新 AUDITING、初始化 5 大子任务并写入 Outbox
+    CS-->>GW: 返回 200 OK (受理成功，进入流水线)
+    GW-->>Creator: 响应提审受理，展示进度条
 
-    %% 第二步：异步事件分发
-    rect rgb(255, 250, 240)
-    Note over Creator,TS: 步骤二 事务发件箱 Transactional Outbox 异步广播
-    CS->>MQ: 投递提审事件 content.video.submitted (包含 videoId, vid, authorId, 资产ID)
-    MQ->>Audit: 路由至 audit-service 专属队列消费
-    MQ->>TS: 路由至 transcode-service 专属队列消费
-    end
+    CS->>MQ: Outbox 广播 content.video.submitted 事件
+    MQ-->>CS: ACK 确认
+```
 
-    %% 第三步：机审流水线与专有回调
-    rect rgb(240, 255, 240)
-    Note over Creator,TS: 步骤三 合规机审多维判定与门禁结果对齐
-    Audit->>Audit: DFA 算法毫秒级扫描标题与简介文本敏感词
-    Audit->>FS: Feign: 获取封面与视频临时预签名拉流直链
-    Audit->>Audit: 驱动阿里云内容安全或本地规则桩执行多媒体机审
-    Audit->>Audit: 综合仲裁引擎执行最高风险优先判定 (NORMAL 合规)
-    Audit->>CS: OpenFeign: POST /api/content/videos/internal/audit-callback (PASS)
-    Note over CS: 更新 AUDIT 任务为 SUCCESS<br/>触发 PublishGatekeeper 门禁重新评估
-    CS-->>Audit: 200 OK 确认回调
-    end
+### 2.2 异步工作流回调、分级门禁裁决与正式上线
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Audit as audit-service
+    participant TS as transcode-service
+    participant FS as file-service
+    participant CS as content-service
+    participant MQ as RabbitMQ
 
-    %% 第四步：流媒体转码与切片注册
-    rect rgb(255, 245, 245)
-    Note over Creator,TS: 步骤四 音视频压制与流切片资产登记
-    TS->>TS: RateLimiter 信号量获取本地硬件并发许可 (保护服务器 CPU)
-    TS->>FS: Feign: 获取原片预签名下载直链，流式拉入独立沙箱
-    TS->>TS: FFmpeg 等比缩放、黑边填充、FastStart 压制 720P 与 1080P
-    TS->>FS: Feign: POST /api/files/internal/upload (免密托管上传切片)
-    FS-->>TS: 签发新切片 outputFileId
-    TS->>CS: OpenFeign: POST /api/content/videos/internal/transcode-callback (登记 720P/1080P 规格与时长)
-    Note over CS: 持久化 video_stream 记录<br/>更新对应转码任务为 SUCCESS<br/>触发 PublishGatekeeper 门禁重新评估
-    CS-->>TS: 200 OK 确认回调
-    end
+    %% 机审回调
+    Audit->>FS: Feign: 获取临时拉流直链并执行多模态机审
+    Audit->>CS: Feign: POST /internal/audit-callback (机审结果 PASS)
+    Note over CS: 更新 AUDIT 任务为 SUCCESS，触发门禁评估
 
-    %% 第五步：分级门禁达成与正式上线
-    rect rgb(245, 240, 255)
-    Note over Creator,TS: 步骤五 分级就绪门禁裁决与全站广播
-    Note over CS: PublishGatekeeper 判定公式达成：<br/>(AUDIT=SUCCESS) 且 (720P或1080P=SUCCESS) 且 (VECTOR=SUCCESS)
-    CS->>CS: 本地数据库事务：<br/>1. 视频状态跃迁为 PUBLISHED<br/>2. 记录首次公开发布时间 published_at<br/>3. 写入 Outbox 事件 content.video.published
-    CS->>MQ: 广播 content.video.published 领域事件
-    Note over MQ: 搜索引擎构建索引、推荐流计算候选特征、站内信通知作者
-    end
+    %% 转码回调
+    TS->>FS: Feign: 托管上传压制完成的 720P/1080P 切片
+    FS-->>TS: 签发切片 outputFileId
+    TS->>CS: Feign: POST /internal/transcode-callback (切片规格与时长)
+    Note over CS: 登记 video_stream，更新转码任务为 SUCCESS
+
+    %% 门禁闭环
+    Note over CS: PublishGatekeeper 校验公式达成 (审核通过+基准流就绪+向量就绪)
+    CS->>CS: 本地事务：跃迁为 PUBLISHED 并记录 published_at
+    CS->>MQ: Outbox 广播 content.video.published 领域事件
+    Note over MQ: 驱动全站推荐入池、搜索建索与作者通知
 ```
 
 ---

@@ -40,47 +40,49 @@ graph TD
 
 ## 2. 端到端执行时序图 (End-to-End Sequence)
 
+### 2.1 封禁指令鉴权、状态置换与事务发件箱持久化
 ```mermaid
 sequenceDiagram
     autonumber
     participant Admin as 管理员
     participant GW as gateway-service
     participant CS as content-service
-    participant DB as MySQL (video_content)
-    participant MQ as RabbitMQ
-    participant Rec as 推荐与搜索下游
+    participant DB as MySQL数据库
 
-    %% 第一步：管理员发起封禁
-    rect rgb(240, 248, 255)
-    Note over Admin,Rec: 步骤一 管理端 RBAC 鉴权与封禁指令安全下发
-    Admin->>GW: POST /api/content/videos/admin/{id}/ban (JSON: reason)
-    Note over GW: 提取 Token 校验角色是否为 ADMIN
+    Admin->>GW: POST /api/content/videos/admin/{id}/ban
+    Note over GW: 提取Token校验角色是否为 ADMIN
     alt 角色非管理员
         GW-->>Admin: HTTP 403 FORBIDDEN 拒绝越权访问
     else 鉴权通过
         GW->>CS: 转发请求 (注入受信头 X-User-Role: ADMIN)
+        CS->>DB: 开启本地数据库事务
+        CS->>DB: UPDATE video_content SET status = 'DISABLED'
+        CS->>DB: 写入 content_outbox 待发事件
+        CS->>DB: 提交事务 (状态与事件强一致)
+        CS-->>GW: 返回 200 OK (操作成功)
+        GW-->>Admin: 返回封禁生效响应
     end
-    end
+```
 
-    %% 第二步：状态原子跃迁与事务发件箱
-    rect rgb(255, 250, 240)
-    Note over Admin,Rec: 步骤二 本地事务原子更新与发件箱强一致持久化
-    CS->>DB: 开启本地数据库事务
-    CS->>DB: UPDATE video_content SET status = 'DISABLED', reject_reason = #{reason} WHERE id = #{id}
-    CS->>DB: 写入 content_outbox 记录 (event_type = 'content.video.banned')
-    CS->>DB: 提交事务 (保障业务状态与事件派发的强一致性)
-    CS-->>GW: 返回 200 OK (操作成功)
-    GW-->>Admin: 返回封禁生效响应
-    end
+### 2.2 违规事件全站广播与下游协同清退
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CS as content-service
+    participant MQ as RabbitMQ
+    participant Search as 搜索引擎
+    participant Rec as 推荐系统
+    participant Notice as 通知中心
 
-    %% 第三步：异步领域事件全站下线
-    rect rgb(240, 255, 240)
-    Note over Admin,Rec: 步骤三 全站各业务线协同下线闭环
-    CS->>MQ: 投递事件 content.video.banned (包含 videoId, vid, authorId, reason)
-    MQ->>Rec: 推荐与搜索引擎异步消费封禁事件
-    Rec->>Rec: 推荐系统移出候选池，搜索引擎清除倒排索引
-    Note over CS: 前台针对该 vid 寻址因 status=DISABLED 统一返回 404
+    CS->>MQ: 投递事件 content.video.banned
+    par 广播至推荐服务
+        MQ->>Rec: 消费事件并移出推荐候选池
+    and 广播至搜索引擎
+        MQ->>Search: 消费事件并删除倒排索引
+    and 广播至通知中心
+        MQ->>Notice: 消费事件并向作者发送违规警告信
     end
+    Note over CS: 前台观众以 vid 寻址时统一脱敏返回 404
 ```
 
 ---

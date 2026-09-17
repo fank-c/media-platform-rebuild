@@ -60,41 +60,30 @@ sequenceDiagram
     participant DB as MySQL 资产表
 
     %% 阶段一：初始化申请
-    rect rgb(240, 248, 255)
-    Note over Client,DB: 阶段一 申请预签名直传授权并锁定元数据
-    Client->>GW: POST /api/files/direct-upload/v2 (originName, size, mime, sha256)
+    Client->>GW: POST /api/files/direct-upload/v2 (文件名, 大小, MIME, SHA-256)
     Note over GW: 鉴权拦截并注入受信头 X-User-Id
     GW->>FS: 转发直传申请请求
-    FS->>FS: 严格校验大小上限 (最大 20MB) 与文件名安全性
-    FS->>FS: 生成 32 位 UUID fileId 与暂存路径 staging/YYYY-MM-DD/{id}
-    FS->>DB: 插入 file_asset 记录 (状态 PENDING，记录声明大小与 sha256)
-    FS->>MinIO: 签发 PUT 预签名地址 (绑定 x-amz-checksum-sha256，TTL 5分钟)
-    FS-->>GW: 返回 201 Created (包含 fileId, putUrl, requiredHeaders, uploadExpiresAt)
-    GW-->>Client: 返回上传凭证
-    end
+    FS->>FS: 校验大小上限与文件名安全性
+    FS->>DB: 插入 file_asset 记录 (状态 PENDING)
+    FS->>MinIO: 签发带 Checksum 约束的 PUT 预签名地址 (TTL 5分钟)
+    FS-->>GW: 返回 201 Created (fileId, putUrl, requiredHeaders)
+    GW-->>Client: 返回上传凭证包
 
     %% 阶段二：客户端直传
-    rect rgb(255, 250, 240)
-    Note over Client,DB: 阶段二 大文件绕过网关流式直传
-    Client->>MinIO: HTTP PUT <putUrl> (携带 requiredHeaders 与文件二进制流)
-    Note over MinIO: MinIO 硬件校验 Checksum 并写入暂存区 staging
+    Client->>MinIO: HTTP PUT 直传对象存储 (带 Checksum 头部)
+    Note over MinIO: 硬件级核验 Checksum 并落入暂存区 staging
     MinIO-->>Client: HTTP 200 OK 传输完毕
-    end
 
     %% 阶段三：完备性校验与原子转正
-    rect rgb(240, 255, 240)
-    Note over Client,DB: 阶段三 提交完成确认与资产正式转正
     Client->>GW: POST /api/files/{id}/confirm/v2
     GW->>FS: 转发确认请求 (携带 X-User-Id)
-    FS->>DB: 核验归属权并执行原子条件更新：PENDING 跃迁为 VERIFYING
-    FS->>MinIO: 发起轻量 HEAD 请求，获取暂存对象的 Content-Length 与 ETag
-    FS->>FS: 严格比对对象实际大小与初始化声明是否完全吻合
+    FS->>DB: 原子条件更新：PENDING 跃迁为 VERIFYING
+    FS->>MinIO: 发起 HEAD 请求核验 Content-Length 与 ETag
     FS->>MinIO: CopyObject(staging/..., permanent/...) 存储内部复制
-    FS->>MinIO: RemoveObject(staging/...) 清理暂存临时文件
-    FS->>DB: 更新状态为 COMPLETED，写入正式 storagePath
-    FS-->>GW: 返回 200 OK (fileId, status=COMPLETED, size, sha256)
-    GW-->>Client: 资产就绪，可供后续业务关联使用
-    end
+    FS->>MinIO: RemoveObject(staging/...) 物理清理暂存文件
+    FS->>DB: 更新状态为 COMPLETED，写入正式 permanent 路径
+    FS-->>GW: 返回 200 OK (fileId, status=COMPLETED)
+    GW-->>Client: 资产归档就绪，可供业务关联使用
 ```
 
 ---

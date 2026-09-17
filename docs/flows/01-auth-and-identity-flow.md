@@ -46,76 +46,64 @@ graph TD
 
 ## 2. 端到端交互时序图 (End-to-End Sequence)
 
+### 2.1 账号注册与资料异步建档时序
 ```mermaid
 sequenceDiagram
     autonumber
     participant Client as 客户端
     participant GW as gateway-service
     participant Auth as auth-service
-    participant Redis as Redis
     participant MQ as RabbitMQ
     participant User as user-service
 
-    %% 场景一：注册与资料初始化
-    rect rgb(240, 248, 255)
-    Note over Client,User: 阶段一 用户注册与资料异步建档
     Client->>GW: POST /api/auth/register (email, password)
     GW->>Auth: 路由转发 (白名单放行)
-    Auth->>Auth: 校验输入规范并使用 BCrypt 计算密码哈希
-    Auth->>Auth: 本地事务：写入 auth_account 表并登记 auth_outbox
-    Auth-->>GW: 返回 200 OK (包含 accountId, email, role, status)
+    Auth->>Auth: BCrypt 哈希加密与邮箱查重
+    Auth->>Auth: 本地事务：写入 auth_account 并登记 auth_outbox
+    Auth-->>GW: 返回 201 Created (accountId, email)
     GW-->>Client: 注册成功响应
-    Auth->>MQ: Outbox 投递领域事件 auth.account.created (accountId, role)
-    MQ->>User: 异步消费事件 (RabbitListener)
-    User->>User: 幂等检查 (若 user_profile 存在则安全跳过)
-    User->>User: 本地事务：写入 user_event_consume 并初始化用户默认档案
+
+    Auth->>MQ: Outbox 异步派发 auth.account.created 事件
+    MQ->>User: 异步消费事件 (监听队列)
+    User->>User: 幂等检查 (防重表校验)
+    User->>User: 本地事务：初始化 user_profile 默认档案
     User-->>MQ: ACK 手动确认签收
-    end
+```
 
-    %% 场景二：登录与会话管理
-    rect rgb(255, 250, 240)
-    Note over Client,User: 阶段二 登录认证与双 Token 签发
-    Client->>GW: POST /api/auth/login (email, password, X-Device-Id)
-    GW->>Auth: 路由转发 (白名单放行)
-    Auth->>Auth: 校验密码哈希与账号状态 (必须为 ACTIVE)
-    Auth->>Auth: 签发 AccessToken (JWT, TTL 15分钟) 与随机高熵 RefreshToken (TTL 30天)
-    Auth->>Redis: 记录用户设备会话池 (auth:session:*)，超过并发上限淘汰最久未活跃会话
-    Auth-->>GW: 返回 200 OK (accessToken, refreshToken, expiresIn, role)
-    GW-->>Client: 返回登录凭据包
-    end
+### 2.2 登录认证、业务鉴权与凭据轮换时序
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 客户端
+    participant GW as gateway-service
+    participant Redis as Redis 会话/缓存
+    participant Auth as auth-service
+    participant User as 业务服务 (如 user-service)
 
-    %% 场景三：业务鉴权穿透
-    rect rgb(240, 255, 240)
-    Note over Client,User: 阶段三 受保护业务接口请求与身份透明透传
-    Client->>GW: GET /api/users/me (Authorization: Bearer Token)
-    Note over GW: 提取 Token 计算 SHA-256 摘要
-    GW->>Redis: 查询验证缓存 auth:token:cache:<hash>
-    alt 缓存命中且有效
-        Redis-->>GW: 返回主体信息 (userId, role, sessionId)
-    else 缓存未命中
-        GW->>Auth: POST /api/auth/verify (JSON: token)
-        Auth->>Auth: 校验 JWT 签名、有效期及黑名单
-        Auth-->>GW: 返回 valid=true, userId, role, userType
-        GW->>Redis: 写入缓存 (TTL 与 Token 剩余时长对齐)
-    end
-    Note over GW: 剥除伪造头并注入受信 X-User-Id 与 X-Trace-Id
-    GW->>User: 转发 GET /api/users/me
-    User->>User: UserContext 拦截器读取 Header 获取当前 userId
-    User-->>GW: 返回个人资料数据
-    GW-->>Client: 200 OK 业务成功响应
-    end
+    %% 登录
+    Client->>GW: POST /api/auth/login (email, password)
+    GW->>Auth: 路由转发
+    Auth->>Auth: 校验 BCrypt 密码与账号状态
+    Auth->>Redis: 写入会话池并执行 LRU 淘汰
+    Auth-->>Client: 返回双 Token (AccessToken 15m, RefreshToken 30d)
 
-    %% 场景四：双 Token 轮换
-    rect rgb(255, 245, 245)
-    Note over Client,User: 阶段四 访问令牌过期与原子凭据轮换
-    Client->>GW: POST /api/auth/refresh (JSON: refreshToken)
-    GW->>Auth: 路由转发 (白名单放行)
-    Auth->>Redis: 原子操作消费旧凭据并锁定轮换槽 (防重放攻击)
-    Auth->>Auth: 检查账号最新状态，签发全新 AccessToken 与 RefreshToken
-    Auth->>Redis: 更新会话索引与活跃时间戳
-    Auth-->>GW: 返回全新双 Token 凭据
-    GW-->>Client: 200 OK 换新成功 (旧凭据永久失效)
+    %% 业务请求
+    Client->>GW: GET /api/users/me (携带 Bearer AccessToken)
+    GW->>Redis: SHA-256 查询 Token 验签缓存
+    alt 缓存未命中
+        GW->>Auth: POST /api/auth/verify 回源验签
+        Auth-->>GW: 返回 valid=true 与用户信息
+        GW->>Redis: 异步写入验签缓存 (对齐剩余TTL)
     end
+    Note over GW: 清洗伪造头并注入受信 X-User-Id
+    GW->>User: 转发业务请求并注入身份上下文
+    User-->>Client: 200 OK 业务成功响应
+
+    %% 令牌轮换
+    Client->>GW: POST /api/auth/refresh (带旧 RefreshToken)
+    GW->>Auth: 路由转发
+    Auth->>Redis: Lua 原子作废旧凭据并签发新双 Token
+    Auth-->>Client: 返回全新双 Token 凭据包
 ```
 
 ---
