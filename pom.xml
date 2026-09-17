@@ -29,6 +29,7 @@
         <module>service/audit-service</module>
         <module>service/interaction-service</module>
         <module>service/recommend-service</module>
+        <module>service/transcode-service</module>
     </modules>
 
     <properties>

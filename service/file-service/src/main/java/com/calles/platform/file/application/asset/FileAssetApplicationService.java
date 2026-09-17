@@ -274,6 +274,35 @@ public class FileAssetApplicationService {
   }
 
   /**
+   * 内部微服务专属获取下载直链（无需用户会话，基于未删除活跃文件资产签发 GET 签名）。
+   *
+   * @param id 文件资产全局 ID
+   * @return no-store 响应中使用的短期下载 URL
+   */
+  public FileResponses.DownloadUrl downloadUrlInternal(String id) {
+    FileAsset asset =
+        repository
+            .findVisibleById(id)
+            .orElseThrow(() -> new FileOperationException(HttpStatus.NOT_FOUND, "文件不存在"));
+    if (asset.getStatus() != AssetStatus.ACTIVE
+        || asset.getUploadStatus() == UploadStatus.PENDING
+        || asset.getUploadStatus() == UploadStatus.VERIFYING) {
+      throw new FileOperationException(HttpStatus.CONFLICT, "文件尚未完成上传");
+    }
+    if (asset.getUploadStatus() == UploadStatus.EXPIRED) {
+      throw new FileOperationException(HttpStatus.GONE, "上传已过期");
+    }
+    try {
+      ObjectStorageClient client = storageFactory.require(asset.getStorageType());
+      ObjectStorageClient.PresignedUrl signed =
+          client.presignGet(asset.getStorageKey(), properties.getGetTtl());
+      return new FileResponses.DownloadUrl(signed.url(), signed.expiresAt());
+    } catch (ObjectStorageException exception) {
+      throw storageFailure("文件对象暂不可下载", exception);
+    }
+  }
+
+  /**
    * 先条件建立数据库删除闸门，再删除 permanent 和 staging 远端对象并落逻辑墓碑。
    *
    * @param owner 当前用户 ID

@@ -6,6 +6,7 @@ import com.calles.platform.content.domain.model.stream.StreamQuality;
 import com.calles.platform.content.domain.model.stream.TranscodeStatus;
 import com.calles.platform.content.domain.model.stream.VideoStream;
 import com.calles.platform.content.domain.model.task.TaskType;
+import com.calles.platform.content.domain.model.video.VideoContent;
 import com.calles.platform.content.domain.repository.VideoContentRepository;
 import com.calles.platform.content.domain.repository.VideoStreamRepository;
 import com.calles.platform.content.exception.ContentException;
@@ -53,8 +54,15 @@ public class VideoStreamApplicationService {
     @Transactional
     public void registerStream(VideoRequests.TranscodeCallback request) {
         // 步骤 1：校验转码产物对应的主视频实体是否存在
-        videoContentRepository.findById(request.videoId())
+        VideoContent video = videoContentRepository.findById(request.videoId())
                 .orElseThrow(() -> new ContentException(HttpStatus.NOT_FOUND, "未找到关联视频: " + request.videoId()));
+
+        // 如果转码回调携带了真实媒体时长且当前时长尚未校准，顺带修正主视频真实时长
+        if (request.duration() != null && request.duration() > 0 && video.getDuration() == 0) {
+            video.setDuration(request.duration());
+            videoContentRepository.updateById(video);
+            log.info("视频 [{}] 时长由转码产物校准为: [{}] 秒", request.videoId(), request.duration());
+        }
 
         // 步骤 2：解析规格参数，提供标准默认回退（默认 MP4 格式、H264 编码与 COMPLETED 状态）
         StreamQuality quality = StreamQuality.fromValue(request.quality());

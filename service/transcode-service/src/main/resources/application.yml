@@ -1,0 +1,57 @@
+server:
+  port: ${TRANSCODE_SERVER_PORT:8800}
+
+spring:
+  threads:
+    virtual:
+      enabled: true
+  application:
+    name: transcode-service
+  config:
+    import: "optional:nacos:application.yml"
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+      username: ${NACOS_SERVER_USERNAME:nacos}
+      password: ${NACOS_SERVER_PASSWORD:nacos_password}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:media}
+    password: ${RABBITMQ_PASSWORD:media}
+  datasource:
+    # 数据库连接配置：第一阶段共用同一 MySQL 实例，通过 transcode_* 前缀隔离表所有权
+    url: ${TRANSCODE_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${TRANSCODE_DB_USERNAME:media}
+    password: ${TRANSCODE_DB_PASSWORD:media}
+
+# 转码业务专有配置
+transcode:
+  # 引擎类型：ffmpeg（生产调用本地二进制）或 mock（测试/脱网开发桩）
+  engine-type: ${TRANSCODE_ENGINE_TYPE:ffmpeg}
+  # 系统 ffmpeg 二进制可执行文件路径（默认从 PATH 查找）
+  ffmpeg-path: ${TRANSCODE_FFMPEG_PATH:ffmpeg}
+  # 系统 ffprobe 二进制可执行文件路径（默认从 PATH 查找）
+  ffprobe-path: ${TRANSCODE_FFPROBE_PATH:ffprobe}
+  # 本地最大并发转码任务数限制（低配置保护，默认 1）
+  max-concurrent-tasks: ${TRANSCODE_MAX_CONCURRENT_TASKS:1}
+  # 本地临时工作目录（转码中间文件存放与清理）
+  work-dir: ${TRANSCODE_WORK_DIR:/tmp/calles-transcode}
+  # 单个转码任务最大超时时间（秒，默认 600 秒 = 10 分钟）
+  task-timeout-seconds: ${TRANSCODE_TASK_TIMEOUT_SECONDS:600}
+  # 回调内容服务超时重试最大次数
+  callback-max-retries: 5
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  pattern:
+    # 控制台彩色输出：时间/线程弱化(faint)、级别自适应着色(%5p)、traceId洋红高亮(magenta)、类名青色(cyan)
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr([%X{traceId:-}]){magenta} %clr([%t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"

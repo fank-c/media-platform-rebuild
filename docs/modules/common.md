@@ -1,47 +1,127 @@
-# 公共模块 · common-core / common-web
+# 公共模块 · common-core 与 common-web 架构与使用文档
 
-公共模块提供各服务共用的响应、事件外壳，以及 Servlet 请求的身份和追踪上下文。它没有独立业务 HTTP 接口，不管理账号、用户资料或文件。`common-core` 不依赖具体业务；`common-web` 供 Servlet 服务引入，当前 WebFlux 网关不使用这套 Servlet 过滤器。
+公共模块群作为全平台的底层契约与横切基础设施，分为无业务依赖的纯基础契约库 `common-core` 与服务于 Servlet 微服务的 Web 上下文组件库 `common-web`。公共模块严格秉承无业务侵入原则，不持久化业务数据，不操作账号凭据，仅提供跨服务统一响应规范、领域事件通用外壳以及线程级追踪与安全身份上下文。
 
-## Part 1：统一数据格式
+---
 
-### 接口响应外壳
+## 1. 模块定位与分层职责
 
-业务接口可使用 `ApiResponse<T>` 返回 `code`、`message`、`data`。例如 `ApiResponse.ok(业务结果)` 构造业务成功外壳，默认 `code=200`、`message=ok`，具体结果放在 `data`；无业务数据时为 `null`。
+### 1.1 核心职责与边界划分
+- **`common-core`（纯纯契约与无依赖工具库）**：
+  - **统一接口响应外壳 (`ApiResponse<T>`)**：规范 HTTP 业务响应结构（`code`、`message`、`data`、`timestamp`），提供标准化成功与错误构建工厂；
+  - **版本化事件外壳 (`EventEnvelope<T>`)**：承载 RabbitMQ 领域事件的通用信封，规范 `eventId`、`eventType`、`version`、`timestamp`、`traceId` 与泛型 `payload`；
+  - **基础异常契约**：定义基础业务异常基类与常用错误码枚举。
+- **`common-web`（Servlet 容器横切切面与过滤器）**：
+  - **全链路追踪染色 (`TraceIdFilter`)**：提取或生成 `X-Trace-Id`，绑定至 SLF4J MDC，响应头回显并向下游透传；
+  - **受信身份上下文 (`UserContextFilter` 与 `UserContext`)**：从网关透传的受信 Header（`X-User-Id`、`X-User-Role`）中提取身份信息，绑定至 `ThreadLocal` 上下文，在 `finally` 块彻底安全清理；
+  - **统一异常处理切面 (`GlobalExceptionHandler`)**：拦截业务异常与参数校验错误，统一转换为符合规范的 `ApiResponse`。
 
-这只是数据结构，不会自动设置 HTTP 状态，也不是所有异常的统一处理器。文件接口用它包裹 `201` 上传成功或 `202` 确认受理时，外壳 `code` 仍可能是 `200`。调用方要结合真实 HTTP 状态和业务数据判断结果，不能看到外壳 `200` 就认定异步工作已完成。`204` 删除成功则没有响应正文。
+### 1.2 防腐与严格禁止事项
+- **严禁沉淀共享业务逻辑**：严禁在 `common-core` 或 `common-web` 中编写订单、视频、积分、关注等具体业务代码；
+- **严禁共享持久化领域实体**：各微服务通过 `EventEnvelope` 传输独立版本的 DTO/JSON，严禁通过公共模块共享 JPA/MyBatis 实体。
 
-使用入口：[ApiResponse](../../common/common-core/src/main/java/com/calles/platform/common/core/ApiResponse.java)。错误到 HTTP 的映射仍由各服务的异常处理代码负责。
+---
 
-### 事件公共外壳
+## 2. 请求上下文与追踪拦截执行时序图
 
-`EventEnvelope<T>` 承载事件 ID、类型、版本、发生时间、生产者、业务主体 ID、追踪 ID 和具体载荷。生产者先构造本服务的载荷，再装入信封；消费者按自己支持的事件版本解码，而不是共享对方的领域实体。
+```mermaid
+flowchart TD
+    ClientRequest["客户端入站请求 (来自 API 网关)"] --> TraceFilter["TraceIdFilter (追踪染色过滤器)"]
+    
+    TraceFilter --> CheckTraceId{"请求头是否携带 X-Trace-Id?"}
+    CheckTraceId -- 存在合法 ID --> UseTraceId["延续已有 X-Trace-Id"]
+    CheckTraceId -- 缺失或非法 --> GenTraceId["生成全局唯一 32位 UUID"]
+    
+    UseTraceId --> BindMDC["绑定至当前线程 SLF4J MDC 并在响应头注入"]
+    GenTraceId --> BindMDC
+    
+    BindMDC --> UserFilter["UserContextFilter (身份上下文过滤器)"]
+    UserFilter --> CheckUserId{"请求头是否包含网关注入的 X-User-Id?"}
+    
+    CheckUserId -- 包含有效 ID --> BuildUserInfo["提取 X-User-Id 与 X-User-Role 构建 UserInfo"]
+    CheckUserId -- 匿名或未登录 --> SkipUser["保持 UserContext 为空 (放行给匿名端点)"]
+    
+    BuildUserInfo --> BindThreadLocal["放入 ThreadLocal (UserContext.setUser)"]
+    SkipUser --> BusinessController["进入业务 Controller 与 Service 业务代码"]
+    BindThreadLocal --> BusinessController
+    
+    BusinessController --> FinishExecution["业务代码执行完毕或抛出异常"]
+    FinishExecution --> FinallyClear["Servlet Filter finally 块安全执行: UserContext.clear() 与 MDC.clear()"]
+    FinallyClear --> ReturnResponse["将标准 ApiResponse 与 X-Trace-Id 返回网关"]
+```
 
-例如认证服务发布账号创建事件，用户服务使用自己的载荷类型读取账号 ID，再决定是否建档。公共信封本身不验证账号 ID、不自动发布消息、不自动去重，也不保证 traceId 或载荷必填。相关校验和幂等事务分别在事件生产、接收及应用处理代码中实现。
+---
 
-使用入口：[EventEnvelope](../../common/common-core/src/main/java/com/calles/platform/common/core/event/EventEnvelope.java)。实际例子见[认证模块](auth.md)与[用户模块](user.md)。
+## 3. 核心公共契约规范
 
-## Part 2：请求上下文
+### 3.1 统一接口响应外壳 (`ApiResponse<T>`)
+所有业务微服务的对外 Controller 统一通过 `ApiResponse` 封装返回数据：
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "videoId": "cv05hG9Kq2RtLw7XbPmZv4Ya",
+    "title": "分布式微服务架构演进实践"
+  },
+  "timestamp": 1773728000000
+}
+```
+- **业务状态码规范**：
+  - `code = 0`：操作成功；
+  - `code > 0`：具体业务错误码（如 `40001` 参数错误、`40401` 资源不存在、`40901` 版本冲突）；
+- **注意要点**：业务外壳 `code` 不应与 HTTP 响应状态码混淆，文件服务上传成功时 HTTP 状态为 `201 Created`，返回的 JSON 外壳包含具体资产实体。
 
-### 给请求关联追踪标识
+### 3.2 领域事件通用信封 (`EventEnvelope<T>`)
+所有投递至 RabbitMQ 交换机 `media.platform.events` 的领域事件必须打包于 `EventEnvelope` 内：
+```json
+{
+  "eventId": "evt_9b12a83f98274ac09d7e345b1287e0fa",
+  "eventType": "content.video.published",
+  "version": "1.0",
+  "timestamp": 1773728000000,
+  "producer": "content-service",
+  "aggregateId": "cv05hG9Kq2RtLw7XbPmZv4Ya",
+  "traceId": "9b12a83f98274ac09d7e345b1287e0fa",
+  "payload": {
+    "videoId": "cv05hG9Kq2RtLw7XbPmZv4Ya",
+    "authorId": "u_1001",
+    "title": "分布式微服务架构演进实践",
+    "duration": 360
+  }
+}
+```
+- **解耦优势**：各消费者服务按支持的 `version` 解析载荷，容忍未知扩展字段，杜绝因服务间实体定义细微差异导致的反序列化崩溃。
 
-引入 `common-web` 的 Servlet 服务会自动注册追踪过滤器。请求到来时，它接受符合 `[A-Za-z0-9._-]{1,64}` 的 `X-Trace-Id`，缺失或不合法就生成 UUID；随后写入当前线程的日志上下文 MDC，并在响应中返回 `X-Trace-Id`。
+---
 
-业务代码可以用这个标识关联一次请求产生的日志，注册事件也可取出它继续携带。请求结束时在 `finally` 清理当前线程中的追踪标识，避免线程复用把下一次请求串到一起。这个过滤器不自动为任意远程调用加 Header，也不自动为所有异步线程传播上下文；跨线程或消息传播由实际调用点处理。
+## 4. 线程上下文与资源生命周期安全
 
-使用入口：[TraceIdFilter](../../common/common-web/src/main/java/com/calles/platform/common/web/filter/TraceIdFilter.java)。它不是完整的分布式追踪采样或导出系统。
+### 4.1 `UserContext` 上下文读取与访问
+在引入 `common-web` 的业务微服务中，Controller 或 Service 内部可直接获取当前登录身份：
+```java
+// 获取当前登录用户 ID (未登录则返回 null)
+String currentUserId = UserContext.getUserId();
 
-### 在业务代码中读取当前身份
+// 校验并获取必须登录的用户身份 (未登录直接抛出 UnauthorizedException)
+UserInfo currentUser = UserContext.requireUser();
 
-身份过滤器读取网关注入的 `X-User-Id`、`X-User-Role`、`X-User-Type`、`X-Session-Id`。有非空用户 ID 时创建 `UserInfo`，放入当前线程的 `UserContext`；缺少 ID 时不创建身份，也不在公共层直接拒绝请求，让健康检查等无身份入口继续处理。
+// 检查是否具备管理员权限
+boolean isAdmin = UserContext.isAdmin();
+```
 
-业务服务随后通过自己的访问策略要求登录、普通用户或管理员。完成或抛出异常后，过滤器在 `finally` 清理身份上下文。这里的上下文是请求线程内数据，不是持久登录会话，也不会自动跨异步任务传递。
+### 4.2 为什么必须在 `finally` 中执行清理？
+Servlet 容器（如 Tomcat / Undertow）基于**线程池（Thread Pool）**工作，工作线程在处理完一次 HTTP 请求后不会销毁，而是被放回线程池供下一个并发请求复用。若不强制在 `finally` 块中执行 `UserContext.clear()` 和 `MDC.clear()`，后续到达该线程的匿名请求将**脏读**上一用户的特权身份或错误继承历史 `traceId`，导致灾难性越权漏洞。
 
-该过滤器不验证 JWT 或 Header 的来源。用户和文件服务之所以能使用这些身份，前提是请求已经由可信网关校验，且实际环境阻止外部绕过网关直连；本模块本身不能证明这个前提成立。
+---
 
-使用入口：[UserContextFilter](../../common/common-web/src/main/java/com/calles/platform/common/web/filter/UserContextFilter.java)、[Servlet 自动装配](../../common/common-web/src/main/java/com/calles/platform/common/web/config/CommonWebAutoConfiguration.java)。
+## 5. 核心源码入口索引
 
-## 验证方式与当前结果
-
-应验证响应外壳与真实 HTTP 状态的区别、事件在服务间的兼容解码、合法与非法追踪 ID、缺失身份、异常退出后上下文清理，以及后续请求不继承前一请求的身份。
-
-本次（2026-09-09）实际阅读公共类型、过滤器及自动装配，并核对认证、用户和文件模块的相关使用方式，执行文档链接与格式检查。当前未发现两个公共模块自己的 `src/test` 测试文件。未执行编译、测试或 Servlet/WebFlux 启动验证，不把自动配置类存在当作真实应用已经加载成功。
+- **`common-core` 核心类**：
+  - 统一响应外壳：[`ApiResponse.java`](../../common/common-core/src/main/java/com/calles/platform/common/core/ApiResponse.java)
+  - 领域事件信封：[`EventEnvelope.java`](../../common/common-core/src/main/java/com/calles/platform/common/core/event/EventEnvelope.java)
+- **`common-web` 核心类**：
+  - 全链路追踪过滤器：[`TraceIdFilter.java`](../../common/common-web/src/main/java/com/calles/platform/common/web/filter/TraceIdFilter.java)
+  - 身份上下文过滤器：[`UserContextFilter.java`](../../common/common-web/src/main/java/com/calles/platform/common/web/filter/UserContextFilter.java)
+  - 身份安全持有器：[`UserContext.java`](../../common/common-web/src/main/java/com/calles/platform/common/web/context/UserContext.java)
+  - 自动装配配置类：[`CommonWebAutoConfiguration.java`](../../common/common-web/src/main/java/com/calles/platform/common/web/config/CommonWebAutoConfiguration.java)

@@ -166,8 +166,16 @@ public final class VideoRequests {
 
             Integer fps,
 
-            String transcodeStatus
-    ) { }
+            String transcodeStatus,
+
+            Integer duration
+    ) {
+        /** 向后兼容构造器。 */
+        public TranscodeCallback(String videoId, String quality, String format, String codec,
+                                 String fileId, Long fileSize, Integer bitrate, Integer fps, String transcodeStatus) {
+            this(videoId, quality, format, codec, fileId, fileSize, bitrate, fps, transcodeStatus, null);
+        }
+    }
 
     /**
      * 外部流水线工作节点 (Worker) 异步执行状态与进度回调请求体。

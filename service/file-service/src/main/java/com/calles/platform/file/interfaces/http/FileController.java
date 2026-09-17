@@ -80,6 +80,45 @@ public class FileController {
         .body(ApiResponse.ok(fileService.upload(user.userId(), file, storageType)));
   }
 
+  /**
+   * 内部微服务专属 multipart 文件托管上传接口。
+   *
+   * <p>专供受信任内部微服务（如转码服务 transcode-service）上传视频切片等派生资源，
+   * 显式指定资源拥有者 authorId，绕过用户登录会话检查。</p>
+   *
+   * @param file 上传的文件流
+   * @param authorId 归属的创作者/用户 ID
+   * @param storageType 存储类型（可选，默认 MINIO）
+   * @return 统一响应封装的已完成文件元数据
+   */
+  @PostMapping(path = "/internal/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public ResponseEntity<ApiResponse<FileResponses.Metadata>> uploadInternal(
+      @RequestParam("file") MultipartFile file,
+      @RequestParam("authorId") String authorId,
+      @RequestParam(required = false) String storageType) {
+    if (authorId == null || authorId.isBlank()) {
+      throw new FileOperationException(HttpStatus.BAD_REQUEST, "authorId 不能为空");
+    }
+    return ResponseEntity.status(201)
+        .body(ApiResponse.ok(fileService.upload(authorId.trim(), file, storageType)));
+  }
+
+  /**
+   * 内部微服务专属获取下载 URL 接口。
+   *
+   * <p>专供转码服务等受信任内部组件按文件 ID 获取原始对象的预签名 GET 直链。</p>
+   *
+   * @param id 文件资产 ID
+   * @return 短期可下载的预签名 GET URL
+   */
+  @GetMapping("/internal/{id}/download-url")
+  public ResponseEntity<ApiResponse<FileResponses.DownloadUrl>> downloadUrlInternal(
+      @PathVariable String id) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(ApiResponse.ok(fileService.downloadUrlInternal(id)));
+  }
+
   /** 创建 PENDING 直传记录和短期 PUT 签名；业务完成仍需客户端后续 confirm。 */
   @PostMapping(path = "/direct-upload", consumes = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<ApiResponse<FileResponses.DirectUpload>> initializeDirectUpload(

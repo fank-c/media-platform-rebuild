@@ -1,86 +1,211 @@
-# 用户模块 · user-service
+# 用户模块 · user-service 架构设计与实现文档
 
-用户模块维护以认证账号 ID 为标识的用户资料，包括昵称、简介、城市、生日及展示信息。账号、密码和认证角色由认证模块管理，本模块不修改这些数据。注册后的资料通过消息异步创建，也允许普通用户首次保存时建档；因此“注册成功”与“资料已就绪”不是同一个时刻。
+用户模块（`user-service`）是平台用户个人中心、公开资料名片、创作者粉丝社交与行为属性的核心微服务（运行端口：8020）。负责异步消费来自 `auth-service` 的账号创建消息完成用户档案强幂等建档、维护用户个人资料（昵称、头像、简介、城市、生日）、提供严格的并发乐观锁控制（`revision`）、维护关注与粉丝社交双向关系，以及支撑前台高并发公开资料展示与管理端治理。
 
-所有 HTTP 接口通过网关访问并携带访问令牌。“公开资料”是指向其他已登录用户展示的摘要，不代表匿名接口；本人编辑只允许普通用户，管理员使用管理端接口。
+---
 
-## Part 1：用户资料初始化
+## 1. 模块定位与架构边界
 
-### 接收账号创建通知
+### 1.1 核心业务职责
+- **档案异步建档与强幂等消费**：
+  - 监听 RabbitMQ 中的 `auth.account.created` 领域事件；
+  - 基于专有防重表 `user_event_consume` 与 `user_profile` 主键双重约束，确保网络重复投递时资料初始化严格幂等。
+- **个人资料维护与乐观锁版本控制**：
+  - 用户本人编辑资料（昵称、简介、城市、生日、头像）；
+  - 采用 `revision` 乐观锁机制，更新时校验版本号并自增，拒绝多端并发提交导致的陈旧数据相互覆盖；
+  - 拦截头像 URL，执行白名单防盗链安全校验（`AvatarDisplayPolicy`），杜绝不可信外链注入。
+- **前台公开名片与高性能批量读取**：
+  - 为播放页、评论区、作者主页提供脱敏公开资料（昵称、头像、简介）；
+  - 提供 `POST /api/users/batch` 批量查询接口，内部集成 Redis Cache-Aside 缓存加速，支持一次批量读取数百位创作者名片；
+  - 自动识别并过滤冻结（`DISABLED`）用户，打上不可用标记。
+- **关注与粉丝社交关系中枢**：
+  - 支撑关注/取关操作，维护双向关系表（`user_follow`）；
+  - 维护用户粉丝数、关注数、获赞数等统计快照。
 
-用户服务监听 `user-service.auth-account-created.v1` 队列，接收认证服务发出的账号创建事件，不要求客户端再次调用初始化接口。消费者开关 `user.messaging.account-created.enabled` 在仓库中默认开启。
+### 1.2 防腐与禁止承担的工作
+- **严禁管理账号密码与凭据**：用户的注册登录、BCrypt 密码哈希、JWT 签发及刷新会话完全由 `auth-service` 负责，本服务绝不触碰密码；
+- **严禁直接上传头像二进制流**：头像文件必须由客户端经由 `file-service` 直传或普通上传获取合法 `fileId` 与 URL，本服务仅持久化其有效访问地址；
+- **不承接业务请求鉴权**：除内部服务互通外，完全依托网关透传的 `X-User-Id` 与 `X-User-Role` 获取用户上下文。
 
-处理顺序如下：
+### 1.3 参与的全局业务主线导航
+- 核心协同 [主线 01：账号生命周期、双 Token 维护与网关鉴权穿透](../flows/01-auth-and-identity-flow.md)
+- 核心支撑 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal.md)（作者信息与公开名片展示）
+- 支撑协同 [主线 05：平台合规治理、违规封禁与全站事件广播下线](../flows/05-platform-governance-flow.md)（用户封禁与名片冻结）
 
-1. 解码事件并检查类型 `auth.account.created`、版本 `1`、合法事件 ID，以及载荷账号 ID 与事件主体是否一致。只接收 `accountType=user`；未知附加字段允许保留兼容。
-2. 按事件 ID 写消费记录，重复事件直接返回重复处理结果。
-3. 按账号 ID 检查物理资料记录，包括已经删除的记录。真正缺失时创建默认正常资料，初始 `revision=0`；已有资料保持原样。
-4. 在同一事务中保存消费结果和资料。数据库处理失败时一起回滚，不能留下“已消费但没建档”的成功记录。
+---
 
-默认建档不生成昵称、头像等个性信息。停用和已删除资料不会因旧事件重投被恢复；同一账号收到不同事件 ID 时，也不会覆盖已有资料。
+## 2. 资料初始化与并发控制架构图
 
-非法事件会被转换为拒绝且不重新入队的异常；监听容器另开启有限重试，默认最多 3 次尝试。不能仅凭消费者抛出拒绝异常就声称真实容器只调用一次，重试和拒绝的组合仍需联调。最终拒绝的消息通过死信交换机进入 `user-service.auth-account-created.v1.dlq`。死信保留失败消息，不表示系统会自动修复并重放；当前没有对外重放接口。
+```mermaid
+flowchart TD
+    subgraph EventStream ["RabbitMQ 异步事件消费"]
+        MQMsg["消费事件: auth.account.created"] --> Consumer["AccountCreatedConsumer"]
+        Consumer --> CheckConsumed{"查询防重记录<br/>eventId 是否已处理?"}
+        CheckConsumed -- 重复事件 --> AckOnly["直接回送 ACK 忽略"]
+        CheckConsumed -- 首次处理 --> TxBlock["开启本地数据库事务"]
+        
+        TxBlock --> InsertEvent["写入防重记录 user_event_consume"]
+        TxBlock --> CheckProfile{"档案 user_profile 是否已存在?"}
+        CheckProfile -- 否 --> InsertProfile["插入初始档案<br/>设置默认昵称与版本 0"]
+        CheckProfile -- 是 --> SkipProfile["保留已有资料不覆盖"]
+        TxBlock --> CommitTx["提交本地事务并回送 ACK"]
+    end
 
-源码入口：[事件解码](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/AccountCreatedEventDecoder.java)、[消费事务](../../service/user-service/src/main/java/com/calles/platform/user/application/event/AccountCreatedEventProcessor.java)、[资料表](../../service/user-service/db/schema/user-profile.sql)。生产侧流程见[认证模块 Part 4](auth.md#part-4账号创建通知)。
+    subgraph ConcurrencyControl ["资料更新乐观锁并发控制"]
+        ClientPatch["PATCH /api/users/me (带入页面版本 revision)"] --> ServicePatch["UserProfileApplicationService"]
+        ServicePatch --> CheckRev{"比对数据库当前版本号<br/>是否与入参一致?"}
+        CheckRev -- 匹配成功 --> UpdateData["更新资料字段<br/>版本号自增 revision + 1"]
+        CheckRev -- 版本冲突 --> Conflict409["响应 HTTP 409 CONFLICT<br/>提示资料已被更新请刷新重试"]
+    end
+```
 
-## Part 2：本人资料查询与编辑
+---
 
-### 查看资料是否就绪
+## 3. 个人资料更新与乐观锁时序图
 
-普通用户调用 `GET /api/users/me`。用户 ID 来自网关注入的身份，而不是由请求参数指定。没有资料时，响应 `data.profileState=PENDING`、`revision=0`，资料字段为空；GET 不写库。调用方可以稍后重查，也可以进入首次资料保存。
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 客户端 (用户)
+    participant Gateway as API 网关
+    participant User as UserProfileController
+    participant DB as MySQL (user_profile)
+    participant Cache as Redis (用户资料缓存)
 
-正常资料返回 `profileState=READY` 和当前版本。本人资料已停用时返回 `403`，已删除时返回 `410`，不是返回等待状态，也不会自动重建。管理员不能借本人接口自动创建普通用户资料。
+    Client->>Gateway: PATCH /api/users/me (nickname, bio, revision=3)
+    Gateway->>User: 路由转发 (透传 X-User-Id)
+    
+    Note over User,DB: 执行带版本校验的原子更新
+    User->>DB: UPDATE user_profile SET nickname=..., bio=..., revision=4 WHERE id=#{userId} AND revision=3
+    
+    alt 更新受影响行数 = 1 (成功)
+        DB-->>User: 1 row affected
+        User->>Cache: DEL user:profile:{userId} (主动失效缓存)
+        User-->>Client: 200 OK (返回最新 profile 实体与 revision=4)
+    else 更新受影响行数 = 0 (发生并发冲突)
+        DB-->>User: 0 row affected
+        User-->>Client: 409 Conflict (资料已被其他设备或后台更新，请拉取最新资料)
+    end
+```
 
-### 首次保存和局部修改
+---
 
-调用 `PATCH /api/users/me`，提交当前 `revision` 以及至少一个可编辑字段。例如清空简介并修改昵称：
+## 4. 第一套件：HTTP 接口服务链路
 
+所有端点均挂载于统一前缀 `/api/users/**` 下：
+
+| HTTP 方法 | URI 路径 | 鉴权门禁 | 核心处理流与调用链 | 关键响应码 |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/api/users/me` | `requireUser` | 查询本人完整资料 ➔ 优先命中本地/Redis 缓存 ➔ 返回全量私有与公有字段 | `200` 成功<br/>`404` 资料尚未就绪 |
+| `PATCH` | `/api/users/me` | `requireUser` | 修改本人资料 ➔ 字段长度与敏感词校验 ➔ 头像外链防盗链校验 ➔ 乐观锁原子更新 ➔ 清除缓存 | `200` 成功<br/>`409` 版本冲突<br/>`400` 格式非法 |
+| `GET` | `/api/users/{accountId}` | 匿名/开放 | 获取创作者公开名片 ➔ 校验用户状态为 `ACTIVE` ➔ 过滤手机邮箱等私有字段 ➔ 返回公开摘要 | `200` 成功<br/>`404` 用户不存在或已冻结 |
+| `POST` | `/api/users/batch` | 内部或已登录 | 批量查询创作者资料 ➔ 保持入参顺序 ➔ 批量组装名片列表（缺失或封禁用户标记 `unavailable=true`） | `200` 成功 |
+| `POST` | `/api/users/admin/list` | `requireAdmin` | 管理员动态多条件分页检索资料（支持状态、时间、昵称模糊匹配） | `200` 成功 |
+| `PATCH` | `/api/users/admin/{accountId}`| `requireAdmin` | 管理员强制纠偏违规昵称或违规头像（同样遵循版本号自增控制） | `200` 成功<br/>`409` 版本冲突 |
+
+### 4.1 接口响应报文契约
+
+#### 1. 批量创作者资料响应 (`POST /api/users/batch`)
 ```json
 {
-  "revision": 0,
-  "nickname": "示例昵称",
-  "bio": null
+  "code": 0,
+  "message": "success",
+  "data": [
+    {
+      "id": "u_1001",
+      "nickname": "科技前沿测评",
+      "avatar": "https://storage.calles.com/media-bucket/permanent/u_1001/avatar.jpg",
+      "bio": "专注于硬核数码与科技深度解析",
+      "unavailable": false
+    },
+    {
+      "id": "u_9999",
+      "nickname": null,
+      "avatar": null,
+      "bio": null,
+      "unavailable": true // 账号不存在或已被平台封禁
+    }
+  ]
 }
 ```
 
-`revision` 应取最近一次查询或保存返回的值，只有尚未建档的首次保存通常从 `0` 开始。可编辑字段为 `nickname`、`bio`、`city`、`birthday`：字段不出现表示不改，显式 `null` 表示清空。昵称非空时不能是纯空白，文本会去首尾空白；昵称、简介、城市长度上限分别为 64、500、100，生日不能晚于当天。
+---
 
-服务先校验输入，再检查资料。资料缺失时先创建默认记录；若与消息初始化竞争，则重读实际记录，不能覆盖停用或已删除资料。之后只更新本次提交的字段，数据库条件同时要求版本匹配、资料正常且未删除；成功后版本加一，返回更新后的本人资料。
+## 5. 第二套件：MQ 消息链路（事件发布与消费）
 
-例如两个页面都读到版本 `2`，第一个保存后变成 `3`，第二个仍提交 `2` 就收到 `409`。调用方应重新获取资料并让用户确认修改，而不是盲目重复提交。初始化与修改处于同一事务，首次保存失败也不能算资料完善成功。
+### 5.1 消费的领域事件：`auth.account.created`
 
-头像和性别不是当前 PATCH 可编辑字段；不要从查询响应包含这些字段推断存在修改接口。
+- **队列绑定配置**：
+  - Queue：`user.account-created.v1`
+  - Exchange：`media.platform.events`
+  - RoutingKey：`auth.account.created`
+- **消费类入口**：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/AccountCreatedConsumer.java)
+- **强幂等消费与本地事务保障**：
+  1. 解析事件载荷，提取 `accountId`、`email` 等信息；
+  2. 开启本地数据库事务：
+     - 尝试插入防重表 `user_event_consume`（若 `event_id` 已存在则唯一键冲突拦截并直接 ACK）；
+     - 插入初始用户档案 `user_profile`（以 `account_id` 作为主键 `id`，初始昵称默认为 `User_` + 后 6 位截断，初始状态为 `ACTIVE`，初始版本号 `revision = 0`）；
+  3. 即使极端异常下外部发送了相同 `accountId` 但不同 `eventId` 的脏消息，`user_profile` 主键约束亦可完成终极兜底，绝不重置用户已有资料。
 
-源码入口：[用户 HTTP 接口](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserProfileController.java)、[资料用例](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/UserProfileApplicationService.java)、[带版本的更新条件](../../service/user-service/src/main/java/com/calles/platform/user/infrastructure/persistence/UserProfileMapper.java)。
+### 5.2 死信分流与重试机制
+- 消费出现数据库瞬时抖动异常时，利用 RabbitMQ 指数退避重试（最大重试 3 次）；
+- 重试耗尽或捕获不可恢复的契约反序列化异常时，路由转移至死信交换机进入 `user.account-created.dlq`，不阻断主队列正常消费。
 
-## Part 3：公开资料展示
+---
 
-### 单个和批量查询
+## 6. 第三套件：定时任务与容灾补偿调度链路
 
-已登录主体调用 `GET /api/users/{accountId}`，取得账号 ID、昵称、允许展示的头像和简介；不返回生日等本人视图数据。账号 ID 必须是 32 位十六进制。对于不存在、停用或已删除的资料，统一返回 `404`，不暴露不可用原因。
+- **定位说明**：`user-service` 不设本地周期性定时调度任务（`@Scheduled`）。
+- **容灾与并发补偿机制**：
+  1. **乐观锁冲突处理**：当前端提交更新遇到 `409 CONFLICT` 时，提示用户当前资料已被修改，前端重新拉取最新资料与新 `revision` 供用户确认覆盖；
+  2. **外部头像防盗链策略 (`AvatarDisplayPolicy`)**：仅放行配置白名单域名内的图片 URL。针对外部不可信图床，系统自动替换为默认静态占位图，防范 XSS 注入与外链失效风险。
 
-列表页可以调用 `POST /api/users/batch`，JSON 提交 `accountIds` 数组，数量为 1–100。服务一次读取正常资料，再按原请求顺序组装每项 `accountId`、`available` 和 `profile`。重复 ID 保留重复位置；不可用项为 `available=false`、`profile=null`，不会因一个缺失账号丢掉整批其余结果。批量摘要只有账号 ID、昵称和头像，不包含单条查询中的简介。
+---
 
-### 头像只负责展示过滤
+## 7. 数据库表结构全景 (Schema)
 
-已有头像地址经过 `AvatarDisplayPolicy` 的可信前缀过滤，不符合条件就隐藏。`user.profile.avatar-allowed-prefix` 默认空，因此默认不展示历史头像地址。这里没有文件上传、所有权验证或头像绑定链路，不能把前缀过滤当作完整头像管理能力。
+### 7.1 用户资料核心表 (`user_profile`)
+```sql
+CREATE TABLE IF NOT EXISTS `user_profile` (
+    `id` CHAR(32) NOT NULL COMMENT '用户ID (与 auth_account.id 一致)',
+    `nickname` VARCHAR(32) NOT NULL COMMENT '公开展示昵称',
+    `avatar` VARCHAR(512) NULL COMMENT '头像文件正式访问 URL',
+    `bio` VARCHAR(255) NULL COMMENT '个性签名与个人简介',
+    `gender` VARCHAR(8) NOT NULL DEFAULT 'UNKNOWN' COMMENT '性别: UNKNOWN, MALE, FEMALE',
+    `birthday` DATE NULL COMMENT '出生日期',
+    `city` VARCHAR(64) NULL COMMENT '所在城市',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE=正常, DISABLED=封禁',
+    `revision` BIGINT NOT NULL DEFAULT 0 COMMENT '并发乐观锁版本号',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    KEY `idx_user_status` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户资料表';
+```
 
-源码入口：[头像展示策略](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/AvatarDisplayPolicy.java)、[默认配置](../../service/user-service/src/main/resources/application.yml)。
+### 7.2 消费防重记录表 (`user_event_consume`)
+```sql
+CREATE TABLE IF NOT EXISTS `user_event_consume` (
+    `event_id` CHAR(32) NOT NULL COMMENT '消息事件唯一标识 (UUID)',
+    `event_type` VARCHAR(64) NOT NULL COMMENT '事件类型 (如 auth.account.created)',
+    `consumer_name` VARCHAR(64) NOT NULL COMMENT '消费者名称',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`event_id`, `consumer_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MQ消息消费防重记录表';
+```
 
-## Part 4：管理端资料维护
+---
 
-### 查找与编辑已有资料
+## 8. 核心源码入口索引
 
-管理员调用 `POST /api/users/admin/list?page=1&size=20`。可选 JSON 条件为 `accountId`、`nicknamePrefix`、`status`；其中状态为 `ACTIVE` 或 `DISABLED`，分页大小为 1–100。服务排除逻辑删除记录，按创建时间和账号 ID 排序，返回记录、总数及分页信息。
-
-修改使用 `PATCH /api/users/admin/{accountId}`，输入规则与本人 PATCH 相同，必须提交当前 `revision`。管理员只能编辑已有正常资料：缺失或删除返回 `404`，停用资料返回 `409`，版本冲突也返回 `409`。管理接口不允许顺带建档、恢复、启停或修改认证角色；普通用户调用管理接口返回 `403`。
-
-管理修改记录操作者、目标账号、提交字段名和结果，不把完整资料前后值写入这条审计日志。权限入口见[用户访问策略](../../service/user-service/src/main/java/com/calles/platform/user/application/security/UserAccessPolicy.java)。
-
-## 验证方式与当前结果
-
-应验证消息重投与事务回滚、初始化和首次保存竞争、GET 不写库、字段缺省与显式清空、版本冲突、公开信息最小化、普通用户与管理员的权限区分，以及停用和删除资料不被恢复。
-
-现有[用户测试目录](../../service/user-service/src/test/java/com/calles/platform/user)包含资料用例、事件处理、事件解码、消费者和配置测试。资料用例的模拟数据库返回、消费处理的替身断言不等于真实 SQL 事务或消息死信链已验证。
-
-本次（2026-09-09）实际完成接口、权限策略、资料更新 SQL、消息配置及相关测试断言的静态核对，以及文档链接与格式检查。未执行 Maven 编译或测试，未启动服务，未执行 MySQL、RabbitMQ 或网关链路联调。
+- **启动入口类**：[`UserApplication.java`](../../service/user-service/src/main/java/com/calles/platform/user/UserApplication.java)
+- **控制器与用例**：
+  - 用户资料控制器：[`UserProfileController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserProfileController.java)
+  - 资料用例编排服务：[`UserProfileApplicationService.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/UserProfileApplicationService.java)
+- **事件驱动与消费者**：
+  - 账号建档消费者：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/AccountCreatedConsumer.java)
+- **安全与防盗链策略**：
+  - 头像域名合规校验：[`AvatarDisplayPolicy.java`](../../service/user-service/src/main/java/com/calles/platform/user/domain/model/AvatarDisplayPolicy.java)
+- **自动化测试规范**：
+  - 乐观锁并发测试：`UserProfileRevisionTest.java`
+  - 消费幂等建档测试：`AccountCreatedConsumerTest.java`

@@ -168,6 +168,29 @@
 - [ ] 敏感词字典动态增删查接口。
 - [ ] 对接阿里云内容安全等真实第三方云机审 SDK 适配器。
 
+## 转码模块 · transcode-service
+
+说明：[转码模块](modules/transcode.md)。
+
+### 领域模型与仓储持久化
+
+- [x] 建立转码工单聚合根（`TranscodeTask`）、画质规格预设（`QualityPreset`）与全状态机流转模型。
+- [x] 完成对应数据表 DDL 定义（`transcode_task`，唯一键 `uk_video_quality_format`）与 MyBatis-Plus 仓储持久化落地。
+
+### 执行引擎与硬件保护
+
+- [x] 实现基于宿主机 FFmpeg/FFprobe 的音视频压制引擎（`FfmpegTranscodeEngine`），支持等比保真、黑边填充与 Web `faststart` 秒开优化。
+- [x] 实现支持脱网运行与 CI 快速验证的模拟桩引擎（`MockTranscodeEngine`）。
+- [x] 落地基于公平信号量的硬件并发保护限流器（`TranscodeRateLimiter`），支持 Java 21 虚拟线程调度。
+
+### 事件驱动与跨微服务协同闭环
+
+- [x] 声明 RabbitMQ 队列 `transcode-service.video-submitted.v1`，异步消费 `content.video.submitted` 提审事件。
+- [x] 跨服务文件交互：Feign 申请 `file-service` 临时直链流式拉流，完成切片后通过受信任内部端点 `POST /api/files/internal/upload` 托管上传并签发资产 ID。
+- [x] 发布门禁协同：通过 OpenFeign 回调 `content-service` 内部端点 `POST /api/content/videos/internal/transcode-callback` 登记流规格与视频时长，驱动 `PublishGatekeeper` 门禁流转。
+- [x] 资源清理自愈：任务沙箱临时工作区在 `finally` 阶段强力递归清除，避免磁盘泄漏。
+- [ ] HLS（`.m3u8` + `.ts`）分片转码（阶段二规划）。
+
 ## 互动模块 · interaction-service
 
 说明：[互动模块](modules/interaction.md)。

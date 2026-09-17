@@ -125,4 +125,27 @@ class VideoStreamApplicationServiceTest {
         assertThat(existing.getFileSize()).isEqualTo(3000000L);
         assertThat(existing.getTranscodeStatus()).isEqualTo(TranscodeStatus.COMPLETED);
     }
+
+    /**
+     * 测试转码回调携带真实媒体时长时，自动校准原时长为 0 的主视频。
+     */
+    @Test
+    @DisplayName("转码回调携带真实时长时校准主视频时长")
+    void shouldCalibrateVideoDurationWhenProvided() {
+        VideoContent video = VideoContent.createDraft(
+                "v_100", "cv10086", "author_1", "标题", "简介", "fv", "fc", 0, "tag"
+        );
+        when(videoContentRepository.findById("v_100")).thenReturn(Optional.of(video));
+        when(videoStreamRepository.findBySpec(eq("v_100"), eq(StreamQuality.P720), eq(StreamFormat.MP4)))
+                .thenReturn(Optional.empty());
+
+        VideoRequests.TranscodeCallback request = new VideoRequests.TranscodeCallback(
+                "v_100", "720P", "MP4", "H264", "f_720p", 1500000L, 2000, 30, "COMPLETED", 155
+        );
+
+        streamService.registerStream(request);
+
+        assertThat(video.getDuration()).isEqualTo(155);
+        verify(videoContentRepository).updateById(video);
+    }
 }
