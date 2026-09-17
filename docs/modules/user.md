@@ -29,7 +29,7 @@
 
 ### 1.3 参与的全局业务主线导航
 - 核心协同 [主线 01：账号生命周期、双 Token 维护与网关鉴权穿透](../flows/01-auth-and-identity-flow.md)
-- 核心支撑 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal.md)（作者信息与公开名片展示）
+- 核心支撑 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal-flow.md)（作者信息与公开名片展示）
 - 支撑协同 [主线 05：平台合规治理、违规封禁与全站事件广播下线](../flows/05-platform-governance-flow.md)（用户封禁与名片冻结）
 
 ---
@@ -37,7 +37,7 @@
 ## 2. 资料初始化与并发控制架构图
 
 ```mermaid
-flowchart TD
+graph TD
     subgraph EventStream ["RabbitMQ 异步事件消费"]
         MQMsg["消费事件: auth.account.created"] --> Consumer["AccountCreatedConsumer"]
         Consumer --> CheckConsumed{"查询防重记录<br/>eventId 是否已处理?"}
@@ -201,11 +201,11 @@ CREATE TABLE IF NOT EXISTS `user_event_consume` (
 - **启动入口类**：[`UserApplication.java`](../../service/user-service/src/main/java/com/calles/platform/user/UserApplication.java)
 - **控制器与用例**：
   - 用户资料控制器：[`UserProfileController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserProfileController.java)
-  - 资料用例编排服务：[`UserProfileApplicationService.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/UserProfileApplicationService.java)
+  - 资料用例编排服务：[`UserProfileApplicationService.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/UserProfileApplicationService.java)
 - **事件驱动与消费者**：
   - 账号建档消费者：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/AccountCreatedConsumer.java)
 - **安全与防盗链策略**：
-  - 头像域名合规校验：[`AvatarDisplayPolicy.java`](../../service/user-service/src/main/java/com/calles/platform/user/domain/model/AvatarDisplayPolicy.java)
+  - 头像域名合规校验：[`AvatarDisplayPolicy.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/AvatarDisplayPolicy.java)
 - **自动化测试规范**：
   - 乐观锁并发测试：`UserProfileRevisionTest.java`
   - 消费幂等建档测试：`AccountCreatedConsumerTest.java`

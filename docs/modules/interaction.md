@@ -26,7 +26,7 @@
 - **不承接用户认证**：完全基于网关鉴权通过后透传的 `X-User-Id` 与 `X-User-Role`。
 
 ### 1.3 参与的全局业务主线导航
-- 核心支撑 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal.md)（播放页互动状态展示与即时操作）
+- 核心支撑 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal-flow.md)（播放页互动状态展示与即时操作）
 - 关键输入 [主线 05：平台合规治理、违规封禁与全站事件广播下线](../flows/05-platform-governance-flow.md)（违规视频互动数据熔断）
 
 ---
@@ -77,7 +77,7 @@ sequenceDiagram
 ## 3. 互动事件驱动协同拓扑图
 
 ```mermaid
-flowchart TD
+graph TD
     User["用户客户端"]
     GW["API 网关 gateway-service"]
     IS["互动服务 interaction-service"]

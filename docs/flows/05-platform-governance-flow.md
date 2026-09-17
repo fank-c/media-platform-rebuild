@@ -7,27 +7,33 @@
 ## 1. 参与组件与调用拓扑
 
 ```mermaid
-flowchart TB
-    Admin(["安全管理员"])
-    GW["API Gateway<br/>gateway-service:8000"]
-    CS["内容服务<br/>content-service:8030"]
-    MQ[["RabbitMQ 领域事件总线"]]
-    Search[["搜索引擎 ElasticSearch"]]
-    Rec["推荐系统<br/>recommend-service"]
-    Notice[["消息与通知中心"]]
+graph TD
+    subgraph AdminAndGateway ["管理端与接入层"]
+        Admin["安全管理员"]
+        GW["API网关 (8000)"]
+    end
 
-    %% 管理操作
-    Admin -->|1. 提交封禁请求 POST admin/ban| GW
-    GW -->|RBAC 鉴权严格校验 ADMIN 角色| CS
-    
-    %% 本地事务与发件箱
-    CS -->|2. 原子置为 DISABLED 并写 Outbox| CS
-    
-    %% 异步广播全站
-    CS -.->|3. 广播封禁事件 content.video.banned| MQ
-    MQ -.->|清除搜索快照与倒排索引| Search
-    MQ -.->|拉黑视频并停止推荐流分发| Rec
-    MQ -.->|站内信通知违规作者与申诉指引| Notice
+    subgraph GovernanceCore ["内容治理中枢"]
+        CS["内容服务 (8030)"]
+    end
+
+    subgraph DownstreamSync ["异步下线与消费生态"]
+        MQ[["RabbitMQ 总线"]]
+        Search[["搜索引擎 ES"]]
+        Rec["推荐系统 (8070)"]
+        Notice["消息通知中心"]
+    end
+
+    %% 管理指令
+    Admin -->|1. 封禁请求 POST admin/ban| GW
+    GW -->|RBAC鉴权 ADMIN| CS
+    CS -->|2. 原子置为 DISABLED| CS
+    CS -.->|3. 广播 video.banned| MQ
+
+    %% 异步全站清退
+    MQ -.->|清除搜索索引| Search
+    MQ -.->|移出推荐候选池| Rec
+    MQ -.->|站内信违规通知| Notice
 ```
 
 ---
@@ -72,8 +78,8 @@ sequenceDiagram
     Note over Admin,Rec: 步骤三 全站各业务线协同下线闭环
     CS->>MQ: 投递事件 content.video.banned (包含 videoId, vid, authorId, reason)
     MQ->>Rec: 推荐与搜索引擎异步消费封禁事件
-    Rec->>Rec: 1. 推荐系统：将该视频移出候选召回池与热门池<br/>2. 搜索引擎：物理抹除该视频的倒排索引快照
-    Note over CS: 前台针对该 vid 的任何后续播放请求<br/>均因 status=DISABLED 直接返回 404 NOT_FOUND
+    Rec->>Rec: 推荐系统移出候选池，搜索引擎清除倒排索引
+    Note over CS: 前台针对该 vid 寻址因 status=DISABLED 统一返回 404
     end
 ```
 

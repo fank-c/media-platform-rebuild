@@ -12,71 +12,67 @@
 平台共划分为 **9 个独立服务模块**，依赖 **4 大核心基础设施（MySQL、Redis、RabbitMQ、MinIO）**：
 
 ```mermaid
-flowchart TB
-    subgraph ClientLayer [客户端层]
-        Web["Web / Mobile 客户端"]
+graph TD
+    subgraph ClientLayer ["客户端层"]
+        Web["Web/App客户端"]
         AdminWeb["管理端后台"]
     end
 
-    subgraph GatewayLayer [接入与安全层]
-        GW["API 网关 gateway-service:8000<br/>路由负载均衡 lb<br/>静态资源单 IP 令牌桶防刷限流<br/>JWT 鉴权拦截与受信身份注入"]
+    subgraph GatewayLayer ["网关与接入层"]
+        GW["API网关 (gateway:8000)"]
     end
 
-    subgraph CoreServices [核心微服务集群]
-        Auth["认证服务 auth-service:8010<br/>BCrypt 密码加密存储<br/>双 Token 签发与多端会话池<br/>一次性 RefreshToken 原子轮换"]
-        User["用户服务 user-service:8020<br/>用户个人资料与公开名片摘要<br/>乐观锁并发版本控制 Revision<br/>头像防盗链白名单策略"]
-        File["文件服务 file-service:8040<br/>大文件 V2 暂存直传 staging 到 permanent<br/>预签名 URL 派发与防盗链代理<br/>内部微服务专属上传下载通道"]
-        Content["内容服务 content-service:8030<br/>创作者工作台与双 ID 体系<br/>分级就绪门禁 PublishGatekeeper<br/>流水线任务编排与播放流聚合"]
-        Audit["审核服务 audit-service:8050<br/>DFA 敏感词机审<br/>阿里云内容安全与本地规则机审<br/>综合仲裁引擎与回调重试"]
-        Transcode["转码服务 transcode-service:8800<br/>系统级 FFmpeg 多画质等比压制<br/>硬件公平信号量并发保护<br/>隔离沙箱与资源彻底自愈清理"]
-        Interaction["互动服务 interaction-service<br/>点赞与收藏高频缓存<br/>定时批量回写数据库规划"]
-        Recommend["推荐服务 recommend-service<br/>协同过滤与热门推荐流<br/>发布事件驱动特征入库规划"]
+    subgraph CoreServices ["核心微服务集群"]
+        Auth["认证服务 (auth:8010)"]
+        User["用户服务 (user:8020)"]
+        File["文件服务 (file:8040)"]
+        Content["内容服务 (content:8030)"]
+        Audit["审核服务 (audit:8050)"]
+        Transcode["转码服务 (transcode:8800)"]
+        Interaction["互动服务 (interaction:8060)"]
+        Recommend["推荐服务 (recommend:8070)"]
     end
 
-    subgraph Infra [基础设施]
-        Redis[("Redis 缓存与会话与限流")]
-        MQ[["RabbitMQ 领域事件总线"]]
-        MinIO[("MinIO 对象存储桶")]
-        MySQL[("MySQL 业务数据库")]
+    subgraph InfraLayer ["基础设施层"]
+        Redis[("Redis 缓存/会话")]
+        MQ[["RabbitMQ 事件总线"]]
+        MinIO[("MinIO 对象存储")]
+        MySQL[("MySQL 数据库")]
     end
 
-    %% 客户端请求路径
-    Web -->|HTTP API 业务请求| GW
-    AdminWeb -->|管理后台请求| GW
-    Web -.->|预签名流式直传绕过网关| MinIO
+    %% 客户端接入
+    Web -->|业务请求| GW
+    AdminWeb -->|管理请求| GW
+    Web -.->|PUT直传绕过网关| MinIO
 
-    %% 网关路由与鉴权
-    GW -->|认证路由 /api/auth| Auth
-    GW -->|用户路由 /api/users| User
-    GW -->|文件路由 /api/files| File
-    GW -->|内容路由 /api/content| Content
-    GW -->|审核路由 /api/audit| Audit
-    GW -->|互动路由 /api/interactions| Interaction
-    GW -->|推荐路由 /api/recommend| Recommend
-    GW -.->|Token 验签缓存与限流计数| Redis
-    GW -.->|回源验证 POST verify| Auth
+    %% 网关路由
+    GW -->|/api/auth| Auth
+    GW -->|/api/users| User
+    GW -->|/api/files| File
+    GW -->|/api/content| Content
+    GW -->|/api/audit| Audit
+    GW -->|/api/interactions| Interaction
+    GW -->|/api/recommend| Recommend
+    GW -.->|Token验签与限流| Redis
 
-    %% 微服务间同步 OpenFeign 调用
-    Content ==>|1. OpenFeign 提审探活文件状态| File
-    Audit ==>|2. OpenFeign 申请临时拉流直链| File
-    Audit ==>|3. OpenFeign 机审结论内部专有回调| Content
-    Transcode ==>|4. OpenFeign 原片拉取直链申请| File
-    Transcode ==>|5. OpenFeign 切片文件免密托管上传| File
-    Transcode ==>|6. OpenFeign 切片元数据登记内部回调| Content
+    %% 服务间同步调用
+    Content -->|Feign探活资产| File
+    Audit -->|Feign申请拉流| File
+    Audit -->|Feign机审回调| Content
+    Transcode -->|Feign拉取原片| File
+    Transcode -->|Feign切片托管| File
+    Transcode -->|Feign转码回调| Content
 
-    %% 异步领域事件总线 (Transactional Outbox)
-    Auth -.->|广播 auth.account.created| MQ
-    MQ -.->|消费并幂等建档| User
-
-    Content -.->|广播 content.video.submitted| MQ
-    MQ -.->|启动机审流水线| Audit
-    MQ -.->|启动切片转码流水线| Transcode
-
-    Content -.->|广播 content.video.published| MQ
-    MQ -.->|推荐与搜索与消息消费| CoreServices
-
-    Content -.->|广播 content.video.banned| MQ
-    MQ -.->|全站即时拉黑下线| CoreServices
+    %% 异步事件总线
+    Auth -.->|发布 account.created| MQ
+    MQ -.->|消费建档| User
+    Content -.->|发布 video.submitted| MQ
+    MQ -.->|触发机审| Audit
+    MQ -.->|触发转码| Transcode
+    Content -.->|发布 video.published| MQ
+    MQ -.->|推荐索引特征| Recommend
+    Content -.->|发布 video.banned| MQ
+    MQ -.->|全网下线广播| CoreServices
 ```
 
 ---
@@ -88,9 +84,9 @@ flowchart TB
 | 主线文档 | 核心图表与主线内容 | 关键涉及服务 |
 | :--- | :--- | :--- |
 | [**主线 01：账号生命周期与鉴权透传**](flows/01-auth-and-identity-flow.md) | 注册事务 ➔ Outbox ➔ MQ 异步资料建档；登录双 Token 签发；Redis 多设备会话池置换；网关 Token 拦截鉴权、SHA-256 缓存与下游受信 Header 透传时序图。 | `gateway`<br/>`auth`<br/>`user`<br/>`Redis`<br/>`RabbitMQ` |
-| [**主线 02：大文件资产 V2 暂存直传与归档**](flows/02-file-storage-direct-upload.md) | 三种上传模式对比拓扑；客户端流式 PUT 直连 MinIO（零网关带宽消耗）；服务端 HEAD 校验、内部 Copy 转正与孤儿文件定时清理自愈时序图。 | `gateway`<br/>`file`<br/>`MinIO` |
-| [**主线 03：视频提审、异步机审与分级门禁**](flows/03-video-publish-and-pipeline.md) | **【全平台技术核心】** 创作者提审 ➔ Feign 同步探活 ➔ Outbox 派发 ➔ 审核与转码多路并发 ➔ 专有回调 ➔ `PublishGatekeeper` 分级门禁决策（基准流就绪即发布，4K 异步追加，违规熔断）全流程时序图。 | `content`<br/>`file`<br/>`audit`<br/>`transcode`<br/>`RabbitMQ` |
-| [**主线 04：前台视频播放分发与网关防刷**](flows/04-video-playback-and-portal.md) | 网关单 IP 令牌桶秒级限流（QPS<=30）；Base62 短码（`vid`）寻址防爬虫；多画质播放流切片汇聚与访问权限安全脱敏时序图。 | `gateway`<br/>`content`<br/>`Redis` |
+| [**主线 02：大文件资产 V2 暂存直传与归档**](flows/02-file-storage-direct-upload-flow.md) | 三种上传模式对比拓扑；客户端流式 PUT 直连 MinIO（零网关带宽消耗）；服务端 HEAD 校验、内部 Copy 转正与孤儿文件定时清理自愈时序图。 | `gateway`<br/>`file`<br/>`MinIO` |
+| [**主线 03：视频提审、异步机审与分级门禁**](flows/03-video-publish-and-pipeline-flow.md) | **【全平台技术核心】** 创作者提审 ➔ Feign 同步探活 ➔ Outbox 派发 ➔ 审核与转码多路并发 ➔ 专有回调 ➔ `PublishGatekeeper` 分级门禁决策（基准流就绪即发布，4K 异步追加，违规熔断）全流程时序图。 | `content`<br/>`file`<br/>`audit`<br/>`transcode`<br/>`RabbitMQ` |
+| [**主线 04：前台视频播放分发与网关防刷**](flows/04-video-playback-and-portal-flow.md) | 网关单 IP 令牌桶秒级限流（QPS<=30）；Base62 短码（`vid`）寻址防爬虫；多画质播放流切片汇聚与访问权限安全脱敏时序图。 | `gateway`<br/>`content`<br/>`Redis` |
 | [**主线 05：平台合规治理与全站广播下线**](flows/05-platform-governance-flow.md) | 管理端 RBAC 鉴权；状态原子跃迁；`content.video.banned` 领域事件广播驱动搜索引擎、推荐池与端侧长连接全网即时下线时序图。 | `gateway`<br/>`content`<br/>`audit`<br/>`RabbitMQ` |
 
 ---

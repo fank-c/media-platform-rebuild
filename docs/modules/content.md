@@ -20,8 +20,8 @@
 - **不管理账号密码与 Token**：依赖网关统一校验 JWT 并透传 `X-User-Id` 与 `X-User-Role`。
 
 ### 1.3 参与的全局业务主线导航
-- 核心牵头 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-video-publish-and-pipeline.md)
-- 核心牵头 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal.md)
+- 核心牵头 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-video-publish-and-pipeline-flow.md)
+- 核心牵头 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal-flow.md)
 - 核心牵头 [主线 05：平台合规治理、违规封禁与全站事件广播下线](../flows/05-platform-governance-flow.md)
 
 ---
@@ -98,32 +98,27 @@ classDiagram
 ### 2.2 视频聚合根全生命周期状态流转图
 
 ```mermaid
-stateDiagram-v2
-    [*] --> DRAFT : 创作者创建草稿
-    DRAFT --> DRAFT : 更新标题/简介/封面
-    DRAFT --> AUDITING : Feign 探活文件就绪，提交提审
-    
-    state AUDITING {
-        [*] --> 细分子任务网格调度
-        note right of 细分子任务网格调度
-            并行派发：
-            - AUDIT (机审)
-            - TRANSCODE_720P (基准画质)
-            - TRANSCODE_1080P (基准画质)
-            - TRANSCODE_4K (长耗时超清)
-            - VECTOR_EMBEDDING (向量特征)
-        end note
-    }
-    
-    AUDITING --> PUBLISHED : 门禁达成 (机审通过 + 基准流就绪 + 向量就绪)
-    AUDITING --> REJECTED : 机审违规驳回 (级联取消其余全部任务)
-    REJECTED --> AUDITING : 创作者修改后重新提审 (复苏流水线)
-    
-    PUBLISHED --> OFFLINE : 创作者主动下架
-    OFFLINE --> AUDITING : 重新提审
-    
-    DRAFT --> [*] : 逻辑删除
-    OFFLINE --> [*] : 逻辑删除
+graph TD
+    subgraph CreationStage ["创作与草稿阶段"]
+        S_Draft["DRAFT (草稿状态)"] -->|编辑标题/简介/封面| S_Draft
+        S_Draft -->|Feign探活成功提交提审| S_Auditing["AUDITING (提审流水线中)"]
+    end
+
+    subgraph PipelineStage ["提审多路子任务调度"]
+        S_Auditing --> T_Audit["机审子任务 (AUDIT)"]
+        S_Auditing --> T_720P["基准转码 (720P)"]
+        S_Auditing --> T_1080P["基准转码 (1080P)"]
+        S_Auditing --> T_4K["长耗时超清 (4K)"]
+        S_Auditing --> T_Vec["向量特征提取 (VECTOR)"]
+    end
+
+    subgraph TerminalStage ["终态与复苏"]
+        S_Auditing -->|门禁达成自动放行| S_Published["PUBLISHED (已发布上线)"]
+        S_Auditing -->|机审违规一票驳回| S_Rejected["REJECTED (已驳回)"]
+        S_Rejected -->|创作者修改后重新提审| S_Auditing
+        S_Published -->|创作者主动下架| S_Offline["OFFLINE (已下架)"]
+        S_Offline -->|重新提审| S_Auditing
+    end
 ```
 
 ---
@@ -186,7 +181,7 @@ stateDiagram-v2
 门禁决策器作为独立领域服务，在**任何子任务状态更新（机审回调、切片登记回调、向量回调）时就地触发评估**：
 
 ```mermaid
-flowchart TD
+graph TD
     Callback["收到任意子任务完成回调"] --> CheckAudit{"AUDIT 任务是否为 SUCCESS?"}
     CheckAudit -- 仍在执行中 --> KeepAuditing["保持 AUDITING 状态<br/>等待后续回调"]
     CheckAudit -- 机审未通过 --> Reject["立即流转 REJECTED<br/>级联取消其余在途子任务"]

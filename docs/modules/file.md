@@ -30,16 +30,16 @@
 - **严禁对外暴露内部接口**：`/api/files/internal/**` 必须在 API 网关层实施严格阻断，仅限微服务间通过 RPC / 内网直接调用。
 
 ### 1.3 参与的全局业务主线导航
-- 核心牵头 [主线 02：大文件/媒体资产 V2 两阶段直传、存储隔离与确认归档](../flows/02-file-storage-direct-upload.md)
-- 支撑服务 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-video-publish-and-pipeline.md)（转码切片自动托管与提审强探活）
-- 支撑服务 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal.md)（防盗链代理拉流）
+- 核心牵头 [主线 02：大文件/媒体资产 V2 两阶段直传、存储隔离与确认归档](../flows/02-file-storage-direct-upload-flow.md)
+- 支撑服务 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-video-publish-and-pipeline-flow.md)（转码切片自动托管与提审强探活）
+- 支撑服务 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal-flow.md)（防盗链代理拉流）
 
 ---
 
 ## 2. 三种上传模式全景对比图
 
 ```mermaid
-flowchart TD
+graph TD
     Client["客户端 Web 或 App"]
     Gateway["API 网关 gateway-service"]
     FileService["文件服务 file-service"]
@@ -202,17 +202,16 @@ sequenceDiagram
 用户在申请直传通行证后，可能由于断网、用户主动取消、浏览器崩溃等原因导致直传中断，或者上传后未发起 `confirm/v2` 确认，导致大量垃圾文件滞留在 MinIO `staging/` 目录中。
 
 ```mermaid
-flowchart TD
-    Scheduler["定时调度任务 FileCleanupScheduler (每10分钟触发)"]
+graph TD
+    Scheduler["定时清理任务 (每10分钟)"]
     DB[("MySQL file_asset")]
-    MinIO[("MinIO 对象存储 staging 目录")]
+    MinIO[("MinIO 暂存区 staging")]
 
-    Scheduler -->|1. 查询超时未确认记录: upload_status='PENDING' 且 upload_expires_at 小于当前时间| DB
-    DB -->|返回待清理超期资产列表| Scheduler
-    Scheduler -->|2. 批量向 MinIO 发送 RemoveObject 指令| MinIO
-    MinIO -->|物理释放暂存磁盘空间| Scheduler
-    Scheduler -->|3. 批量更新数据库状态为 EXPIRED| DB
-    Scheduler -->|4. 记录清理指标与审计日志| Scheduler
+    Scheduler -->|1. 查询超时未确认 PENDING| DB
+    DB -->|返回超期资产清单| Scheduler
+    Scheduler -->|2. RemoveObject 物理清理| MinIO
+    MinIO -->|磁盘空间释放完毕| Scheduler
+    Scheduler -->|3. 状态翻转为 EXPIRED| DB
 ```
 
 - **执行参数**：依赖配置 `file.cleanup.enabled=true`，默认每 10 分钟执行一次；
@@ -253,8 +252,7 @@ CREATE TABLE IF NOT EXISTS `file_asset` (
 
 - **启动入口类**：[`FileApplication.java`](../../service/file-service/src/main/java/com/calles/platform/file/FileApplication.java)
 - **控制器层**：
-  - 外部公共接口：[`FileController.java`](../../service/file-service/src/main/java/com/calles/platform/file/interfaces/http/FileController.java)
-  - 内部微服务专用：[`FileInternalController.java`](../../service/file-service/src/main/java/com/calles/platform/file/interfaces/http/FileInternalController.java)
+  - 资产与内部通道控制器：[`FileController.java`](../../service/file-service/src/main/java/com/calles/platform/file/interfaces/http/FileController.java)
 - **核心用例与应用服务**：
   - 资产元数据管理：[`FileAssetApplicationService.java`](../../service/file-service/src/main/java/com/calles/platform/file/application/asset/FileAssetApplicationService.java)
   - V2 两阶段归档核验：[`DirectUploadConfirmationService.java`](../../service/file-service/src/main/java/com/calles/platform/file/application/confirmation/DirectUploadConfirmationService.java)

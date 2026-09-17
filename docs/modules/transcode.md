@@ -20,7 +20,7 @@
 - **不处理客户端用户身份**：转码服务为纯内部计算节点，不对外部网关开放修改接口，不解析用户端 JWT 会话。
 
 ### 1.3 参与的全局业务主线导航
-- 核心参与 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-video-publish-and-pipeline.md)
+- 核心参与 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-video-publish-and-pipeline-flow.md)
 
 ---
 
@@ -87,21 +87,22 @@ classDiagram
 
 ### 2.2 转码全生命周期状态流转图
 ```mermaid
-stateDiagram-v2
-    [*] --> PENDING: 消费 content.video.submitted 或手动触发
-    PENDING --> DOWNLOADING: 申请直链并流式拉取原片到沙箱
-    DOWNLOADING --> TRANSCODING: 获取硬件并发许可，启动 FFmpeg
-    TRANSCODING --> UPLOADING: 压制完成，Multipart 上传至 file-service
-    UPLOADING --> NOTIFYING: 产物注册成功，回调 content-service 门禁
-    NOTIFYING --> COMPLETED: 门禁与视频流注册闭环成功
-    
-    DOWNLOADING --> FAILED: 下载超时或源片损坏
-    TRANSCODING --> FAILED: 进程异常退出或压制超时
-    UPLOADING --> FAILED: 文件服务不可用或网络异常
-    NOTIFYING --> FAILED: 回调重试超限失败
-    
-    FAILED --> PENDING: 任务自愈重试 (未超 maxRetries)
-    COMPLETED --> [*]
+graph TD
+    subgraph ExecutionStage ["转码执行流水线"]
+        TS_Pending["PENDING (待派发)"] -->|流式拉取原片到沙箱| TS_Downloading["DOWNLOADING (下载中)"]
+        TS_Downloading -->|获取信号量启动FFmpeg| TS_Transcoding["TRANSCODING (压制中)"]
+        TS_Transcoding -->|切片上传至file-service| TS_Uploading["UPLOADING (托管中)"]
+        TS_Uploading -->|回调content-service登记| TS_Notifying["NOTIFYING (通知中)"]
+        TS_Notifying -->|门禁闭环成功| TS_Completed["COMPLETED (已就绪)"]
+    end
+
+    subgraph ErrorHandling ["异常捕获与自愈"]
+        TS_Downloading -->|下载超时或破损| TS_Failed["FAILED (已失败)"]
+        TS_Transcoding -->|压制崩溃或进程退出| TS_Failed
+        TS_Uploading -->|上传网络失败| TS_Failed
+        TS_Notifying -->|回调超时超限| TS_Failed
+        TS_Failed -->|未超重试上限自愈| TS_Pending
+    end
 ```
 
 ---

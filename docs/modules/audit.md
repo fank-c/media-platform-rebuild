@@ -29,7 +29,7 @@
 - **不承接用户鉴权**：除管理员人工复审端点校验 `ADMIN` 角色外，核心机审流水线完全由内部事件驱动。
 
 ### 1.3 参与的全局业务主线导航
-- 核心协同 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-video-publish-and-pipeline.md)
+- 核心协同 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-video-publish-and-pipeline-flow.md)
 - 核心支撑 [主线 05：平台合规治理、违规封禁与全站事件广播下线](../flows/05-platform-governance-flow.md)
 
 ---
@@ -93,7 +93,7 @@ sequenceDiagram
 ## 3. 多维度审查与综合仲裁决策图
 
 ```mermaid
-flowchart TD
+graph TD
     subgraph MultiDimension ["多维度机审输入流水线"]
         Input["输入: 视频标题、简介、封面与音视频资产"]
         

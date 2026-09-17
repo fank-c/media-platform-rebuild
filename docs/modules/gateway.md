@@ -33,7 +33,7 @@
 
 ### 1.3 参与的全局业务主线导航
 - 核心贯穿 [主线 01：账号生命周期、双 Token 维护与网关鉴权穿透](../flows/01-auth-and-identity-flow.md)
-- 核心贯穿 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal.md)
+- 核心贯穿 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-video-playback-and-portal-flow.md)
 - 核心贯穿 [主线 05：平台合规治理、违规封禁与全站事件广播下线](../flows/05-platform-governance-flow.md)
 
 ---
@@ -41,7 +41,7 @@
 ## 2. 全局过滤器链执行决策流程图
 
 ```mermaid
-flowchart TD
+graph TD
     ClientRequest["客户端发起 HTTP 请求"] --> RateFilter["AssetRateLimiterGlobalFilter (Order = -150)"]
     
     RateFilter --> IsAssetPath{"是否为静态资产直链路径?"}

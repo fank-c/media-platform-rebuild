@@ -9,27 +9,32 @@
 在传统中小型 Web 架构中，文件上传通常直接通过业务接口上传表单。但在微服务音视频平台中，直接上传或简易直传存在严重的工程隐患：
 
 ```mermaid
-flowchart LR
-    Client(["客户端"])
-    GW["API Gateway<br/>gateway-service"]
-    FS["文件服务<br/>file-service"]
-    MinIO[("MinIO 对象存储")]
-    
-    %% 第一阶段：申请
-    Client -->|1. 申请直传 POST direct-upload/v2| GW
-    GW --> FS
-    FS -->|生成带 Checksum 的预签名 URL| Client
-    
-    %% 第二阶段：直传
-    Client ==>|2. 绕过网关直接 PUT 传输| MinIO
-    
-    %% 第三阶段：确认
-    Client -->|3. 提交直传确认 POST confirm/v2| GW
-    GW --> FS
-    FS -->|HEAD 校验大小与 ETag| MinIO
-    FS -->|服务端内部原子 Copy 到 permanent/| MinIO
-    FS -->|删除 staging 临时对象| MinIO
-    FS -->|数据库标记 COMPLETED| FS
+graph TD
+    subgraph ClientAndGateway ["客户端与网关"]
+        Client["客户端 Web/App"]
+        GW["API网关 (8000)"]
+    end
+
+    subgraph FileBackend ["文件微服务与对象存储"]
+        FS["文件服务 (8040)"]
+        MinIOStaging[("MinIO 暂存区")]
+        MinIOPerm[("MinIO 正式区")]
+    end
+
+    %% 阶段一：申请
+    Client -->|1. 申请直传| GW
+    GW -->|/api/files| FS
+    FS -->|生成带 Checksum 凭证| Client
+
+    %% 阶段二：直传
+    Client -.->|2. 流式直传绕过网关| MinIOStaging
+
+    %% 阶段三：确认
+    Client -->|3. 提交确认| GW
+    GW -->|/api/files/confirm| FS
+    FS -->|HEAD自省核验| MinIOStaging
+    FS -->|原子拷贝转正| MinIOPerm
+    FS -->|物理清理暂存| MinIOStaging
 ```
 
 1. **网关带宽打满与 Netty 线程池耗尽**：
@@ -72,7 +77,7 @@ sequenceDiagram
     rect rgb(255, 250, 240)
     Note over Client,DB: 阶段二 大文件绕过网关流式直传
     Client->>MinIO: HTTP PUT <putUrl> (携带 requiredHeaders 与文件二进制流)
-    Note over MinIO: MinIO 硬件底层校验 Checksum SHA-256<br/>流式落入暂存区 staging/ 路径
+    Note over MinIO: MinIO 硬件校验 Checksum 并写入暂存区 staging
     MinIO-->>Client: HTTP 200 OK 传输完毕
     end
 
@@ -142,23 +147,23 @@ sequenceDiagram
 ## 4. 存储对象生命周期状态机
 
 ```mermaid
-stateDiagram-v2
-    [*] --> PENDING : 申请直传获得暂存PUT地址
-    PENDING --> VERIFYING : 上传完成发起确认
-    
-    state VERIFYING {
-        [*] --> HEAD核验
-        HEAD核验 --> 原子复制 : 大小与ETag匹配
-        原子复制 --> 清理暂存 : CopyObject到正式区
-    }
-    
-    VERIFYING --> COMPLETED : 落库正式资产
-    
-    PENDING --> EXPIRED : 超时未确认
-    VERIFYING --> FAILED : 校验大小不一致或存储异常
-    
-    EXPIRED --> [*] : 定时任务扫描物理清理暂存孤儿对象
-    COMPLETED --> DELETED : 业务删除资产物理清理正式对象
+graph TD
+    subgraph StagingStage ["暂存生命周期"]
+        S_Init["申请直传"] --> S_Pending["PENDING (待上传)"]
+        S_Pending -->|超时未确认| S_Expired["EXPIRED (已失效)"]
+        S_Pending -->|客户端发起确认| S_Verifying["VERIFYING (核验中)"]
+    end
+
+    subgraph VerifyStage ["核验与转正过程"]
+        S_Verifying -->|HEAD大小/ETag不符| S_Failed["FAILED (校验失败)"]
+        S_Verifying -->|校验通过| S_Copying["CopyObject 转正中"]
+        S_Copying -->|清除staging临时文件| S_Completed["COMPLETED (已归档就绪)"]
+    end
+
+    subgraph RecycleStage ["清理与终态"]
+        S_Expired -->|定时任务清理物理文件| S_End["物理删除"]
+        S_Completed -->|业务方删除资产| S_Deleted["DELETED (已逻辑删除)"]
+    end
 ```
 
 ---

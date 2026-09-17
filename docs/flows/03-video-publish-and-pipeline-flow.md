@@ -9,43 +9,52 @@
 视频发布并非简单的单体保存，而是由**内容服务中心协调、跨微服务分工并行、门禁最终裁决**的分布式流水线：
 
 ```mermaid
-flowchart TB
-    Creator(["创作者"])
-    GW["API Gateway<br/>gateway-service"]
-    CS["内容服务 (content-service)<br/>聚合根与短码 vid 发号<br/>门禁决策器 PublishGatekeeper"]
-    FS["文件服务<br/>file-service"]
-    MQ[["RabbitMQ 领域事件总线"]]
-    Audit["审核服务 (audit-service)<br/>DFA 文本敏感词过滤<br/>综合仲裁引擎"]
-    Transcode["转码服务 (transcode-service)<br/>FFmpeg 硬件限流压制<br/>720P/1080P/4K 切片"]
-    VectorWorker["AI 计算集群<br/>多模态向量特征提取"]
+graph TD
+    subgraph ClientAndGateway ["创作者与接入层"]
+        Creator["创作者"]
+        GW["API网关 (8000)"]
+    end
+
+    subgraph ContentCore ["内容聚合中枢"]
+        CS["内容服务 (8030)"]
+    end
+
+    subgraph AsyncWorkers ["异步工作流节点"]
+        Audit["审核服务 (8050)"]
+        Transcode["转码服务 (8800)"]
+        VectorWorker["AI向量计算集群"]
+    end
+
+    subgraph InfraStorage ["文件存储与消息总线"]
+        FS["文件服务 (8040)"]
+        MQ[["RabbitMQ 领域总线"]]
+    end
 
     %% 提审与探活
-    Creator -->|1. 提交视频提审 POST submit| GW
-    GW --> CS
-    CS ==>|2. OpenFeign 同步探活视频与封面状态| FS
-    
-    %% 本地事务与事件派发
-    CS -->|3. 事务初始化 5 大子任务并写 Outbox| CS
-    CS -.->|4. 广播提审事件 content.video.submitted| MQ
-    
-    %% 多路并发消费
+    Creator -->|1. 提审请求| GW
+    GW -->|/api/content/submit| CS
+    CS -->|2. Feign探活资产| FS
+
+    %% 本地事务与派发
+    CS -->|3. 拆分5大子任务| CS
+    CS -.->|4. 发布 video.submitted| MQ
+
+    %% 异步消费
     MQ -.->|消费| Audit
     MQ -.->|消费| Transcode
     MQ -.->|消费| VectorWorker
-    
-    %% 审核拉流与机审
-    Audit ==>|Feign 换取临时拉流直链| FS
-    Audit ==>|5. OpenFeign 内部机审专用回调| CS
-    
+
+    %% 审核拉流与机审回调
+    Audit -->|Feign申请拉流| FS
+    Audit -->|5. Feign机审回调| CS
+
     %% 转码切片与产物托管
-    Transcode ==>|Feign 上传切片文件| FS
-    Transcode ==>|6. OpenFeign 内部转码切片专用回调| CS
-    
-    %% 向量汇报
-    VectorWorker -->|7. HTTP 内部任务状态汇报| CS
-    
-    %% 门禁闭环
-    CS -->|8. 门禁达成自动上线 PUBLISHED| MQ
+    Transcode -->|Feign切片托管| FS
+    Transcode -->|6. Feign转码回调| CS
+
+    %% 向量计算上报与上线
+    VectorWorker -->|7. 向量结果上报| CS
+    CS -.->|8. 门禁达成发布上线| MQ
 ```
 
 ---
@@ -141,37 +150,41 @@ sequenceDiagram
 传统音视频网站在“全部分辨率（包含 4K、AV1 等重度规格）压制完成前”禁止上线，导致创作者发布延迟极大。`content-service` 引入工业级**分级就绪门禁**：
 
 ```mermaid
-flowchart TD
-    subgraph Tasks [5 类异步子任务状态]
-        T1["AUDIT (内容安全机审)"]
-        T2["TRANSCODE_720P (基准画质)"]
-        T3["TRANSCODE_1080P (基准画质)"]
+graph TD
+    subgraph TaskInputs ["五类子任务并发结果输入"]
+        T1["AUDIT (机审任务)"]
+        T2["TRANSCODE_720P (基准流)"]
+        T3["TRANSCODE_1080P (基准流)"]
         T4["TRANSCODE_4K (长耗时超清)"]
         T5["VECTOR_EMBEDDING (语义特征)"]
     end
 
-    subgraph Gatekeeper [PublishGatekeeper 决策核心]
-        AuditDecision{"机审是否通过?"}
-        BaseStreamDecision{"720P 或 1080P<br/>至少一路就绪?"}
-        VectorDecision{"向量特征提取成功?"}
-        
-        FinalCheck{"门禁公式达成?"}
+    subgraph GatekeeperCore ["门禁准入核心 PublishGatekeeper"]
+        AuditCheck{"机审是否通过?"}
+        BaseStreamCheck{"720P/1080P 至少一路就绪?"}
+        VectorCheck{"向量特征是否就绪?"}
+        FinalDecision{"准入公式是否达成?"}
     end
 
-    T1 --> AuditDecision
-    AuditDecision -- 驳回 REJECTED --> CascadeCancel["级联熔断<br/>视频流转 REJECTED<br/>自动取消所有在途转码与计算"]
-    AuditDecision -- 成功 SUCCESS --> FinalCheck
+    subgraph GateOutputs ["门禁决策动作"]
+        CascadeCancel["级联熔断: 标记 REJECTED<br/>取消所有在途子任务"]
+        AutoPublish["自动上线: 跃迁 PUBLISHED<br/>广播 video.published"]
+        SilentAppend["静默追加: 登记 video_stream<br/>播放流菜单无感新增 4K"]
+    end
 
-    T2 --> BaseStreamDecision
-    T3 --> BaseStreamDecision
-    BaseStreamDecision -- 是 --> FinalCheck
+    T1 --> AuditCheck
+    AuditCheck -- 驳回 REJECTED --> CascadeCancel
+    AuditCheck -- 通过 SUCCESS --> FinalDecision
 
-    T5 --> VectorDecision
-    VectorDecision -- 成功 SUCCESS --> FinalCheck
+    T2 --> BaseStreamCheck
+    T3 --> BaseStreamCheck
+    BaseStreamCheck -- 是 --> FinalDecision
 
-    FinalCheck -- 满足条件 --> AutoPublish["自动上线<br/>视频跃迁为 PUBLISHED<br/>广播 content.video.published"]
+    T5 --> VectorCheck
+    VectorCheck -- 成功 SUCCESS --> FinalDecision
 
-    T4 -.->|长耗时异步完成| SilentAdd["静默追加<br/>写入 video_stream<br/>前台观众无感新增 4K 选项"]
+    FinalDecision -- 达成上线条件 --> AutoPublish
+    T4 -.->|长耗时异步完成| SilentAppend
 ```
 
 #### 1. 门禁准入公式 (数学逻辑)
@@ -188,16 +201,19 @@ $$\text{GateReady} = (\text{Task}_{\text{AUDIT}} = \text{SUCCESS}) \land (\text{
 当视频被审核驳回或转码异常后，创作者修改标题、简介或更换文件可再次提审。系统具备智能的**流水线复苏能力**：
 
 ```mermaid
-stateDiagram-v2
-    [*] --> PENDING : 提审初始化
-    PENDING --> RUNNING : Worker 开始执行或收到首个进度包
-    RUNNING --> SUCCESS : 任务执行完成且结果登记
-    RUNNING --> FAILED : 执行报错或超时耗尽重试
-    RUNNING --> CANCELED : 机审违规熔断或人工终止
-    
-    FAILED --> PENDING : 重新提审复苏流水线
-    CANCELED --> PENDING : 重新提审复苏被取消的任务
-    SUCCESS --> SUCCESS : 已成功的切片流保持有效复用
+graph TD
+    subgraph PipelineLifecycle ["任务生命周期流转"]
+        TS_Pending["PENDING (待调度)"] -->|Worker接收任务| TS_Running["RUNNING (执行中)"]
+        TS_Running -->|执行成功| TS_Success["SUCCESS (完成)"]
+        TS_Running -->|重试耗尽| TS_Failed["FAILED (失败)"]
+        TS_Running -->|机审违规熔断| TS_Canceled["CANCELED (已取消)"]
+    end
+
+    subgraph Resuscitation ["重新提审复苏机制"]
+        TS_Failed -->|重置为 PENDING| TS_Pending
+        TS_Canceled -->|重置为 PENDING| TS_Pending
+        TS_Success -->|已成功切片复用无需重转| TS_Success
+    end
 ```
 
 - 在 [`VideoTaskCoordinator.resetPipelineTasksForResubmit(...)`](../../service/content-service/src/main/java/com/calles/platform/content/application/task/VideoTaskCoordinator.java) 中：

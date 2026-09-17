@@ -25,7 +25,7 @@
 ## 2. 请求上下文与追踪拦截执行时序图
 
 ```mermaid
-flowchart TD
+graph TD
     ClientRequest["客户端入站请求 (来自 API 网关)"] --> TraceFilter["TraceIdFilter (追踪染色过滤器)"]
     
     TraceFilter --> CheckTraceId{"请求头是否携带 X-Trace-Id?"}

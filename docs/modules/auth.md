@@ -36,7 +36,7 @@
 ## 2. 双 Token 与多端并发会话生命周期架构图
 
 ```mermaid
-flowchart TD
+graph TD
     Client["客户端 Web 或 App"]
     Gateway["API 网关 gateway-service"]
     Auth["认证服务 auth-service"]
@@ -318,11 +318,11 @@ CREATE TABLE IF NOT EXISTS `auth_outbox` (
 - **HTTP 控制器层**：[`AuthController.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/interfaces/http/AuthController.java)
 - **核心用例编排**：
   - 账号与凭据服务：[`AuthService.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/application/AuthService.java)
-  - 会话池管理：[`SessionService.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/application/SessionService.java)
-  - JWT 令牌引擎：[`TokenService.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/application/TokenService.java)
+  - 会话池管理：[`SessionService.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/infrastructure/security/SessionService.java)
+  - JWT 令牌引擎：[`TokenService.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/infrastructure/security/TokenService.java)
 - **发件箱与消息派发**：
-  - 事务发件箱分发器：[`AuthOutboxDispatcher.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/infrastructure/messaging/AuthOutboxDispatcher.java)
-  - 定时补偿扫描调度：[`AuthOutboxScanJob.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/interfaces/scheduling/AuthOutboxScanJob.java)
+  - 事务发件箱分发器：[`AuthOutboxDispatcher.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/infrastructure/outbox/AuthOutboxDispatcher.java)
+  - 定时补偿扫描调度：[`AuthOutboxScanJob.java`](../../service/auth-service/src/main/java/com/calles/platform/auth/infrastructure/scheduling/AuthOutboxScanJob.java)
 - **自动化测试规范**：
   - 登录注册用例：`AuthControllerTest.java`、`AuthServiceTest.java`
   - 凭据轮换与并发会话单测：`SessionServiceConcurrentTest.java`

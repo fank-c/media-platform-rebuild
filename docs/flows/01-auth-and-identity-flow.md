@@ -9,26 +9,33 @@
 本链路涉及接入层、核心认证、用户中心及缓存与消息总线：
 
 ```mermaid
-flowchart LR
-    Client(["客户端 / 前端"])
-    GW["API Gateway<br/>gateway-service:8000"]
-    Auth["认证服务<br/>auth-service:8010"]
-    User["用户服务<br/>user-service:8020"]
-    Redis[("Redis 缓存与会话池")]
-    MQ[["RabbitMQ 领域事件"]]
-    MySQL[("MySQL 业务数据库")]
+graph TD
+    subgraph ClientAndGateway ["接入层"]
+        Client["客户端"]
+        GW["API网关 (8000)"]
+    end
 
-    Client -->|1. 注册与登录请求| GW
-    GW -->|路由转发 /api/auth| Auth
-    Auth -->|本地事务落库与 Outbox| MySQL
-    Auth -.->|异步广播 auth.account.created| MQ
+    subgraph ServiceMesh ["服务与存储层"]
+        Auth["认证服务 (8010)"]
+        User["用户服务 (8020)"]
+        Redis[("Redis 会话/缓存")]
+        MQ[["RabbitMQ 总线"]]
+        MySQL[("MySQL 数据库")]
+    end
+
+    %% 注册登录链路
+    Client -->|1. 注册/登录| GW
+    GW -->|/api/auth| Auth
+    Auth -->|事务落库| MySQL
+    Auth -.->|发布 account.created| MQ
     MQ -.->|消费建档| User
-    Auth -->|双 Token 会话管理| Redis
-    
-    Client -->|2. 业务请求携带 Bearer Token| GW
-    GW -.->|SHA-256 查验 Token 缓存| Redis
-    GW -.->|缓存未命中回源 POST verify| Auth
-    GW -->|清洗伪造头并注入受信 X-User 身份头| User
+    Auth -->|会话管理| Redis
+
+    %% 业务请求链路
+    Client -->|2. 业务请求| GW
+    GW -.->|Token验签缓存| Redis
+    GW -.->|未命中回源验签| Auth
+    GW -->|透传身份头| User
 ```
 
 - **API 网关 (`gateway-service`)**：统一入口。执行静态白名单过滤、JWT 格式提取、Redis 验签缓存查验、向 `auth-service` 回源验签，并将已确认身份注入受信 Header（`X-User-Id`、`X-User-Role`）转发下游。
@@ -91,7 +98,7 @@ sequenceDiagram
         Auth-->>GW: 返回 valid=true, userId, role, userType
         GW->>Redis: 写入缓存 (TTL 与 Token 剩余时长对齐)
     end
-    Note over GW: 剥除客户端伪造的 X-User-* 特权头<br/>注入受信头：X-User-Id, X-User-Role, X-Trace-Id
+    Note over GW: 剥除伪造头并注入受信 X-User-Id 与 X-Trace-Id
     GW->>User: 转发 GET /api/users/me
     User->>User: UserContext 拦截器读取 Header 获取当前 userId
     User-->>GW: 返回个人资料数据
