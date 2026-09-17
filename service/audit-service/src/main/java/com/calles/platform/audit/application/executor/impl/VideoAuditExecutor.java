@@ -3,6 +3,7 @@ package com.calles.platform.audit.application.executor.impl;
 import com.calles.platform.audit.application.executor.AuditExecutor;
 import com.calles.platform.audit.application.executor.model.AuditBizType;
 import com.calles.platform.audit.application.executor.model.AuditContext;
+import com.calles.platform.audit.application.executor.model.AuditContextHolder;
 import com.calles.platform.audit.application.executor.model.AuditExecutionResult;
 import com.calles.platform.audit.domain.engine.model.EngineAuditResult;
 import com.calles.platform.audit.domain.engine.ImageAuditEngine;
@@ -144,10 +145,10 @@ public class VideoAuditExecutor implements AuditExecutor {
         // 步骤 2：提交隔离线程池并发计算，挂载线程局部上下文与高可用异常降级
         return CompletableFuture.supplyAsync(() -> {
             try {
-                com.calles.platform.audit.application.executor.model.AuditContextHolder.set(context);
+                AuditContextHolder.set(context);
                 return supplier.get();
             } finally {
-                com.calles.platform.audit.application.executor.model.AuditContextHolder.clear();
+                AuditContextHolder.clear();
             }
         }, auditEngineExecutor)
                 .exceptionally(ex -> {

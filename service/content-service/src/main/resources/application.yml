@@ -4,6 +4,9 @@ server:
   port: ${CONTENT_SERVER_PORT:8300}
 
 spring:
+  threads:
+    virtual:
+      enabled: true
   application:
     # 微服务名称，用于 Nacos 服务注册、OpenFeign 远程调用寻址以及分布式链路追踪识别
     name: content-service

@@ -7,13 +7,13 @@ import com.calles.platform.auth.infrastructure.outbox.AuthOutboxDispatcher;
 import com.calles.platform.auth.infrastructure.outbox.NoopAuthOutboxDispatchNotifier;
 import jakarta.annotation.PostConstruct;
 import java.time.Clock;
-import java.util.concurrent.ThreadPoolExecutor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.core.task.TaskExecutor;
 
 /**
  * 认证基础设施 Bean 配置。
@@ -63,30 +63,22 @@ public class AuthConfiguration {
     }
 
     /**
-     * 仅在总发送和快速投递都开启时创建有限线程池。
+     * 创建基于 Java 21 虚拟线程的提交后 Outbox 快速发送执行器。
      *
-     * <p>明确使用 AbortPolicy，满队列时拒绝提示并交给扫描恢复，绝不在注册线程 CallerRuns。</p>
-     *
-     * @return 可在正常停机时有限等待的快速执行器
+     * @return 快速异步执行器
      */
     @Bean(name = "authOutboxFastDispatchExecutor")
     @ConditionalOnProperty(prefix = "auth.outbox", name = {"enabled", "fast-dispatch-enabled"}, havingValue = "true")
-    public ThreadPoolTaskExecutor authOutboxFastDispatchExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(outboxProperties.getFastDispatchThreads());
-        executor.setMaxPoolSize(outboxProperties.getFastDispatchThreads());
-        executor.setQueueCapacity(outboxProperties.getFastDispatchQueueCapacity());
-        executor.setThreadNamePrefix("auth-outbox-fast-");
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
-        executor.setWaitForTasksToCompleteOnShutdown(true);
-        executor.setAwaitTerminationSeconds((int) outboxProperties.getShutdownAwait().toSeconds());
+    public TaskExecutor authOutboxFastDispatchExecutor() {
+        SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor("auth-outbox-fast-vt-");
+        executor.setVirtualThreads(true);
         return executor;
     }
 
     /**
      * 创建真实的提交后快速通知器；任务只携带 eventId。
      *
-     * @param executor 有界快速执行器
+     * @param executor 快速执行器
      * @param dispatcher 统一按 ID 领取及发送入口
      * @param metrics 指标出口
      * @return 真实快速通知实现
@@ -94,7 +86,7 @@ public class AuthConfiguration {
     @Bean
     @ConditionalOnProperty(prefix = "auth.outbox", name = {"enabled", "fast-dispatch-enabled"}, havingValue = "true")
     public AuthOutboxDispatchNotifier authOutboxDispatchNotifier(
-            @Qualifier("authOutboxFastDispatchExecutor") ThreadPoolTaskExecutor executor,
+            @Qualifier("authOutboxFastDispatchExecutor") TaskExecutor executor,
             AuthOutboxDispatcher dispatcher, AuthOperationalMetrics metrics) {
         return new AfterCommitAuthOutboxDispatchNotifier(executor, dispatcher, metrics);
     }

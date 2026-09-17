@@ -17,8 +17,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -37,8 +37,8 @@ public class DirectUploadConfirmationService {
   /** 存储适配器工厂。 */
   private final StorageFactory storageFactory;
 
-  /** 专用有界确认线程池。 */
-  private final ThreadPoolExecutor executor;
+  /** 专用异步确认执行器。 */
+  private final Executor executor;
 
   /** 资源参数。 */
   private final FileStorageProperties properties;
@@ -55,7 +55,7 @@ public class DirectUploadConfirmationService {
   /**
    * @param repository 仓储
    * @param storageFactory 工厂
-   * @param fileConfirmExecutor 有界执行器
+   * @param fileConfirmExecutor 确认任务执行器
    * @param properties 文件资源参数
    * @param clock UTC 时钟
    * @param metrics 脱敏运行指标
@@ -63,7 +63,7 @@ public class DirectUploadConfirmationService {
   public DirectUploadConfirmationService(
       FileAssetRepository repository,
       StorageFactory storageFactory,
-      ThreadPoolExecutor fileConfirmExecutor,
+      Executor fileConfirmExecutor,
       FileStorageProperties properties,
       Clock clock,
       FileOperationalMetrics metrics) {

@@ -1,6 +1,9 @@
 server:
   port: ${RECOMMEND_SERVER_PORT:8600}
 spring:
+  threads:
+    virtual:
+      enabled: true
   application:
     name: recommend-service
   config:

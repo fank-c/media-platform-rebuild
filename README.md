@@ -27,7 +27,7 @@ Calles 视频平台的渐进式微服务重构工程。相邻 `../calles` 是只
 | `docker-compose.yml` | 本地基础设施，不包含业务应用容器 |
 | `docs` | 指南、设计、契约与运维说明 |
 
-目标 Java 17，沿用 Spring Boot 3.3、Spring Cloud 2023、MyBatis-Plus；
+目标 Java 21，沿用 Spring Boot 3.3、Spring Cloud 2023、MyBatis-Plus；
 基础设施为 Nacos、MySQL、Redis、RabbitMQ、MinIO。精确版本以 POM 和 Compose 为准。
 
 ## 从哪里开始

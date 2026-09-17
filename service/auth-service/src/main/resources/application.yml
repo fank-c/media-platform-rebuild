@@ -2,6 +2,9 @@ server:
   port: ${AUTH_SERVER_PORT:8100}
 
 spring:
+  threads:
+    virtual:
+      enabled: true
   application:
     name: auth-service
   config:

@@ -1,6 +1,9 @@
 server:
   port: ${AUDIT_SERVER_PORT:8400}
 spring:
+  threads:
+    virtual:
+      enabled: true
   application:
     name: audit-service
   config:

@@ -1,6 +1,9 @@
 server:
   port: ${INTERACTION_SERVER_PORT:8500}
 spring:
+  threads:
+    virtual:
+      enabled: true
   application:
     name: interaction-service
   config:

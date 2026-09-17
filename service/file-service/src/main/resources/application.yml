@@ -2,6 +2,9 @@ server:
   # 文件服务建议单独监听 8700；生产入口仍应仅由网关暴露。
   port: ${FILE_SERVER_PORT:8700}
 spring:
+  threads:
+    virtual:
+      enabled: true
   application:
     name: file-service
   config:

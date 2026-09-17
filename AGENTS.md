@@ -247,7 +247,7 @@
 
 ## 工程规范
 
-- Java 目标版本为 17；使用现有 Spring Boot、Spring Cloud 和 MyBatis-Plus 版本，不随意升级
+- Java 目标版本为 21；使用现有 Spring Boot、Spring Cloud 和 MyBatis-Plus 版本，不随意升级
   大版本或引入替代框架。
 - 保持分层清晰：Controller 处理协议，Application/Service 处理用例，Repository/Mapper
   处理持久化。禁止将跨服务调用和复杂业务堆进 Controller。

@@ -179,7 +179,7 @@ stateDiagram-v2
 
 - **引导入口**：[`AuditApplication.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/AuditApplication.java)（开启 OpenFeign 与 定时调度 `@EnableScheduling`）；
 - **基础设施与线程池配置**：
-  - 线程池配置：[`AuditThreadPoolConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditThreadPoolConfiguration.java)（定义 `auditEngineExecutor` 专有线程池，core=8, max=32, queue=500, CallerRunsPolicy）；
+  - 线程池配置：[`AuditThreadPoolConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditThreadPoolConfiguration.java)（定义 `auditEngineExecutor` 专有执行器，基于 Java 21 虚拟线程 SimpleAsyncTaskExecutor）；
   - 阿里云 Green 客户端配置：[`AliyunGreenProperties.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/aliyun/AliyunGreenProperties.java)、[`AliyunGreenClientConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/aliyun/AliyunGreenClientConfiguration.java)；
   - 消息队列拓扑：[`AuditMessagingConfiguration.java`](../../service/audit-service/src/main/java/com/calles/platform/audit/config/AuditMessagingConfiguration.java)
 - **跨服务通信与上下文**：
