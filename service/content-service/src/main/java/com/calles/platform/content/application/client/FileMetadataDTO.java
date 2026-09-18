@@ -34,6 +34,7 @@ public record FileMetadataDTO(
      * @return true 表示文件已成功上传至对象存储且通过完整性校验，可安全用于视频草稿与发布
      */
     public boolean isReady() {
-        return "CONFIRMED".equalsIgnoreCase(uploadStatus) && "ACTIVE".equalsIgnoreCase(status);
+        return ("CONFIRMED".equalsIgnoreCase(uploadStatus) || "COMPLETED".equalsIgnoreCase(uploadStatus))
+                && "ACTIVE".equalsIgnoreCase(status);
     }
 }

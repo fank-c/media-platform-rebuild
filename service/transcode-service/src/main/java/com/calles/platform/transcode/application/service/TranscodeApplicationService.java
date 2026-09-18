@@ -76,7 +76,7 @@ public class TranscodeApplicationService {
             QualityPreset preset
     ) {
         long pipelineStartTime = System.currentTimeMillis();
-        String taskType = "TRANSCODE_" + preset.name();
+        String taskType = preset.toTaskType();
 
         // 步骤 1：幂等校验与工单初始化
         Optional<TranscodeTask> existingOpt = taskRepository.findBySpec(videoId, preset, MediaFormat.MP4);
@@ -85,7 +85,7 @@ public class TranscodeApplicationService {
             task = existingOpt.get();
             if (task.getStatus() == TranscodeTaskStatus.COMPLETED) {
                 log.info("转码任务已处于完成态，命中幂等跳过: videoId={}, preset={}, outputFileId={}",
-                        videoId, preset.name(), task.getOutputFileId());
+                        videoId, preset.getCode(), task.getOutputFileId());
                 return task;
             }
             log.info("转码任务已存在且未完成，重置状态重新执行: taskId={}, status={}", task.getId(), task.getStatus());
@@ -94,7 +94,7 @@ public class TranscodeApplicationService {
         } else {
             task = TranscodeTask.create(videoId, authorId, sourceFileId, preset, MediaFormat.MP4, MediaCodec.H264);
             taskRepository.insert(task);
-            log.info("创建全新转码任务工单: taskId={}, videoId={}, preset={}", task.getId(), videoId, preset.name());
+            log.info("创建全新转码任务工单: taskId={}, videoId={}, preset={}", task.getId(), videoId, preset.getCode());
         }
 
         File workDir = new File(properties.getWorkDir(), task.getId());
@@ -151,13 +151,13 @@ public class TranscodeApplicationService {
             reportTaskProgress(videoId, taskType, "SUCCESS", 100, null);
 
             log.info("转码全流水线闭环成功: taskId={}, videoId={}, preset={}, totalCost={}ms",
-                    task.getId(), videoId, preset.name(), totalCost);
+                    task.getId(), videoId, preset.getCode(), totalCost);
             return task;
 
         } catch (Exception e) {
             long totalCost = System.currentTimeMillis() - pipelineStartTime;
             log.error("转码流水线处理异常: taskId={}, videoId={}, preset={}, error={}",
-                    task.getId(), videoId, preset.name(), e.getMessage(), e);
+                    task.getId(), videoId, preset.getCode(), e.getMessage(), e);
 
             task.fail(e.getMessage(), totalCost);
             taskRepository.updateById(task);
@@ -229,7 +229,7 @@ public class TranscodeApplicationService {
     private void notifyContentService(String videoId, QualityPreset preset, String outputFileId, TranscodeResult result) {
         ContentServiceDTOs.TranscodeCallbackRequest request = new ContentServiceDTOs.TranscodeCallbackRequest(
                 videoId,
-                preset.name(),
+                preset.getCode(),
                 MediaFormat.MP4.name(),
                 MediaCodec.H264.name(),
                 outputFileId,
@@ -247,7 +247,7 @@ public class TranscodeApplicationService {
             try {
                 ApiResponse<Void> response = contentServiceClient.transcodeCallback(request);
                 if (response != null && response.code() == 200) {
-                    log.info("转码回调通知 content-service 成功: videoId={}, preset={}", videoId, preset.name());
+                    log.info("转码回调通知 content-service 成功: videoId={}, preset={}", videoId, preset.getCode());
                     return;
                 }
                 log.warn("转码回调 content-service 返回非200状态: code={}, retryCount={}/{}",

@@ -21,8 +21,8 @@ spring:
       config:
         # Nacos 动态配置管理中心通信地址及安全鉴权凭据
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
-        username: ${NACOS_SERVER_USERNAME:nacos}
-        password: ${NACOS_SERVER_PASSWORD:nacos_password}
+      username: ${NACOS_SERVER_USERNAME:nacos}
+      password: ${NACOS_SERVER_PASSWORD:nacos_password}
   datasource:
     # 数据库连接配置：第一阶段过渡期在同一 MySQL 实例中共存，表前缀独立隔离 (video_*, content_*)；
     # 提供 CONTENT_DB_* 环境变量覆盖入口，为后续微服务独立拆库留出平滑过渡路径。

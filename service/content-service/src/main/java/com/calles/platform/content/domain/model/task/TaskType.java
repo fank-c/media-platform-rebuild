@@ -63,6 +63,13 @@ public enum TaskType {
                 return type;
             }
         }
-        throw new IllegalArgumentException("未知任务类型: " + code);
+        // 防御性兼容：处理 TRANSCODE_P720 / TRANSCODE_P1080 / TRANSCODE_P4K 等非标别名回退
+        String upper = code.trim().toUpperCase();
+        return switch (upper) {
+            case "TRANSCODE_P720" -> TRANSCODE_720P;
+            case "TRANSCODE_P1080" -> TRANSCODE_1080P;
+            case "TRANSCODE_P4K" -> TRANSCODE_4K;
+            default -> throw new IllegalArgumentException("未知任务类型: " + code);
+        };
     }
 }

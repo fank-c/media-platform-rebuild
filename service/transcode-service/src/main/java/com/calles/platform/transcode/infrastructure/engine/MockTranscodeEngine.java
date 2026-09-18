@@ -33,7 +33,7 @@ public class MockTranscodeEngine implements TranscodeEngine {
             throw new TranscodeException("模拟转码目录不存在且创建失败: " + workDir);
         }
 
-        File outputFile = new File(workDir, "transcode_mock_" + preset.name().toLowerCase() + ".mp4");
+        File outputFile = new File(workDir, "transcode_mock_" + preset.getCode().toLowerCase() + ".mp4");
         long start = System.currentTimeMillis();
 
         // 步骤 2：生成模拟切片物理文件（若源文件存在且非空则复制，否则填充模拟二进制数据）
@@ -42,7 +42,7 @@ public class MockTranscodeEngine implements TranscodeEngine {
                 Files.copy(sourceFile.toPath(), outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             } else {
                 try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                    byte[] mockBytes = ("MOCK_TRANSCODE_DATA_" + preset.name()).getBytes();
+                    byte[] mockBytes = ("MOCK_TRANSCODE_DATA_" + preset.getCode()).getBytes();
                     fos.write(mockBytes);
                 }
             }
@@ -51,7 +51,7 @@ public class MockTranscodeEngine implements TranscodeEngine {
         }
 
         long cost = System.currentTimeMillis() - start;
-        log.info("Mock 转码模拟完成: preset={}, output={}, size={} bytes", preset.name(), outputFile.getName(), outputFile.length());
+        log.info("Mock 转码模拟完成: preset={}, output={}, size={} bytes", preset.getCode(), outputFile.getName(), outputFile.length());
 
         // 步骤 3：直接构筑符合画质预设标准的媒体元数据返回
         return TranscodeResult.builder()

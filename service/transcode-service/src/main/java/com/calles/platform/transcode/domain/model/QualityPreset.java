@@ -63,6 +63,17 @@ public enum QualityPreset {
     }
 
     /**
+     * 转换为对齐 content-service TaskType 契约的标准流水线任务类型编码。
+     *
+     * <p>例如：P720 对应 "TRANSCODE_720P"，P1080 对应 "TRANSCODE_1080P"，P4K 对应 "TRANSCODE_4K"。</p>
+     *
+     * @return 业务标准子任务类型字符串 (如 "TRANSCODE_720P")
+     */
+    public String toTaskType() {
+        return "TRANSCODE_" + code;
+    }
+
+    /**
      * 根据字符串编码模糊匹配预设规格（忽略大小写与空格）。
      *
      * @param value 输入规格字符串 (如 "720p", "P720", "1080P")

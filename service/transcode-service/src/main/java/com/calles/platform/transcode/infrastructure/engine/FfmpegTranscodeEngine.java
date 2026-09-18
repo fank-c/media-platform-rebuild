@@ -50,10 +50,10 @@ public class FfmpegTranscodeEngine implements TranscodeEngine {
             throw new TranscodeException("转码工作临时目录无法创建: " + workDir);
         }
 
-        File outputFile = new File(workDir, "transcode_" + preset.name().toLowerCase() + ".mp4");
+        File outputFile = new File(workDir, "transcode_" + preset.getCode().toLowerCase() + ".mp4");
         List<String> command = buildFfmpegCommand(sourceFile, outputFile, preset);
 
-        log.info("启动 FFmpeg 转码压制: preset={}, source={}, output={}", preset.name(), sourceFile.getName(), outputFile.getName());
+        log.info("启动 FFmpeg 转码压制: preset={}, source={}, output={}", preset.getCode(), sourceFile.getName(), outputFile.getName());
         long startTime = System.currentTimeMillis();
         List<String> processLogs = new ArrayList<>();
 
@@ -66,7 +66,7 @@ public class FfmpegTranscodeEngine implements TranscodeEngine {
 
             // 异步消费子进程日志，防止操作系统管道缓冲区填满导致进程死锁挂起
             Process finalProcess = process;
-            Thread logConsumerThread = Thread.ofVirtual().name("ffmpeg-log-" + preset.name()).start(() -> {
+            Thread logConsumerThread = Thread.ofVirtual().name("ffmpeg-log-" + preset.getCode()).start(() -> {
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(finalProcess.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
@@ -91,7 +91,7 @@ public class FfmpegTranscodeEngine implements TranscodeEngine {
 
             if (!completed) {
                 process.destroyForcibly();
-                log.error("FFmpeg 转码超时，已被强制终止: preset={}, timeout={}s", preset.name(), timeout);
+                log.error("FFmpeg 转码超时，已被强制终止: preset={}, timeout={}s", preset.getCode(), timeout);
                 throw new TranscodeException("FFmpeg 转码任务超时（超过 " + timeout + " 秒）");
             }
 
@@ -122,7 +122,7 @@ public class FfmpegTranscodeEngine implements TranscodeEngine {
             throw new TranscodeException("FFmpeg 已退出但未产生有效的产物文件");
         }
 
-        log.info("FFmpeg 转码压制完成: preset={}, cost={}ms, size={} bytes", preset.name(), costMs, outputFile.length());
+        log.info("FFmpeg 转码压制完成: preset={}, cost={}ms, size={} bytes", preset.getCode(), costMs, outputFile.length());
 
         // 步骤 4：通过 FFprobe 探测产物视频实际元数据（时长、码率、宽高、帧率）
         ProbeResult probe = probeMedia(outputFile, preset);

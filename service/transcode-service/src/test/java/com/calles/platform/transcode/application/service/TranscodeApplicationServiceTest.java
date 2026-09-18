@@ -21,6 +21,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -37,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -157,7 +159,16 @@ class TranscodeApplicationServiceTest {
         verify(fileServiceClient).getInternalDownloadUrl(sourceFileId);
         verify(transcodeEngine).transcode(any(), eq(preset), any());
         verify(fileServiceClient).uploadInternal(any(), eq(authorId), eq("MINIO"));
-        verify(contentServiceClient).transcodeCallback(any(ContentServiceDTOs.TranscodeCallbackRequest.class));
+
+        ArgumentCaptor<ContentServiceDTOs.TranscodeCallbackRequest> transcodeCallbackCaptor =
+                ArgumentCaptor.forClass(ContentServiceDTOs.TranscodeCallbackRequest.class);
+        verify(contentServiceClient).transcodeCallback(transcodeCallbackCaptor.capture());
+        assertEquals("720P", transcodeCallbackCaptor.getValue().quality());
+
+        ArgumentCaptor<ContentServiceDTOs.TaskCallbackRequest> taskCallbackCaptor =
+                ArgumentCaptor.forClass(ContentServiceDTOs.TaskCallbackRequest.class);
+        verify(contentServiceClient, atLeastOnce()).taskCallback(taskCallbackCaptor.capture());
+        assertEquals("TRANSCODE_720P", taskCallbackCaptor.getValue().taskType());
     }
 
     @Test
