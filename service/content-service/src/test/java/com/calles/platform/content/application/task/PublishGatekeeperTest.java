@@ -1,5 +1,6 @@
 package com.calles.platform.content.application.task;
 
+import com.calles.platform.content.application.outbox.ContentOutboxDispatchNotifier;
 import com.calles.platform.content.domain.model.task.TaskStatus;
 import com.calles.platform.content.domain.model.task.TaskType;
 import com.calles.platform.content.domain.model.task.VideoTask;
@@ -7,8 +8,8 @@ import com.calles.platform.content.domain.model.video.PublishStatus;
 import com.calles.platform.content.domain.model.video.VideoContent;
 import com.calles.platform.content.domain.repository.VideoContentRepository;
 import com.calles.platform.content.domain.repository.VideoTaskRepository;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxMapper;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.model.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.persistence.ContentOutboxMapper;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Optional;
@@ -47,6 +48,10 @@ class PublishGatekeeperTest {
     /** 模拟事务性 Outbox 事件持久化 Mapper。 */
     @Mock
     private ContentOutboxMapper contentOutboxMapper;
+
+    /** 模拟发件箱提交后快速通知器。 */
+    @Mock
+    private ContentOutboxDispatchNotifier contentOutboxDispatchNotifier;
 
     /** 待测试的门禁决策器。 */
     @InjectMocks

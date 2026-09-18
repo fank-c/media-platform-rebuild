@@ -1,5 +1,6 @@
 package com.calles.platform.content.application.task;
 
+import com.calles.platform.content.application.outbox.ContentOutboxDispatchNotifier;
 import com.calles.platform.content.domain.model.task.TaskStatus;
 import com.calles.platform.content.domain.model.task.TaskType;
 import com.calles.platform.content.domain.model.task.VideoTask;
@@ -7,8 +8,8 @@ import com.calles.platform.content.domain.model.video.PublishStatus;
 import com.calles.platform.content.domain.model.video.VideoContent;
 import com.calles.platform.content.domain.repository.VideoContentRepository;
 import com.calles.platform.content.domain.repository.VideoTaskRepository;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxMapper;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.model.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.persistence.ContentOutboxMapper;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -53,6 +54,9 @@ public class PublishGatekeeper {
 
     /** 事务性 Outbox 事件持久化 Mapper。 */
     private final ContentOutboxMapper contentOutboxMapper;
+
+    /** 事务提交后发件箱快速投递通知器。 */
+    private final ContentOutboxDispatchNotifier contentOutboxDispatchNotifier;
 
     /**
      * 判断当前任务集合是否满足分级就绪公开发布门禁。
@@ -148,6 +152,7 @@ public class PublishGatekeeper {
                 instantNow
         );
         contentOutboxMapper.insert(outbox, Timestamp.from(instantNow), "PENDING", Timestamp.from(instantNow));
+        contentOutboxDispatchNotifier.notifyAfterCommit(outbox.eventId());
 
         // 步骤 6：记录审计日志
         log.info("视频 [{}] 已通过分级就绪门禁，正式自动发布上线！", videoId);
@@ -195,6 +200,7 @@ public class PublishGatekeeper {
                 instantNow
         );
         contentOutboxMapper.insert(outbox, Timestamp.from(instantNow), "PENDING", Timestamp.from(instantNow));
+        contentOutboxDispatchNotifier.notifyAfterCommit(outbox.eventId());
 
         // 步骤 5：记录操作日志
         log.info("视频 [{}] 审核驳回，已自动终止流水线其余子任务", videoId);

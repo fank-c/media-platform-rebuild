@@ -1,10 +1,11 @@
 package com.calles.platform.content.application.video;
 
+import com.calles.platform.content.application.outbox.ContentOutboxDispatchNotifier;
 import com.calles.platform.content.domain.model.video.VideoContent;
 import com.calles.platform.content.domain.repository.VideoContentRepository;
 import com.calles.platform.content.exception.ContentException;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxMapper;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.model.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.persistence.ContentOutboxMapper;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.UUID;
@@ -36,6 +37,9 @@ public class VideoModerationApplicationService {
     /** 事务性发件箱 Mapper。 */
     private final ContentOutboxMapper contentOutboxMapper;
 
+    /** 事务提交后发件箱快速投递通知器。 */
+    private final ContentOutboxDispatchNotifier contentOutboxDispatchNotifier;
+
     /**
      * 管理后台违规封禁视频。
      *
@@ -64,6 +68,7 @@ public class VideoModerationApplicationService {
                 now
         );
         contentOutboxMapper.insert(outbox, Timestamp.from(now), "PENDING", Timestamp.from(now));
+        contentOutboxDispatchNotifier.notifyAfterCommit(outbox.eventId());
 
         log.warn("管理员 [{}] 封禁了视频 [{}], 原因: {}", adminId, id, reason);
     }
@@ -95,6 +100,7 @@ public class VideoModerationApplicationService {
                 now
         );
         contentOutboxMapper.insert(outbox, Timestamp.from(now), "PENDING", Timestamp.from(now));
+        contentOutboxDispatchNotifier.notifyAfterCommit(outbox.eventId());
 
         log.info("管理员 [{}] 解封了视频 [{}]", adminId, id);
     }

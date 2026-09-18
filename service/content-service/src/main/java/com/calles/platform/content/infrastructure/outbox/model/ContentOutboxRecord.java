@@ -1,5 +1,6 @@
-package com.calles.platform.content.infrastructure.outbox;
+package com.calles.platform.content.infrastructure.outbox.model;
 
+import com.calles.platform.content.infrastructure.outbox.persistence.ContentOutboxMapper;
 import java.time.Instant;
 
 /**

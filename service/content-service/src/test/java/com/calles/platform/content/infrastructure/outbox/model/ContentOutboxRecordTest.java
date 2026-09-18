@@ -1,4 +1,4 @@
-package com.calles.platform.content.infrastructure.outbox;
+package com.calles.platform.content.infrastructure.outbox.model;
 
 import java.time.Instant;
 import org.junit.jupiter.api.AfterEach;

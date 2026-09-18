@@ -1,10 +1,11 @@
 package com.calles.platform.content.application.video;
 
+import com.calles.platform.content.application.outbox.ContentOutboxDispatchNotifier;
 import com.calles.platform.content.domain.model.CommonStatus;
 import com.calles.platform.content.domain.model.video.VideoContent;
 import com.calles.platform.content.domain.repository.VideoContentRepository;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxMapper;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.model.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.persistence.ContentOutboxMapper;
 import java.sql.Timestamp;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -40,6 +41,12 @@ class VideoModerationApplicationServiceTest {
      */
     @Mock
     private ContentOutboxMapper contentOutboxMapper;
+
+    /**
+     * 模拟 Outbox 快速通知器。
+     */
+    @Mock
+    private ContentOutboxDispatchNotifier contentOutboxDispatchNotifier;
 
     /**
      * 被测治理应用服务。

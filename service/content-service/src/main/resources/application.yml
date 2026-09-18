@@ -29,6 +29,35 @@ spring:
     url: ${CONTENT_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${CONTENT_DB_USERNAME:media}
     password: ${CONTENT_DB_PASSWORD:media}
+  rabbitmq:
+    # RabbitMQ 消息代理通信连接配置，发布端开启 Publisher Confirm 与 Mandatory 校验，保障 Outbox 投递可靠性
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:media}
+    password: ${RABBITMQ_PASSWORD:media}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+
+content:
+  outbox:
+    # 是否启用发件箱调度与投递总开关
+    enabled: ${CONTENT_OUTBOX_ENABLED:true}
+    # 是否启用事务提交后毫秒级快速内存通知投递
+    fast-dispatch-enabled: ${CONTENT_OUTBOX_FAST_DISPATCH_ENABLED:true}
+    # 单次补偿扫描发现的候选记录批次上限
+    batch-size: ${CONTENT_OUTBOX_BATCH_SIZE:100}
+    # 单条消息最大允许投递重试次数上限，超限后状态机收敛至 FAILED 待人工告警处理
+    max-attempts: ${CONTENT_OUTBOX_MAX_ATTEMPTS:20}
+    # 等待 RabbitMQ Broker 确认投递 ACK 的超时时间
+    confirm-timeout: ${CONTENT_OUTBOX_CONFIRM_TIMEOUT:5s}
+    # 消息抢占分布式租约过期时间，避免单实例宕机导致消息永久被锁定
+    lease: ${CONTENT_OUTBOX_LEASE:30s}
+    # 定时补偿自愈扫描固定间隔毫秒数（纯数字字符串）
+    poll-interval: ${CONTENT_OUTBOX_POLL_INTERVAL:1000}
+    # 优雅停机等待在途分发任务完成的超时时长
+    shutdown-await: ${CONTENT_OUTBOX_SHUTDOWN_AWAIT:10s}
 
 management:
   endpoints:

@@ -4,6 +4,7 @@ import com.calles.platform.common.core.ApiResponse;
 import com.calles.platform.common.web.context.UserInfo;
 import com.calles.platform.content.application.client.FileMetadataDTO;
 import com.calles.platform.content.application.client.FileServiceClient;
+import com.calles.platform.content.application.outbox.ContentOutboxDispatchNotifier;
 import com.calles.platform.content.application.security.ContentAccessPolicy;
 import com.calles.platform.content.application.tag.ContentTagApplicationService;
 import com.calles.platform.content.domain.model.CommonStatus;
@@ -11,8 +12,8 @@ import com.calles.platform.content.domain.model.video.PublishStatus;
 import com.calles.platform.content.domain.model.video.VideoContent;
 import com.calles.platform.content.domain.repository.VideoContentRepository;
 import com.calles.platform.content.exception.ContentException;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxMapper;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.model.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.persistence.ContentOutboxMapper;
 import com.calles.platform.content.interfaces.http.dto.VideoRequests;
 import java.sql.Timestamp;
 import java.util.Optional;
@@ -71,6 +72,12 @@ class VideoPublishApplicationServiceTest {
      */
     @Mock
     private ContentOutboxMapper contentOutboxMapper;
+
+    /**
+     * 模拟 Outbox 快速通知器。
+     */
+    @Mock
+    private ContentOutboxDispatchNotifier contentOutboxDispatchNotifier;
 
     /**
      * 模拟流水线任务协调器。

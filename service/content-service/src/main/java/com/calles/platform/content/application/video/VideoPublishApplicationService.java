@@ -3,6 +3,7 @@ package com.calles.platform.content.application.video;
 import com.calles.platform.common.core.ApiResponse;
 import com.calles.platform.content.application.client.FileMetadataDTO;
 import com.calles.platform.content.application.client.FileServiceClient;
+import com.calles.platform.content.application.outbox.ContentOutboxDispatchNotifier;
 import com.calles.platform.content.application.security.ContentAccessPolicy;
 import com.calles.platform.content.application.tag.ContentTagApplicationService;
 import com.calles.platform.content.application.util.Base62VidGenerator;
@@ -11,8 +12,8 @@ import com.calles.platform.content.domain.model.video.PublishStatus;
 import com.calles.platform.content.domain.model.video.VideoContent;
 import com.calles.platform.content.domain.repository.VideoContentRepository;
 import com.calles.platform.content.exception.ContentException;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxMapper;
-import com.calles.platform.content.infrastructure.outbox.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.model.ContentOutboxRecord;
+import com.calles.platform.content.infrastructure.outbox.persistence.ContentOutboxMapper;
 import com.calles.platform.content.interfaces.http.dto.VideoRequests;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -36,7 +37,8 @@ import org.springframework.transaction.annotation.Transactional;
  *       <li>{@link ContentTagApplicationService}：同步标签文本并维护全局字典热度；</li>
  *       <li>{@link FileServiceClient}：提审前远程调用文件微服务，校验音视频源文件与封面图就绪状态；</li>
  *       <li>{@link ContentAccessPolicy}：校验创作者所有权或平台治理权限；</li>
- *       <li>{@link ContentOutboxMapper}：在同一本地事务中记录提审/下架领域事件。</li>
+ *       <li>{@link ContentOutboxMapper}：在同一本地事务中记录提审/下架领域事件；</li>
+ *       <li>{@link ContentOutboxDispatchNotifier}：事务提交后触发毫秒级快速异步投递。</li>
  *     </ul>
  *   </li>
  *   <li><b>一致性保障</b>：运用事务性发件箱 (Transactional Outbox) 模式，保障状态变更与异步事件发布的强一致。</li>
@@ -62,6 +64,9 @@ public class VideoPublishApplicationService {
 
     /** 事务性发件箱 Mapper。 */
     private final ContentOutboxMapper contentOutboxMapper;
+
+    /** 事务提交后发件箱快速投递通知器。 */
+    private final ContentOutboxDispatchNotifier contentOutboxDispatchNotifier;
 
     /** 视频异步流水线任务协调器。 */
     private final com.calles.platform.content.application.task.VideoTaskCoordinator videoTaskCoordinator;
@@ -177,11 +182,20 @@ public class VideoPublishApplicationService {
             throw new ContentException(HttpStatus.CONFLICT, "状态更新冲突，请刷新重试");
         }
 
-        // 步骤 4：在本地事务中持久化 Outbox 记录，发布 content.video.submitted 供审核微服务消费（补全标题与描述快照）
+        // 步骤 4：在本地事务中持久化 Outbox 记录，发布 content.video.submitted 供审核微服务与转码微服务消费
         Instant now = Instant.now();
+        String eventId = UUID.randomUUID().toString().replace("-", "");
+        String traceId = MDC.get("traceId");
+        if (traceId == null || traceId.isBlank()) {
+            traceId = eventId;
+        }
+
         String payloadJson;
         try {
             java.util.Map<String, Object> payloadMap = new java.util.LinkedHashMap<>();
+            payloadMap.put("eventId", eventId);
+            payloadMap.put("eventType", "content.video.submitted");
+            payloadMap.put("traceId", traceId);
             payloadMap.put("videoId", video.getId());
             payloadMap.put("vid", video.getVid());
             payloadMap.put("authorId", video.getAuthorId());
@@ -195,13 +209,17 @@ public class VideoPublishApplicationService {
             throw new ContentException(HttpStatus.INTERNAL_SERVER_ERROR, "提审事件构建失败");
         }
 
-        ContentOutboxRecord outboxRecord = ContentOutboxRecord.of(
+        ContentOutboxRecord outboxRecord = new ContentOutboxRecord(
+                eventId,
                 video.getId(),
                 "content.video.submitted",
+                1,
                 payloadJson,
+                traceId,
                 now
         );
         contentOutboxMapper.insert(outboxRecord, Timestamp.from(now), "PENDING", Timestamp.from(now));
+        contentOutboxDispatchNotifier.notifyAfterCommit(outboxRecord.eventId());
 
         // 步骤 5：流水线子任务管理：初次提审生成初始任务网格，被驳回重提时复苏重置子任务
         if (previousStatus == PublishStatus.REJECTED) {
@@ -249,6 +267,7 @@ public class VideoPublishApplicationService {
                 now
         );
         contentOutboxMapper.insert(outboxRecord, Timestamp.from(now), "PENDING", Timestamp.from(now));
+        contentOutboxDispatchNotifier.notifyAfterCommit(outboxRecord.eventId());
 
         log.info("创作者 [{}] 主动下架了视频 [{}]", authorId, id);
     }
