@@ -25,15 +25,17 @@ spring:
   servlet:
     multipart:
       # Servlet 层先限流，仍由应用层按字节核验，防止绕开声明大小。
-      max-file-size: ${FILE_MAX_MULTIPART_SIZE:20MB}
-      max-request-size: ${FILE_MAX_REQUEST_SIZE:21MB}
+      max-file-size: ${FILE_MAX_MULTIPART_SIZE:200MB}
+      max-request-size: ${FILE_MAX_REQUEST_SIZE:210MB}
+      # 超过 2MB 的切片直接写入磁盘临时文件，防止大文件吃满 JVM 堆内存导致 OOM
+      file-size-threshold: ${FILE_MULTIPART_THRESHOLD:2MB}
 file:
   storage:
     type: ${FILE_STORAGE_TYPE:MINIO}
     # HTTP 客户端超时限制不可达或慢对象占用确认线程；SDK 取消语义仍需隔离联调。
     connect-timeout: ${FILE_STORAGE_CONNECT_TIMEOUT:3s}
     read-timeout: ${FILE_STORAGE_READ_TIMEOUT:15s}
-    call-timeout: ${FILE_STORAGE_CALL_TIMEOUT:90s}
+    call-timeout: ${FILE_STORAGE_CALL_TIMEOUT:180s}
     minio:
       endpoint: ${FILE_MINIO_ENDPOINT:http://localhost:9000}
       presign-endpoint: ${FILE_MINIO_PRESIGN_ENDPOINT:http://localhost:9000}
@@ -43,9 +45,9 @@ file:
       permanent-prefix: ${FILE_MINIO_PERMANENT_PREFIX:permanent}
       access-key: ${FILE_MINIO_ACCESS_KEY:}
       secret-key: ${FILE_MINIO_SECRET_KEY:}
-  max-size: ${FILE_MAX_SIZE:20971520}
-  put-ttl: ${FILE_PUT_TTL:5m}
-  upload-ttl: ${FILE_UPLOAD_TTL:15m}
+  max-size: ${FILE_MAX_SIZE:536870912}
+  put-ttl: ${FILE_PUT_TTL:15m}
+  upload-ttl: ${FILE_UPLOAD_TTL:30m}
   get-ttl: ${FILE_GET_TTL:2m}
   stream-buffer-size: ${FILE_STREAM_BUFFER_SIZE:65536}
   security:
@@ -54,8 +56,8 @@ file:
     # 资源直链签名默认有效时长
     default-ttl: ${FILE_SECURITY_DEFAULT_TTL:30m}
   proxy:
-    # 允许后端流式代理的最大字节数，默认 10MB (10485760字节)，超出拒绝代理以保护微服务带宽
-    max-size: ${FILE_PROXY_MAX_SIZE:10485760}
+    # 允许后端流式代理的最大字节数，默认 20MB (20971520字节)，超出拒绝代理以保护微服务带宽
+    max-size: ${FILE_PROXY_MAX_SIZE:20971520}
     # 浏览器本地缓存有效时间
     cache-max-age: ${FILE_PROXY_CACHE_MAX_AGE:1h}
   direct-upload-v2:
@@ -64,7 +66,7 @@ file:
   confirm:
     threads: ${FILE_CONFIRM_THREADS:2}
     queue-capacity: ${FILE_CONFIRM_QUEUE_CAPACITY:16}
-    task-timeout: ${FILE_CONFIRM_TASK_TIMEOUT:120s}
+    task-timeout: ${FILE_CONFIRM_TASK_TIMEOUT:180s}
   cleanup:
     enabled: ${FILE_CLEANUP_ENABLED:false}
     # 清理扫描延迟毫秒数；@Scheduled 注解要求纯数字字符串，默认 60000ms (60s)

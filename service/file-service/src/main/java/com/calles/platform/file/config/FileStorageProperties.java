@@ -14,14 +14,14 @@ public class FileStorageProperties {
   /** 新文件默认存储类型，启动时必须有相应适配器。 */
   private Storage storage = new Storage();
 
-  /** 应用层允许的最大实际文件字节数，默认 20 MiB。 */
-  private long maxSize = 20L * 1024 * 1024;
+  /** 应用层允许的最大实际文件字节数，默认 512 MiB（适合短视频原片与内存保护标准）。 */
+  private long maxSize = 512L * 1024 * 1024;
 
-  /** PUT 预签名有效期，必须短于上传确认总期限。 */
-  private Duration putTtl = Duration.ofMinutes(5);
+  /** PUT 预签名有效期，必须短于上传确认总期限，默认 15 分钟。 */
+  private Duration putTtl = Duration.ofMinutes(15);
 
-  /** PENDING 文件可确认的总期限。 */
-  private Duration uploadTtl = Duration.ofMinutes(15);
+  /** PENDING 文件可确认的总期限，默认 30 分钟。 */
+  private Duration uploadTtl = Duration.ofMinutes(30);
 
   /** 下载预签名有效期，作为短期持有者凭证。 */
   private Duration getTtl = Duration.ofMinutes(2);
@@ -532,8 +532,8 @@ public class FileStorageProperties {
     /** 拒绝前可排队的任务数。 */
     private int queueCapacity = 16;
 
-    /** 单个确认任务的总预算；底层 I/O 超时仍需由 SDK 联调确认。 */
-    private Duration taskTimeout = Duration.ofSeconds(120);
+    /** 单个确认任务的总预算；底层 I/O 超时仍需由 SDK 联调确认。默认 180 秒适应对象拷贝。 */
+    private Duration taskTimeout = Duration.ofSeconds(180);
 
     /**
      * @return 工作线程数
@@ -736,8 +736,8 @@ public class FileStorageProperties {
 
   /** 静态资源受控代理流中转参数分组，对应 file.proxy.* 配置键。 */
   public static class Proxy {
-    /** 允许流式代理的最大字节数，默认 10 MiB (10485760 字节)。 */
-    private long maxSize = 10L * 1024 * 1024;
+    /** 允许流式代理的最大字节数，默认 20 MiB (20971520 字节)，小额熔断保护。 */
+    private long maxSize = 20L * 1024 * 1024;
 
     /** 浏览器本地缓存有效时间，默认 1 小时。 */
     private Duration cacheMaxAge = Duration.ofHours(1);
