@@ -19,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -28,6 +29,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -46,11 +48,11 @@ class AliyunGreenVideoAuditEngineTest {
     private ObjectMapper objectMapper;
     private AliyunGreenVideoAuditEngine engine;
 
+    /** 使用生产默认 Service 和模拟客户端初始化引擎，避免测试覆盖掩盖默认配置错误。 */
     @BeforeEach
     void setUp() {
         properties = new AliyunGreenProperties();
         properties.setEnabled(true);
-        properties.setVideoService("video_detection");
         properties.setPollIntervalMillis(10);
         properties.setPollTimeoutSeconds(1);
         properties.setShortProbeTimeoutSeconds(1);
@@ -68,8 +70,9 @@ class AliyunGreenVideoAuditEngineTest {
         assertThat(result.hitWords()).contains("MISSING_VIDEO_FILE");
     }
 
+    /** 验证默认 Service 被正确传入阿里云请求，且无回调时可通过模拟轮询取得合规结果。 */
     @Test
-    @DisplayName("轨道A：无回调地址时主动轮询成功返回 NORMAL")
+    @DisplayName("轨道A：使用正确默认 Service 提交并主动轮询成功返回 NORMAL")
     void shouldReturnNormalOnPollingSuccess() throws Exception {
         when(fileServiceClient.getDownloadUrl(eq("video_123"), eq("user_1"), eq("USER")))
                 .thenReturn(ApiResponse.ok(new FileDownloadUrlDTO("http://minio.test/video.mp4", Instant.now().plusSeconds(300))));
@@ -102,6 +105,11 @@ class AliyunGreenVideoAuditEngineTest {
 
         assertThat(result.level()).isEqualTo(ReviewLevel.NORMAL);
         assertThat(result.detailLog()).contains("合规正常");
+
+        // 校验真正提交的请求，而非仅检查属性值，防止 Service 拼写错误再次漏检。
+        ArgumentCaptor<VideoModerationRequest> requestCaptor = ArgumentCaptor.forClass(VideoModerationRequest.class);
+        verify(client).videoModeration(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().getService()).isEqualTo("videoDetection");
     }
 
     @Test

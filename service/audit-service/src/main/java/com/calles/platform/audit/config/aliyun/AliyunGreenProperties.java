@@ -61,9 +61,9 @@ public class AliyunGreenProperties {
     private String imageService = "baselineCheck";
 
     /**
-     * 视频流资产审查服务代码 (ServiceCode)，默认 video_detection 视频合规检测。
+     * 视频流资产审查服务代码 (ServiceCode)，默认 videoDetection 视频合规检测。
      */
-    private String videoService = "video_detection";
+    private String videoService = "videoDetection";
 
     /**
      * 本地模式下视频主动轮询最大超时时间（秒），默认 15 秒。
