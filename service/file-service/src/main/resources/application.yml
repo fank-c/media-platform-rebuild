@@ -31,16 +31,28 @@ spring:
       file-size-threshold: ${FILE_MULTIPART_THRESHOLD:2MB}
 file:
   storage:
-    type: ${FILE_STORAGE_TYPE:MINIO}
+    type: ${FILE_STORAGE_TYPE:ALIYUN_OSS}
     # HTTP 客户端超时限制不可达或慢对象占用确认线程；SDK 取消语义仍需隔离联调。
     connect-timeout: ${FILE_STORAGE_CONNECT_TIMEOUT:3s}
     read-timeout: ${FILE_STORAGE_READ_TIMEOUT:15s}
     call-timeout: ${FILE_STORAGE_CALL_TIMEOUT:180s}
+    oss:
+      endpoint: ${FILE_ALIYUN_OSS_ENDPOINT:${FILE_OSS_ENDPOINT:https://oss-cn-beijing.aliyuncs.com}}
+      presign-endpoint: ${FILE_ALIYUN_OSS_PRESIGN_ENDPOINT:${FILE_OSS_PRESIGN_ENDPOINT:${file.storage.oss.endpoint}}}
+      region: ${FILE_ALIYUN_OSS_REGION:${FILE_OSS_REGION:cn-beijing}}
+      bucket: ${FILE_ALIYUN_OSS_BUCKET:${FILE_OSS_BUCKET:cell-cloud}}
+      # 存储桶内多项目/数据路径隔离前缀：item/{item-name}/...
+      item-name: ${FILE_ALIYUN_OSS_ITEM_NAME:${FILE_OSS_ITEM_NAME:media-platform}}
+      root-prefix: ${FILE_ALIYUN_OSS_ROOT_PREFIX:${FILE_OSS_ROOT_PREFIX:item/${file.storage.oss.item-name}}}
+      # V2 PUT 只能写入暂存前缀；完成后由服务端 copy 到 permanent，两个前缀不可嵌套。
+      staging-prefix: ${FILE_ALIYUN_OSS_STAGING_PREFIX:${FILE_OSS_STAGING_PREFIX:staging}}
+      permanent-prefix: ${FILE_ALIYUN_OSS_PERMANENT_PREFIX:${FILE_OSS_PERMANENT_PREFIX:permanent}}
+      access-key-id: ${FILE_ALIYUN_OSS_ACCESS_KEY_ID:${FILE_OSS_ACCESS_KEY_ID:${FILE_OSS_ACCESS_KEY:${ALIYUN_ACCESS_KEY_ID:}}}}
+      access-key-secret: ${FILE_ALIYUN_OSS_ACCESS_KEY_SECRET:${FILE_OSS_ACCESS_KEY_SECRET:${FILE_OSS_SECRET_KEY:${ALIYUN_ACCESS_KEY_SECRET:}}}}
     minio:
       endpoint: ${FILE_MINIO_ENDPOINT:http://localhost:9000}
       presign-endpoint: ${FILE_MINIO_PRESIGN_ENDPOINT:http://localhost:9000}
       bucket: ${FILE_MINIO_BUCKET:media-files-dev}
-      # V2 PUT 只能写入暂存前缀；完成后由服务端 copy 到 permanent，两个前缀不可嵌套。
       staging-prefix: ${FILE_MINIO_STAGING_PREFIX:staging}
       permanent-prefix: ${FILE_MINIO_PERMANENT_PREFIX:permanent}
       access-key: ${FILE_MINIO_ACCESS_KEY:}
@@ -80,7 +92,7 @@ management:
       probes:
         enabled: true
       group:
-        # 元数据必须依赖 MySQL；MinIO 短暂故障由文件操作返回明确失败，不触发存活重启。
+        # 元数据必须依赖 MySQL；OSS 短暂故障由文件操作返回明确失败，不触发存活重启。
         readiness:
           include: readinessState,db
   endpoints:

@@ -52,7 +52,7 @@ class DirectUploadConfirmationV1Test {
               rejected.countDown();
               return 1;
             });
-    when(storageFactory.require(StorageType.MINIO)).thenReturn(storage);
+    when(storageFactory.require(StorageType.ALIYUN_OSS)).thenReturn(storage);
     when(storage.head("assets/2026/09/09/f1"))
         .thenReturn(new ObjectStorageClient.ObjectHead(5L, "etag-1", CLOCK.instant(), "text/plain"));
 
@@ -93,7 +93,7 @@ class DirectUploadConfirmationV1Test {
               rejected.countDown();
               return 1;
             });
-    when(storageFactory.require(StorageType.MINIO)).thenReturn(storage);
+    when(storageFactory.require(StorageType.ALIYUN_OSS)).thenReturn(storage);
     when(storage.head("assets/2026/09/09/f1"))
         .thenReturn(
             new ObjectStorageClient.ObjectHead(10L, "etag-before", CLOCK.instant(), "text/plain"),
@@ -132,7 +132,7 @@ class DirectUploadConfirmationV1Test {
     ObjectStorageClient storage = mock(ObjectStorageClient.class);
     FileAsset asset = legacyAsset(10L);
     when(repository.findVisibleByIdAndOwner("f1", "u1")).thenReturn(Optional.of(asset));
-    when(storageFactory.require(StorageType.MINIO)).thenReturn(storage);
+    when(storageFactory.require(StorageType.ALIYUN_OSS)).thenReturn(storage);
     when(storage.head("assets/2026/09/09/f1"))
         .thenReturn(new ObjectStorageClient.ObjectHead(10L, "etag-1", CLOCK.instant(), "text/plain"));
     when(storage.open("assets/2026/09/09/f1")).thenReturn(new FailingInputStream());
@@ -170,7 +170,7 @@ class DirectUploadConfirmationV1Test {
             declaredSize,
             null,
             "assets/2026/09/09/f1",
-            StorageType.MINIO,
+            StorageType.ALIYUN_OSS,
             null,
             AssetStatus.ACTIVE,
             UploadStatus.PENDING,
@@ -193,11 +193,12 @@ class DirectUploadConfirmationV1Test {
   /** @return V1 测试所需的非敏感对象存储配置 */
   private FileStorageProperties configured() {
     FileStorageProperties properties = new FileStorageProperties();
-    properties.getMinio().setEndpoint("http://minio.internal:9000");
-    properties.getMinio().setPresignEndpoint("http://minio.local:9000");
-    properties.getMinio().setBucket("file-test");
-    properties.getMinio().setAccessKey("test-access");
-    properties.getMinio().setSecretKey("test-secret");
+    properties.getOss().setEndpoint("https://oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setPresignEndpoint("https://oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setRegion("cn-beijing");
+    properties.getOss().setBucket("file-test");
+    properties.getOss().setAccessKey("test-access");
+    properties.getOss().setSecretKey("test-secret");
     return properties;
   }
 

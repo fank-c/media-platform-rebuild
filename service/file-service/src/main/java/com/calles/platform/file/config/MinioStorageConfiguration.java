@@ -2,6 +2,7 @@ package com.calles.platform.file.config;
 
 import io.minio.MinioClient;
 import okhttp3.OkHttpClient;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -11,6 +12,7 @@ import org.springframework.context.annotation.Configuration;
  * <p>读写端点和预签名端点可不同，避免在签名后通过字符串替换 host 破坏签名。
  */
 @Configuration
+@ConditionalOnProperty(prefix = "file.storage.minio", name = "endpoint")
 public class MinioStorageConfiguration {
   /** @return 使用内部管理端点的 MinIO 客户端 */
   @Bean

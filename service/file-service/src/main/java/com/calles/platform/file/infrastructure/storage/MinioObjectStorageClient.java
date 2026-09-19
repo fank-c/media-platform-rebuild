@@ -21,10 +21,12 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 
 /** MinIO 对象存储适配器，集中翻译 SDK 异常并隔离 bucket、端点与签名细节。 */
 @Component
+@ConditionalOnBean(name = "fileStorageMinioClient")
 public class MinioObjectStorageClient implements ObjectStorageClient {
   /** 管理对象读写的 SDK 客户端。 */
   private final MinioClient storageClient;

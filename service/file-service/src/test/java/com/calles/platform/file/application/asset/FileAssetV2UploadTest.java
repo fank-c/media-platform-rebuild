@@ -91,11 +91,12 @@ class FileAssetV2UploadTest {
    */
   private FileStorageProperties configured() {
     FileStorageProperties properties = new FileStorageProperties();
-    properties.getMinio().setEndpoint("http://minio.internal:9000");
-    properties.getMinio().setPresignEndpoint("http://minio.local:9000");
-    properties.getMinio().setBucket("file-test");
-    properties.getMinio().setAccessKey("test-access");
-    properties.getMinio().setSecretKey("test-secret");
+    properties.getOss().setEndpoint("https://oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setPresignEndpoint("https://oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setRegion("cn-beijing");
+    properties.getOss().setBucket("file-test");
+    properties.getOss().setAccessKey("test-access");
+    properties.getOss().setSecretKey("test-secret");
     return properties;
   }
 }

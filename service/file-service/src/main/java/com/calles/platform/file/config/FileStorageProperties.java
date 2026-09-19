@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * 文件服务运行参数。
  *
- * <p>配置只描述当前 MinIO 单实现和本地资源预算；它不授予外网直传、跨服务读取或公开文件权限。
+ * <p>配置只描述阿里云 OSS 单实现和本地资源预算；它不授予外网直传、跨服务读取或公开文件权限。
  */
 @ConfigurationProperties(prefix = "file")
 public class FileStorageProperties {
@@ -73,7 +73,7 @@ public class FileStorageProperties {
   }
 
   /**
-   * @return 存储类型与 MinIO 参数的受控分组
+   * @return 存储类型与 OSS 参数的受控分组
    */
   public Storage getStorage() {
     return storage;
@@ -91,6 +91,13 @@ public class FileStorageProperties {
    */
   public StorageType getStorageType() {
     return storage == null ? null : storage.getType();
+  }
+
+  /**
+   * @return 阿里云 OSS 参数
+   */
+  public Oss getOss() {
+    return storage == null ? null : storage.getOss();
   }
 
   /**
@@ -214,11 +221,17 @@ public class FileStorageProperties {
 
   /** 启动期校验关联范围和密钥，拒绝不受控的默认回退。 */
   public void validate() {
-    if (storage == null
-        || storage.getType() == null
-        || storage.getMinio() == null
-        || !storage.getMinio().isConfigured()) {
-      throw new IllegalStateException("文件存储类型、MinIO endpoint、bucket 和访问密钥必须配置");
+    if (storage == null || storage.getType() == null) {
+      throw new IllegalStateException("文件存储类型 storage.type 必须配置");
+    }
+    if (storage.getType() == StorageType.ALIYUN_OSS) {
+      if (storage.getOss() == null || !storage.getOss().isConfigured()) {
+        throw new IllegalStateException("使用 ALIYUN_OSS 策略时，endpoint、presign-endpoint、bucket、access-key 和 secret-key 必须配置完整");
+      }
+    } else if (storage.getType() == StorageType.MINIO) {
+      if (storage.getMinio() == null || !storage.getMinio().isConfigured()) {
+        throw new IllegalStateException("使用 MINIO 策略时，endpoint、presign-endpoint、bucket、access-key 和 secret-key 必须配置完整");
+      }
     }
     if (maxSize < 1
         || streamBufferSize < 1024
@@ -240,7 +253,7 @@ public class FileStorageProperties {
     storage.validate();
     confirm.validate();
     cleanup.validate();
-    directUploadV2.validate(storage.getMinio());
+    directUploadV2.validate(storage);
     if (directUploadV2.isEnabled() && !cleanup.isEnabled()) {
       throw new IllegalStateException("启用 V2 暂存直传时必须同时启用清理任务");
     }
@@ -252,10 +265,13 @@ public class FileStorageProperties {
     }
   }
 
-  /** 存储类型与当前 MinIO 单实现参数分组，对应 file.storage.* 配置键。 */
+  /** 存储类型与当前阿里云 OSS 单实现参数分组，对应 file.storage.* 配置键。 */
   public static class Storage {
     /** 默认新文件使用的存储类型。 */
-    private StorageType type = StorageType.MINIO;
+    private StorageType type = StorageType.ALIYUN_OSS;
+
+    /** 阿里云 OSS 连接、签名端点与专用 bucket 参数。 */
+    private Oss oss = new Oss();
 
     /** MinIO 连接、签名端点与专用 bucket 参数。 */
     private Minio minio = new Minio();
@@ -281,6 +297,20 @@ public class FileStorageProperties {
      */
     public void setType(StorageType type) {
       this.type = type;
+    }
+
+    /**
+     * @return 阿里云 OSS 参数
+     */
+    public Oss getOss() {
+      return oss;
+    }
+
+    /**
+     * @param oss 阿里云 OSS 参数
+     */
+    public void setOss(Oss oss) {
+      this.oss = oss;
     }
 
     /**
@@ -350,6 +380,283 @@ public class FileStorageProperties {
           || callTimeout == null
           || callTimeout.isNegative()
           || callTimeout.isZero()) throw new IllegalStateException("对象存储超时必须为正");
+    }
+  }
+
+  /** 阿里云 OSS 的运行与客户端可达端点配置。 */
+  public static class Oss {
+    /** SDK 管理、读取和删除对象时连接的端点。 */
+    private String endpoint = "";
+
+    /** 客户端在签名 URL 中访问的端点，生产环境必须为受控 HTTPS 域名。 */
+    private String presignEndpoint = "";
+
+    /** 阿里云地域，如 cn-beijing。 */
+    private String region = "";
+
+    /** 文件服务专用私有 bucket，运行请求不自动创建。 */
+    private String bucket = "";
+
+    /** 存储桶根路径前缀（如 item/media-platform），用于多项目/数据共享 Bucket 隔离。 */
+    private String rootPrefix = "";
+
+    /** 业务/项目名称标识，用于辅助构造默认根前缀。 */
+    private String itemName = "media-platform";
+
+    /** 最小权限访问账号 AccessKey，禁止使用主账号。 */
+    private String accessKey = "";
+
+    /** 最小权限账号密钥 SecretKey，禁止写入日志或示例。 */
+    private String secretKey = "";
+
+    /** V2 客户端 PUT 允许写入的暂存对象前缀。 */
+    private String stagingPrefix = "staging";
+
+    /** V2 确认后读取的永久对象前缀。 */
+    private String permanentPrefix = "permanent";
+
+    /**
+     * @return SDK 端点
+     */
+    public String getEndpoint() {
+      return endpoint;
+    }
+
+    /**
+     * @param endpoint SDK 端点
+     */
+    public void setEndpoint(String endpoint) {
+      this.endpoint = normalizeEndpoint(clean(endpoint));
+    }
+
+    /**
+     * @return 预签名端点
+     */
+    public String getPresignEndpoint() {
+      return presignEndpoint;
+    }
+
+    /**
+     * @param presignEndpoint 预签名端点
+     */
+    public void setPresignEndpoint(String presignEndpoint) {
+      this.presignEndpoint = normalizeEndpoint(clean(presignEndpoint));
+    }
+
+    /**
+     * 规范化服务端点，确保具备 https:// 或 http:// 协议头。
+     */
+    private static String normalizeEndpoint(String ep) {
+      if (ep == null || ep.isBlank()) return "";
+      String trimmed = ep.trim();
+      if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+        return "https://" + trimmed;
+      }
+      return trimmed;
+    }
+
+    /**
+     * @return 阿里云地域
+     */
+    public String getRegion() {
+      return region;
+    }
+
+    /**
+     * @param region 阿里云地域
+     */
+    public void setRegion(String region) {
+      this.region = clean(region);
+    }
+
+    /**
+     * @return 私有 bucket
+     */
+    public String getBucket() {
+      return bucket;
+    }
+
+    /**
+     * @param bucket 私有 bucket
+     */
+    public void setBucket(String bucket) {
+      this.bucket = clean(bucket);
+    }
+
+    /**
+     * @return 存储桶根路径前缀
+     */
+    public String getRootPrefix() {
+      return rootPrefix;
+    }
+
+    /**
+     * @param rootPrefix 存储桶根路径前缀，自动去除前后斜杠
+     */
+    public void setRootPrefix(String rootPrefix) {
+      this.rootPrefix = stripSlash(clean(rootPrefix));
+    }
+
+    /**
+     * @return 业务/项目名称
+     */
+    public String getItemName() {
+      return itemName;
+    }
+
+    /**
+     * @param itemName 业务/项目名称
+     */
+    public void setItemName(String itemName) {
+      this.itemName = stripSlash(clean(itemName));
+    }
+
+    /**
+     * @return 访问账号 AccessKey
+     */
+    public String getAccessKey() {
+      return accessKey;
+    }
+
+    /**
+     * @param accessKey 访问账号 AccessKey
+     */
+    public void setAccessKey(String accessKey) {
+      this.accessKey = clean(accessKey);
+    }
+
+    /**
+     * @return 访问密钥 SecretKey
+     */
+    public String getSecretKey() {
+      return secretKey;
+    }
+
+    /**
+     * @param secretKey 访问密钥 SecretKey
+     */
+    public void setSecretKey(String secretKey) {
+      this.secretKey = clean(secretKey);
+    }
+
+    /**
+     * @return 阿里云 AccessKey ID 别名（与 audit-service 对齐）
+     */
+    public String getAccessKeyId() {
+      return getAccessKey();
+    }
+
+    /**
+     * @param accessKeyId 阿里云 AccessKey ID 别名（与 audit-service 对齐）
+     */
+    public void setAccessKeyId(String accessKeyId) {
+      setAccessKey(accessKeyId);
+    }
+
+    /**
+     * @return 阿里云 AccessKey Secret 别名（与 audit-service 对齐）
+     */
+    public String getAccessKeySecret() {
+      return getSecretKey();
+    }
+
+    /**
+     * @param accessKeySecret 阿里云 AccessKey Secret 别名（与 audit-service 对齐）
+     */
+    public void setAccessKeySecret(String accessKeySecret) {
+      setSecretKey(accessKeySecret);
+    }
+
+    /**
+     * 获取完整暂存前缀，若配置了 rootPrefix 且尚未包含则自动拼接前缀。
+     *
+     * @return V2 暂存对象完整前缀
+     */
+    public String getStagingPrefix() {
+      String effective = stripSlash(stagingPrefix);
+      if (effective.isBlank()) effective = "staging";
+      if (rootPrefix.isBlank() || effective.startsWith(rootPrefix + "/") || effective.equals(rootPrefix)) {
+        return effective;
+      }
+      return rootPrefix + "/" + effective;
+    }
+
+    /**
+     * @param stagingPrefix V2 暂存对象前缀
+     */
+    public void setStagingPrefix(String stagingPrefix) {
+      this.stagingPrefix = stripSlash(clean(stagingPrefix));
+    }
+
+    /**
+     * 获取完整永久前缀，若配置了 rootPrefix 且尚未包含则自动拼接前缀。
+     *
+     * @return V2 永久对象完整前缀
+     */
+    public String getPermanentPrefix() {
+      String effective = stripSlash(permanentPrefix);
+      if (effective.isBlank()) effective = "permanent";
+      if (rootPrefix.isBlank() || effective.startsWith(rootPrefix + "/") || effective.equals(rootPrefix)) {
+        return effective;
+      }
+      return rootPrefix + "/" + effective;
+    }
+
+    /**
+     * @param permanentPrefix V2 永久对象前缀
+     */
+    public void setPermanentPrefix(String permanentPrefix) {
+      this.permanentPrefix = stripSlash(clean(permanentPrefix));
+    }
+
+    /**
+     * 获取 V1 兼容前缀（默认 assets，若带根前缀则为 {rootPrefix}/assets）。
+     *
+     * @return V1 兼容前缀
+     */
+    public String getLegacyPrefix() {
+      return rootPrefix.isBlank() ? "assets" : rootPrefix + "/assets";
+    }
+
+    /**
+     * 清洗前后斜杠，避免生成以 / 开头的多余层级。
+     */
+    private static String stripSlash(String value) {
+      if (value == null || value.isBlank()) return "";
+      String s = value.trim();
+      while (s.startsWith("/")) {
+        s = s.substring(1);
+      }
+      while (s.endsWith("/")) {
+        s = s.substring(0, s.length() - 1);
+      }
+      return s;
+    }
+
+    /**
+     * @return 所有必需字段是否已注入
+     */
+    private boolean isConfigured() {
+      return !endpoint.isBlank()
+          && !presignEndpoint.isBlank()
+          && !bucket.isBlank()
+          && !accessKey.isBlank()
+          && !secretKey.isBlank();
+    }
+
+    /** 校验 V2 前缀必须互斥且不能形成嵌套，避免 staging 写入 permanent 区域。 */
+    private void validatePrefixes() {
+      String effectiveStaging = getStagingPrefix();
+      String effectivePermanent = getPermanentPrefix();
+      if (effectiveStaging.isBlank()
+          || effectivePermanent.isBlank()
+          || effectiveStaging.startsWith("/")
+          || effectivePermanent.startsWith("/")
+          || effectiveStaging.equals(effectivePermanent)
+          || effectiveStaging.startsWith(effectivePermanent + "/")
+          || effectivePermanent.startsWith(effectiveStaging + "/")) {
+        throw new IllegalStateException("阿里云 OSS staging-prefix 和 permanent-prefix 必须为互斥的非空前缀");
+      }
     }
   }
 
@@ -477,7 +784,7 @@ public class FileStorageProperties {
     /**
      * @return 所有必需字段是否已注入
      */
-    private boolean isConfigured() {
+    public boolean isConfigured() {
       return !endpoint.isBlank()
           && !presignEndpoint.isBlank()
           && !bucket.isBlank()
@@ -486,7 +793,7 @@ public class FileStorageProperties {
     }
 
     /** 校验 V2 前缀必须互斥且不能形成嵌套，避免 staging 写入 permanent 区域。 */
-    private void validatePrefixes() {
+    public void validatePrefixes() {
       if (stagingPrefix.isBlank()
           || permanentPrefix.isBlank()
           || stagingPrefix.startsWith("/")
@@ -501,7 +808,7 @@ public class FileStorageProperties {
 
   /** V2 暂存 checksum 直传配置。 */
   public static class DirectUploadV2 {
-    /** 默认关闭，必须先完成真实 MinIO/OSS checksum POC。 */
+    /** 默认关闭，必须先完成真实存储 checksum POC。 */
     private boolean enabled;
 
     /**
@@ -518,9 +825,13 @@ public class FileStorageProperties {
       this.enabled = enabled;
     }
 
-    /** 校验 V2 对象前缀。 */
-    private void validate(Minio minio) {
-      minio.validatePrefixes();
+    /** 校验当前启用存储类型的 V2 对象前缀。 */
+    private void validate(Storage storage) {
+      if (storage.getType() == StorageType.ALIYUN_OSS && storage.getOss() != null) {
+        storage.getOss().validatePrefixes();
+      } else if (storage.getType() == StorageType.MINIO && storage.getMinio() != null) {
+        storage.getMinio().validatePrefixes();
+      }
     }
   }
 

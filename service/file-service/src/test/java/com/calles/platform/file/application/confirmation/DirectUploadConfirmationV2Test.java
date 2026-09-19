@@ -60,7 +60,7 @@ class DirectUploadConfirmationV2Test {
             eq(5L),
             eq("a".repeat(64)),
             eq("etag-1"),
-            eq(StorageType.MINIO),
+            eq(StorageType.ALIYUN_OSS),
             eq("permanent/2026/09/09/f1"),
             eq("staging/2026/09/09/f1"),
             any()))
@@ -70,7 +70,7 @@ class DirectUploadConfirmationV2Test {
               return 1;
             });
     when(repository.markStagingCleaned(any(), any(), any())).thenReturn(1);
-    when(storageFactory.require(StorageType.MINIO)).thenReturn(storage);
+    when(storageFactory.require(StorageType.ALIYUN_OSS)).thenReturn(storage);
     when(storage.head("staging/2026/09/09/f1"))
         .thenReturn(
             new ObjectStorageClient.ObjectHead(5L, "etag-1", CLOCK.instant(), "text/plain"));
@@ -113,7 +113,7 @@ class DirectUploadConfirmationV2Test {
             5L,
             null,
             "permanent/2026/09/09/f1",
-            StorageType.MINIO,
+            StorageType.ALIYUN_OSS,
             null,
             AssetStatus.ACTIVE,
             UploadStatus.PENDING,
@@ -135,11 +135,12 @@ class DirectUploadConfirmationV2Test {
    */
   private FileStorageProperties configured() {
     FileStorageProperties properties = new FileStorageProperties();
-    properties.getMinio().setEndpoint("http://minio.internal:9000");
-    properties.getMinio().setPresignEndpoint("http://minio.local:9000");
-    properties.getMinio().setBucket("file-test");
-    properties.getMinio().setAccessKey("test-access");
-    properties.getMinio().setSecretKey("test-secret");
+    properties.getOss().setEndpoint("https://oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setPresignEndpoint("https://oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setRegion("cn-beijing");
+    properties.getOss().setBucket("file-test");
+    properties.getOss().setAccessKey("test-access");
+    properties.getOss().setSecretKey("test-secret");
     return properties;
   }
 }

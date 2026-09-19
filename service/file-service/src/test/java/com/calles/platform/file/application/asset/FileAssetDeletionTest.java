@@ -44,8 +44,8 @@ class FileAssetDeletionTest {
     FileAsset asset = activeAsset(null, null);
     when(repository.findPhysicalByIdAndOwner("f1", "u1")).thenReturn(Optional.of(asset));
     when(repository.requestDeletion(eq("f1"), eq("u1"), any())).thenReturn(1);
-    when(storageFactory.require(StorageType.MINIO)).thenReturn(storage);
-    when(repository.completeDeletion(eq("f1"), eq("u1"), eq(StorageType.MINIO), eq("assets/f1"), any()))
+    when(storageFactory.require(StorageType.ALIYUN_OSS)).thenReturn(storage);
+    when(repository.completeDeletion(eq("f1"), eq("u1"), eq(StorageType.ALIYUN_OSS), eq("assets/f1"), any()))
         .thenReturn(1);
 
     newService(repository, storageFactory).delete("u1", "f1");
@@ -54,7 +54,7 @@ class FileAssetDeletionTest {
     order.verify(repository).requestDeletion(eq("f1"), eq("u1"), any());
     order.verify(storage).delete("assets/f1");
     order.verify(repository)
-        .completeDeletion(eq("f1"), eq("u1"), eq(StorageType.MINIO), eq("assets/f1"), any());
+        .completeDeletion(eq("f1"), eq("u1"), eq(StorageType.ALIYUN_OSS), eq("assets/f1"), any());
   }
 
   /** 远端结果未知时保留已建立的删除闸门，向客户端明确返回可重试的 503。 */
@@ -66,7 +66,7 @@ class FileAssetDeletionTest {
     FileAsset asset = activeAsset(null, null);
     when(repository.findPhysicalByIdAndOwner("f1", "u1")).thenReturn(Optional.of(asset));
     when(repository.requestDeletion(eq("f1"), eq("u1"), any())).thenReturn(1);
-    when(storageFactory.require(StorageType.MINIO)).thenReturn(storage);
+    when(storageFactory.require(StorageType.ALIYUN_OSS)).thenReturn(storage);
     ObjectStorageException failure =
         new ObjectStorageException(
             ObjectStorageException.Category.UNKNOWN_RESULT, "delete result unknown", null);
@@ -77,7 +77,7 @@ class FileAssetDeletionTest {
 
     assertEquals(503, exception.getStatus().value());
     verify(repository, never())
-        .completeDeletion(eq("f1"), eq("u1"), eq(StorageType.MINIO), eq("assets/f1"), any());
+        .completeDeletion(eq("f1"), eq("u1"), eq(StorageType.ALIYUN_OSS), eq("assets/f1"), any());
   }
 
   /** 远端已删但最终墓碑更新仍未确认时，记录不能通过本次请求重新变为可见。 */
@@ -92,8 +92,8 @@ class FileAssetDeletionTest {
         .thenReturn(Optional.of(asset))
         .thenReturn(Optional.of(stillDeleting));
     when(repository.requestDeletion(eq("f1"), eq("u1"), any())).thenReturn(1);
-    when(storageFactory.require(StorageType.MINIO)).thenReturn(storage);
-    when(repository.completeDeletion(eq("f1"), eq("u1"), eq(StorageType.MINIO), eq("assets/f1"), any()))
+    when(storageFactory.require(StorageType.ALIYUN_OSS)).thenReturn(storage);
+    when(repository.completeDeletion(eq("f1"), eq("u1"), eq(StorageType.ALIYUN_OSS), eq("assets/f1"), any()))
         .thenReturn(0);
 
     FileOperationException exception =
@@ -132,7 +132,7 @@ class FileAssetDeletionTest {
         5L,
         5L,
         "assets/f1",
-        StorageType.MINIO,
+        StorageType.ALIYUN_OSS,
         "0".repeat(64),
         AssetStatus.ACTIVE,
         UploadStatus.COMPLETED,

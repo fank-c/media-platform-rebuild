@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 
 /** 文件配置启动期约束的单元测试。 */
 class FileStoragePropertiesTest {
-  /** 正常隔离 MinIO 参数应通过校验。 */
+  /** 正常隔离阿里云 OSS 参数应通过校验。 */
   @Test
   void validatesCompleteProperties() {
     FileStorageProperties properties = configured();
@@ -34,9 +34,52 @@ class FileStoragePropertiesTest {
   @Test
   void rejectsNestedObjectPrefixes() {
     FileStorageProperties properties = configured();
-    properties.getMinio().setStagingPrefix("objects");
-    properties.getMinio().setPermanentPrefix("objects/permanent");
+    properties.getOss().setStagingPrefix("objects");
+    properties.getOss().setPermanentPrefix("objects/permanent");
     assertThrows(IllegalStateException.class, properties::validate);
+  }
+
+  /** 配置 rootPrefix 时应自动为 staging、permanent、legacy 拼接路径隔离前缀并去除多余斜杠。 */
+  @Test
+  void validatesRootPrefixIsolation() {
+    FileStorageProperties properties = configured();
+    properties.getOss().setRootPrefix("/item/media-platform/");
+    properties.getOss().setStagingPrefix("/staging/");
+    properties.getOss().setPermanentPrefix("/permanent/");
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "item/media-platform/staging", properties.getOss().getStagingPrefix());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "item/media-platform/permanent", properties.getOss().getPermanentPrefix());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "item/media-platform/assets", properties.getOss().getLegacyPrefix());
+    assertDoesNotThrow(properties::validate);
+  }
+
+  /** 端点未显式携带协议时应自动规范化为 https://。 */
+  @Test
+  void normalizesEndpointWithoutProtocol() {
+    FileStorageProperties properties = configured();
+    properties.getOss().setEndpoint("oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setPresignEndpoint("oss-cn-beijing.aliyuncs.com");
+
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "https://oss-cn-beijing.aliyuncs.com", properties.getOss().getEndpoint());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "https://oss-cn-beijing.aliyuncs.com", properties.getOss().getPresignEndpoint());
+  }
+
+  /** 测试 accessKeyId 与 accessKeySecret 别名与底层 accessKey/secretKey 双向读写同步。 */
+  @Test
+  void validatesAccessKeyAliases() {
+    FileStorageProperties properties = new FileStorageProperties();
+    properties.getOss().setAccessKeyId("aliyun-ak-test");
+    properties.getOss().setAccessKeySecret("aliyun-sk-test");
+
+    org.junit.jupiter.api.Assertions.assertEquals("aliyun-ak-test", properties.getOss().getAccessKey());
+    org.junit.jupiter.api.Assertions.assertEquals("aliyun-ak-test", properties.getOss().getAccessKeyId());
+    org.junit.jupiter.api.Assertions.assertEquals("aliyun-sk-test", properties.getOss().getSecretKey());
+    org.junit.jupiter.api.Assertions.assertEquals("aliyun-sk-test", properties.getOss().getAccessKeySecret());
   }
 
   /**
@@ -44,11 +87,12 @@ class FileStoragePropertiesTest {
    */
   private FileStorageProperties configured() {
     FileStorageProperties properties = new FileStorageProperties();
-    properties.getMinio().setEndpoint("http://minio.internal:9000");
-    properties.getMinio().setPresignEndpoint("http://minio.local:9000");
-    properties.getMinio().setBucket("file-test");
-    properties.getMinio().setAccessKey("test-access");
-    properties.getMinio().setSecretKey("test-secret");
+    properties.getOss().setEndpoint("https://oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setPresignEndpoint("https://oss-cn-beijing.aliyuncs.com");
+    properties.getOss().setRegion("cn-beijing");
+    properties.getOss().setBucket("file-test");
+    properties.getOss().setAccessKey("test-access");
+    properties.getOss().setSecretKey("test-secret");
     return properties;
   }
 }

@@ -38,7 +38,8 @@
         <spring-cloud-alibaba.version>2023.0.3.2</spring-cloud-alibaba.version>
         <java-jwt.version>4.4.0</java-jwt.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
-        <!-- 文件服务固定使用本地已核对过的 MinIO SDK 版本，避免不同服务漂移。 -->
+        <!-- 对象存储 SDK 统一版本配置，支持 OSS 与 MinIO 双策略模式。 -->
+        <aliyun-oss.version>3.17.4</aliyun-oss.version>
         <minio.version>8.5.17</minio.version>
     </properties>
 

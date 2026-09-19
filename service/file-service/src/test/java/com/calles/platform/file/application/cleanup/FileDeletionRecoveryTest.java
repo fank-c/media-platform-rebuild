@@ -39,9 +39,9 @@ class FileDeletionRecoveryTest {
     when(repository.findDeletionRequested(any(), any(), eq(10)))
         .thenReturn(List.of(deleting))
         .thenReturn(List.of());
-    when(storageFactory.require(StorageType.MINIO)).thenReturn(storage);
+    when(storageFactory.require(StorageType.ALIYUN_OSS)).thenReturn(storage);
     when(repository.completeDeletion(
-            eq("f1"), eq("u1"), eq(StorageType.MINIO), eq("assets/f1"), any()))
+            eq("f1"), eq("u1"), eq(StorageType.ALIYUN_OSS), eq("assets/f1"), any()))
         .thenReturn(1);
     FileCleanupService service =
         new FileCleanupService(
@@ -55,7 +55,7 @@ class FileDeletionRecoveryTest {
 
     verify(storage).delete("assets/f1");
     verify(repository)
-        .completeDeletion(eq("f1"), eq("u1"), eq(StorageType.MINIO), eq("assets/f1"), any());
+        .completeDeletion(eq("f1"), eq("u1"), eq(StorageType.ALIYUN_OSS), eq("assets/f1"), any());
   }
 
   /** @return 已建立删除闸门、尚未写逻辑墓碑的固定元数据 */
@@ -67,7 +67,7 @@ class FileDeletionRecoveryTest {
         5L,
         null,
         "assets/f1",
-        StorageType.MINIO,
+        StorageType.ALIYUN_OSS,
         null,
         AssetStatus.ACTIVE,
         UploadStatus.PENDING,

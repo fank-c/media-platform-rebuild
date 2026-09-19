@@ -3,9 +3,13 @@ package com.calles.platform.file.domain.asset;
 /**
  * 文件对象所在的存储实现类型。
  *
- * <p>首期只注册 MINIO；已有记录使用其行内值路由，不能因默认配置变化被静默迁移。
+ * <p>支持多存储策略（MINIO / ALIYUN_OSS），运行时通过 StorageFactory 动态路由。
  */
 public enum StorageType {
-  /** 使用私有 MinIO bucket 保存对象。 */
-  MINIO
+  /** 使用 MinIO 保存对象（适用于本地开发或历史兼容）。 */
+  MINIO,
+
+  /** 使用阿里云 OSS 私有 Bucket 保存对象（云上主策略）。 */
+  ALIYUN_OSS
 }
+

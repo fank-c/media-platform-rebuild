@@ -98,7 +98,7 @@ public class FileAssetApplicationService {
     StorageType type = resolveStorageType(requestedStorageType);
     String id = newId();
     Instant now = Instant.now(clock);
-    String key = permanentStorageKey(id, now);
+    String key = permanentStorageKey(type, id, now);
     ObjectStorageClient client = storageFactory.require(type);
     try (InputStream source = multipart.getInputStream();
         BoundedDigestInputStream digest =
@@ -153,10 +153,10 @@ public class FileAssetApplicationService {
     validateDeclaredSize(request.size());
     Instant now = Instant.now(clock);
     String id = newId();
-    String key = legacyStorageKey(id, now);
+    StorageType type = resolveStorageType(request.storageType());
+    String key = legacyStorageKey(type, id, now);
     String name = normalizeName(request.originName());
     String mime = normalizeMime(request.mime());
-    StorageType type = resolveStorageType(request.storageType());
     Instant uploadExpiresAt = now.plus(properties.getUploadTtl());
     FileAsset pending =
         pendingAsset(
@@ -200,11 +200,11 @@ public class FileAssetApplicationService {
     String expectedSha256 = normalizeSha256(request.sha256());
     Instant now = Instant.now(clock);
     String id = newId();
-    String stagingKey = stagingStorageKey(id, now);
-    String permanentKey = permanentStorageKey(id, now);
+    StorageType type = resolveStorageType(request.storageType());
+    String stagingKey = stagingStorageKey(type, id, now);
+    String permanentKey = permanentStorageKey(type, id, now);
     String name = normalizeName(request.originName());
     String mime = normalizeMime(request.mime());
-    StorageType type = resolveStorageType(request.storageType());
     Instant uploadExpiresAt = now.plus(properties.getUploadTtl());
     FileAsset pending =
         pendingAsset(
@@ -461,11 +461,15 @@ public class FileAssetApplicationService {
         uploadExpiresAt);
   }
 
-  /** 将客户端输入限定为唯一已注册的存储枚举。 */
+  /** 将客户端输入限定为已注册的受控存储枚举，支持兼容旧请求 "OSS"。 */
   private StorageType resolveStorageType(String requested) {
     if (requested == null || requested.isBlank()) return properties.getStorageType();
+    String normalized = requested.trim().toUpperCase(Locale.ROOT);
+    if ("OSS".equals(normalized)) {
+      return StorageType.ALIYUN_OSS;
+    }
     try {
-      return StorageType.valueOf(requested.trim().toUpperCase(Locale.ROOT));
+      return StorageType.valueOf(normalized);
     } catch (IllegalArgumentException exception) {
       throw new FileOperationException(HttpStatus.BAD_REQUEST, "不支持的文件存储类型");
     }
@@ -539,18 +543,27 @@ public class FileAssetApplicationService {
   }
 
   /** 旧协议和 multipart 的兼容对象前缀，既有记录不搬迁。 */
-  private String legacyStorageKey(String id, Instant createdAt) {
-    return "assets/" + STORAGE_KEY_DATE_FORMAT.format(createdAt) + "/" + id;
+  private String legacyStorageKey(StorageType type, String id, Instant createdAt) {
+    String prefix = (type == StorageType.ALIYUN_OSS)
+        ? properties.getOss().getLegacyPrefix()
+        : "assets";
+    return prefixKey(prefix, createdAt, id);
   }
 
   /** V2 staging key：客户端临时凭据永远只指向该前缀。 */
-  private String stagingStorageKey(String id, Instant createdAt) {
-    return prefixKey(properties.getMinio().getStagingPrefix(), createdAt, id);
+  private String stagingStorageKey(StorageType type, String id, Instant createdAt) {
+    String prefix = (type == StorageType.ALIYUN_OSS)
+        ? properties.getOss().getStagingPrefix()
+        : properties.getMinio().getStagingPrefix();
+    return prefixKey(prefix, createdAt, id);
   }
 
   /** V2 permanent key：完成后的 GET 和删除只使用该位置。 */
-  private String permanentStorageKey(String id, Instant createdAt) {
-    return prefixKey(properties.getMinio().getPermanentPrefix(), createdAt, id);
+  private String permanentStorageKey(StorageType type, String id, Instant createdAt) {
+    String prefix = (type == StorageType.ALIYUN_OSS)
+        ? properties.getOss().getPermanentPrefix()
+        : properties.getMinio().getPermanentPrefix();
+    return prefixKey(prefix, createdAt, id);
   }
 
   /** 使用配置前缀和 UTC 日期生成不可预测的服务端对象 key。 */

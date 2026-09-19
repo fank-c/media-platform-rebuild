@@ -157,7 +157,7 @@ class FileProxyServiceTest {
     asset.setSha256(sha256);
     asset.setStatus(status);
     asset.setUploadStatus(uploadStatus);
-    asset.setStorageType(StorageType.MINIO);
+    asset.setStorageType(StorageType.ALIYUN_OSS);
     asset.setStorageKey("permanent/2026/09/14/" + id);
     return asset;
   }
