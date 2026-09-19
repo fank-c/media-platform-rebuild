@@ -138,7 +138,7 @@
 - [x] 视频提审分解为 5 类细粒度子任务（审核、基准转码、4K 转码、向量提取）。
 - [x] 落地工业级分级就绪门禁（`PublishGatekeeper`）：审核通过 + 基准画质就绪 + 向量就绪即放行，4K 异步非阻塞追加。
 - [x] 超时未完成任务自愈巡检与重试调度器（`VideoTaskTimeoutScheduler`）。
-- [x] 事务性发件箱（`content_outbox`）事件驱动与 MDC 全链路追踪。
+- [x] 事务性发件箱（`content_outbox`）完整动力系统：双通道投递（afterCommit 虚拟线程快速通道 + 定时自愈扫描）、CAS 租约原子防重、指数退避抖动与 MDC 全链路追踪。
 
 ## 审核模块 · audit-service
 

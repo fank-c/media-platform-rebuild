@@ -78,12 +78,13 @@ sequenceDiagram
     FS-->>CS: 资产有效且 COMPLETED
     CS->>FS: Feign: GET /api/files/{coverFileId}/metadata (探活封面)
     FS-->>CS: 封面有效且就绪
-    CS->>CS: 事务更新 AUDITING、初始化 5 大子任务并写入 Outbox
+    CS->>CS: 事务更新 AUDITING、初始化 5 大子任务并在 content_outbox 写入待投递事件
     CS-->>GW: 返回 200 OK (受理成功，进入流水线)
     GW-->>Creator: 响应提审受理，展示进度条
 
-    CS->>MQ: Outbox 广播 content.video.submitted 事件
-    MQ-->>CS: ACK 确认
+    Note over CS,MQ: 事务提交后 (afterCommit) 虚拟线程毫秒级唤醒，CAS 抢占租约
+    CS->>MQ: Outbox 投递 content.video.submitted 事件 (携带 messageId 与 traceId)
+    MQ-->>CS: Broker Confirm ACK 确认，更新 Outbox 为 PUBLISHED
 ```
 
 ### 2.2 异步工作流回调、分级门禁裁决与正式上线

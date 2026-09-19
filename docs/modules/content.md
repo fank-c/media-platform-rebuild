@@ -159,9 +159,26 @@ graph TD
 | `content.video.submitted` | 提审探活通过入库 | `videoId`, `vid`, `authorId`, `videoFileId`, `coverFileId` | `audit-service` 启动机审；`transcode-service` 启动切片转码；AI Worker 启动向量计算 |
 | `content.video.published` | 分级门禁达成自动上线 | `videoId`, `vid`, `authorId`, `videoFileId`, `publishedAt` | 搜索引擎构建索引；推荐系统计算特征；站内信通知作者 |
 | `content.video.rejected` | 机审未通过违规驳回 | `videoId`, `vid`, `reason` | 创作者通知中心发送站内驳回说明 |
-| `content.video.offlined` | 创作者主动下架 | `videoId`, `vid`, `authorId` | 搜索引擎与推荐流立即下线索引 |
+| `content.video.offline` | 创作者主动下架 | `videoId`, `vid`, `authorId` | 搜索引擎与推荐流立即下线索引 |
 | `content.video.banned` | 管理员违规封禁 | `videoId`, `vid`, `authorId`, `reason` | 推荐与搜索立即拉黑下线，长连接通知端侧截流 |
 | `content.video.unbanned` | 管理员解封恢复 | `videoId`, `vid`, `authorId` | 重新激活搜索与推荐通道 |
+
+### 4.2 事务性发件箱 (Outbox) 发信动力系统架构
+
+为了杜绝业务数据与消息队列跨网络双写不一致，同时保证毫秒级低延迟投递与极端故障下的确定性自愈，`content-service` 采用成熟的双通道发信体系：
+
+1. **强一致本地事务落库**：业务操作（提审、下架、门禁上线、封禁等）在 Spring 本地数据库事务 `@Transactional` 中，将领域聚合根更新与 `content_outbox` 待发布记录（初始状态 `PENDING`）原子持久化。
+2. **毫秒级快速投递通道 (Fast Dispatch)**：
+   - 依赖 `TransactionSynchronizationManager.afterCommit` 钩子，仅在数据库事务切实 COMMIT 成功后，立即将 `eventId` 派发至 Java 21 虚拟线程执行器（`contentOutboxFastDispatchExecutor`）；
+   - 工作线程在独立短事务中执行 CAS 抢占并直接发送，实现无轮询等待的毫秒级即时投递；
+   - 若虚拟线程池偶发饱和或服务重启，任务降级依赖后台定时扫描兜底，不阻断业务响应。
+3. **分布式 CAS 租约原子防重 (Lease Claiming)**：
+   - 发送前通过 `markClaimedIfEligible` 执行单条原子抢占更新（更新状态为 `PROCESSING`，设置 `lease_owner`、`lease_until` 与独占租约令牌 `claim_token`）；
+   - 仅当更新影响行数为 1 时方获得当前不可变消息快照 `ClaimedOutboxMessage`，彻底杜绝多实例并发或快速通道与扫描通道之间的并发重复投递。
+4. **Publisher Confirm 与指数退避抖动**：
+   - 通过 `RabbitTemplate` 投递至平台统一持久化 Topic 交换机 `media.platform.events`，以动态 `eventType` 为精确 Routing Key，等待 Broker Confirm 回执；
+   - 收到 ACK 且无 Return 回退时，凭 `claimToken` 原子置位为 `PUBLISHED` 并清理租约；
+   - 投递失败或 NACK 时，计算指数退避延迟（1s, 2s, 4s, 8s ... 上限 300s）并增加最多 20% 随机正向抖动，避免集群恢复时的网络尖峰。
 
 ---
 
@@ -173,6 +190,12 @@ graph TD
   1. 检索 `video_task` 表中 `status = 'RUNNING'` 且持续时长超过阈值（默认 15 分钟，配置 `content.task.timeout-minutes`）的僵死任务；
   2. **可恢复任务**：若 `retry_count < max_retries`（默认 3 次），将任务重置回 `PENDING`，自增 `retry_count`，清空异常信息，允许 Worker 重新拉取执行；
   3. **阻断性超时熔断**：若重试次数已达上限，标记任务为 `FAILED`。若该任务属于关键阻断任务（`AUDIT`），联动门禁判定发布失败，将视频置为 `REJECTED` 并级联取消其余子任务，防止创作者发布流程永久挂死。
+
+### 5.2 事务发件箱定时补偿自愈扫描器 (`ContentOutboxScanJob`)
+- **执行频率**：默认每 1 秒执行一次（依赖 `@Scheduled(fixedDelayString = "${content.outbox.poll-interval:1000}")`）；
+- **补偿与终态收敛**：
+  1. 周期性扫描 `content_outbox` 中重试到期或租约超时的待投递候选记录，交由 `ContentOutboxDispatcher` 逐条进行 CAS 抢占与补偿投递；
+  2. 针对累计投递尝试次数达到上限（默认 20 次）且租约到期的记录，将其原子收敛置位为 `FAILED` 终态，并记录 `ATTEMPTS_EXHAUSTED` 错误分类，等待运营告警与人工受控介入。
 
 ---
 
@@ -212,6 +235,10 @@ graph TD
 
 - **启动类**：[`ContentApplication.java`](../../service/content-service/src/main/java/com/calles/platform/content/ContentApplication.java)
 - **门禁与协调**：[`PublishGatekeeper.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/task/PublishGatekeeper.java)、[`VideoTaskCoordinator.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/task/VideoTaskCoordinator.java)、[`VideoTaskTimeoutScheduler.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/task/VideoTaskTimeoutScheduler.java)
-- **应用用例**：[`VideoPublishApplicationService.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/video/VideoPublishApplicationService.java)、[`VideoQueryApplicationService.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/video/VideoQueryApplicationService.java)
+- **发件箱动力系统**：
+  - 调度与发布：[`ContentOutboxDispatcher.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/outbox/dispatch/ContentOutboxDispatcher.java)、[`ContentOutboxPublisher.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/outbox/dispatch/ContentOutboxPublisher.java)、[`ContentOutboxScanJob.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/scheduling/ContentOutboxScanJob.java)
+  - 快速通知与配置：[`ContentOutboxDispatchNotifier.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/outbox/ContentOutboxDispatchNotifier.java)、[`AfterCommitContentOutboxDispatchNotifier.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/outbox/notify/AfterCommitContentOutboxDispatchNotifier.java)、[`ContentOutboxConfiguration.java`](../../service/content-service/src/main/java/com/calles/platform/content/config/ContentOutboxConfiguration.java)、[`ContentOutboxProperties.java`](../../service/content-service/src/main/java/com/calles/platform/content/config/ContentOutboxProperties.java)、[`ContentMessagingConfiguration.java`](../../service/content-service/src/main/java/com/calles/platform/content/config/ContentMessagingConfiguration.java)
+  - 仓储与持久化：[`ContentOutboxRepository.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/outbox/persistence/ContentOutboxRepository.java)、[`ContentOutboxMapper.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/outbox/persistence/ContentOutboxMapper.java)、[`ContentOutboxRecord.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/outbox/model/ContentOutboxRecord.java)、[`ContentOutboxStatus.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/outbox/model/ContentOutboxStatus.java)、[`ClaimedOutboxMessage.java`](../../service/content-service/src/main/java/com/calles/platform/content/infrastructure/outbox/model/ClaimedOutboxMessage.java)
+- **应用用例**：[`VideoPublishApplicationService.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/video/VideoPublishApplicationService.java)、[`VideoQueryApplicationService.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/video/VideoQueryApplicationService.java)、[`VideoModerationApplicationService.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/video/VideoModerationApplicationService.java)
 - **Feign 客户端**：[`FileServiceClient.java`](../../service/content-service/src/main/java/com/calles/platform/content/application/client/FileServiceClient.java)
-- **回归测试验证**：`./mvnw -f service/content-service/pom.xml test`（112 项单元测试 100% 覆盖通过）
+- **回归测试验证**：`./mvnw -f service/content-service/pom.xml test`（132 项单元测试 100% 覆盖通过）

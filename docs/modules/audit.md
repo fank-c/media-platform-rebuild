@@ -23,6 +23,12 @@
   - 裁决完成后通过 OpenFeign 同步回调 `content-service` 的内部专享端点 `POST /api/content/videos/internal/audit-callback`；
   - 内置指数退避定时重试调度器（`AuditCallbackRetryScheduler`），网络抖动时自动按 2s、4s、8s、16s、32s 梯次重试，消除跨微服务断层死锁。
 
+### 阿里云视频审核 Service 配置
+
+- `AUDIT_ALIYUN_VIDEO_SERVICE` 映射到 `audit.aliyun.video-service`，普通视频文件审核使用 `videoDetection`，名称需与阿里云接口契约完全一致。
+- 修改本地环境变量后需重启 `audit-service`；如启动配置或 Nacos 覆盖该值，应同步确认最终提交请求的 `Service`。
+- 单元测试只验证请求构造，不代表云端服务权限、媒体下载或真实审核已经通过。
+
 ### 1.2 防腐与禁止承担的工作
 - **严禁直接修改视频业务主表**：视频生命周期状态由 `content-service` 独立拥有，审核服务绝不跨库 update `video_content`；
 - **严禁直接托管多媒体物理文件**：文件存储由 `file-service` 统一负责，审核服务仅依赖文件 ID 动态获取时效拉流直链；
