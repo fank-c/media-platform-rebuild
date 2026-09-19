@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS file_asset (
   declared_size BIGINT NOT NULL COMMENT '客户端声明字节数，完成前不是真实大小',
   size BIGINT NULL COMMENT '服务端实际确认字节数，未完成为空',
   storage_key VARCHAR(512) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '服务内最终对象key，不对外暴露',
-  storage_type VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '对象存储类型，首期仅MINIO',
+  storage_type VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '对象存储类型，统一为OSS',
   sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '完成确认后的可信小写SHA-256',
   status VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'ACTIVE' COMMENT '资源启用状态',
   upload_status VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'PENDING' COMMENT '上传确认状态',
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS file_asset (
   CONSTRAINT ck_file_size CHECK (declared_size > 0 AND
     ((upload_status = 'COMPLETED' AND size IS NOT NULL AND size = declared_size) OR
      (upload_status IN ('PENDING', 'VERIFYING', 'EXPIRED') AND size IS NULL))),
-  CONSTRAINT ck_file_storage CHECK (storage_type IN ('MINIO')),
+  CONSTRAINT ck_file_storage CHECK (storage_type IN ('MINIO', 'ALIYUN_OSS')),
   CONSTRAINT ck_file_upload CHECK (upload_status IN ('PENDING', 'VERIFYING', 'COMPLETED', 'EXPIRED')),
   CONSTRAINT ck_file_protocol CHECK (upload_protocol IN ('LEGACY_V1', 'SERVER_MULTIPART_V1', 'DIRECT_STAGED_CHECKSUM_V2')),
   CONSTRAINT ck_file_status CHECK (status IN ('ACTIVE', 'DISABLED')),

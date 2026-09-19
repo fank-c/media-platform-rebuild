@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS file_asset (
   declared_size BIGINT NOT NULL COMMENT '客户端声明字节数，完成前不是真实大小',
   size BIGINT NULL COMMENT '服务端实际确认字节数，未完成为空',
   storage_key VARCHAR(512) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '服务内最终对象key，不对外暴露',
-  storage_type VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '对象存储类型，首期仅MINIO',
+  storage_type VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '对象存储类型，统一为OSS',
   sha256 CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '完成确认后的可信小写SHA-256',
   status VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'ACTIVE' COMMENT '资源启用状态',
   upload_status VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'PENDING' COMMENT '上传确认状态',
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS file_asset (
   CONSTRAINT ck_file_size CHECK (declared_size > 0 AND
     ((upload_status = 'COMPLETED' AND size IS NOT NULL AND size = declared_size) OR
      (upload_status IN ('PENDING', 'VERIFYING', 'EXPIRED') AND size IS NULL))),
-  CONSTRAINT ck_file_storage CHECK (storage_type IN ('MINIO')),
+  CONSTRAINT ck_file_storage CHECK (storage_type IN ('MINIO', 'ALIYUN_OSS')),
   CONSTRAINT ck_file_upload CHECK (upload_status IN ('PENDING', 'VERIFYING', 'COMPLETED', 'EXPIRED')),
   CONSTRAINT ck_file_protocol CHECK (upload_protocol IN ('LEGACY_V1', 'SERVER_MULTIPART_V1', 'DIRECT_STAGED_CHECKSUM_V2')),
   CONSTRAINT ck_file_status CHECK (status IN ('ACTIVE', 'DISABLED')),
@@ -251,7 +251,7 @@ CREATE TABLE IF NOT EXISTS `content_tag` (
     `id` CHAR(32) NOT NULL COMMENT '标签主键ID (UUID)',
     `name` VARCHAR(64) NOT NULL COMMENT '标签名称（唯一）',
     `reference_count` BIGINT NOT NULL DEFAULT 0 COMMENT '被视频引用次数/热度统计',
-    `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT '标签状态: ACTIVE=启用, DISABLE=下线屏蔽',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT '标签状态: ACTIVE=启用, DISABLED=下线屏蔽',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
@@ -335,4 +335,40 @@ CREATE TABLE IF NOT EXISTS `audit_sensitive_word` (
     CONSTRAINT `ck_audit_word_level` CHECK (`level` IN ('ILLEGAL', 'SUSPICIOUS')),
     CONSTRAINT `ck_audit_word_status` CHECK (`status` IN ('ACTIVE', 'DISABLED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='敏感词库与合规规则字典表';
+
+-- transcode-service: 视频流转码调度任务工单表
+-- 独占 transcode_* 表所有权，记录各画质规格转码状态、产物文件引用与执行耗时
+CREATE TABLE IF NOT EXISTS `transcode_task` (
+    `id` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '转码任务全局唯一ID (UUID无横杠)',
+    `video_id` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '关联的主视频ID (video_content.id)',
+    `author_id` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '创作者账号ID (auth_account.id)',
+    `source_file_id` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '待转码的原始文件ID (file_asset.id)',
+    `target_quality` VARCHAR(16) NOT NULL COMMENT '目标清晰度规格: 360P, 480P, 720P, 1080P, 1080P_60, 4K',
+    `target_format` VARCHAR(16) NOT NULL DEFAULT 'MP4' COMMENT '流媒体封装格式: MP4, HLS, DASH',
+    `target_codec` VARCHAR(16) NOT NULL DEFAULT 'H264' COMMENT '视频压缩编码: H264, H265, AV1',
+    `status` VARCHAR(24) NOT NULL DEFAULT 'PENDING' COMMENT '状态流转: PENDING, DOWNLOADING, TRANSCODING, UPLOADING, NOTIFYING, COMPLETED, FAILED',
+    `retry_count` INT NOT NULL DEFAULT 0 COMMENT '重试执行次数',
+    `max_retries` INT NOT NULL DEFAULT 3 COMMENT '最大重试次数上限',
+    `output_file_id` CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '转码产物在 file_asset 中注册的文件ID',
+    `output_file_size` BIGINT NULL COMMENT '转码产物字节大小',
+    `output_bitrate` INT NULL COMMENT '产物实际视频码率 (kbps)',
+    `output_fps` INT NULL COMMENT '产物实际视频帧率 (fps)',
+    `output_width` INT NULL COMMENT '产物实际像素宽度',
+    `output_height` INT NULL COMMENT '产物实际像素高度',
+    `video_duration` INT NULL COMMENT '探测得出的视频实际时长 (秒)',
+    `error_message` VARCHAR(1000) NULL COMMENT '异常失败详细信息摘要',
+    `transcode_cost_ms` BIGINT NULL COMMENT 'FFmpeg 纯转码计算耗时 (毫秒)',
+    `total_cost_ms` BIGINT NULL COMMENT '任务全生命周期总耗时 (毫秒)',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_video_quality_format` (`video_id`, `target_quality`, `target_format`),
+    KEY `idx_status_created` (`status`, `created_at`),
+    KEY `idx_video_id` (`video_id`),
+    CONSTRAINT `ck_transcode_quality` CHECK (`target_quality` IN ('360P', '480P', '720P', '1080P', '1080P_60', '4K')),
+    CONSTRAINT `ck_transcode_format` CHECK (`target_format` IN ('MP4', 'HLS', 'DASH')),
+    CONSTRAINT `ck_transcode_codec` CHECK (`target_codec` IN ('H264', 'H265', 'AV1')),
+    CONSTRAINT `ck_transcode_status` CHECK (`status` IN ('PENDING', 'DOWNLOADING', 'TRANSCODING', 'UPLOADING', 'NOTIFYING', 'COMPLETED', 'FAILED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频流转码调度任务工单表';
+
 
