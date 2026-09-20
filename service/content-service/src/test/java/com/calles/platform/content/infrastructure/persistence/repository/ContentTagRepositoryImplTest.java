@@ -208,4 +208,36 @@ class ContentTagRepositoryImplTest {
         assertThat(captor.getValue()).hasSize(1);
         assertThat(captor.getValue().iterator().next().getName()).isEqualTo("Go");
     }
+
+    /**
+     * 测试按标签类型检索热门标签。
+     */
+    @Test
+    @DisplayName("按标签类型获取热门标签")
+    void shouldFindTopHotTagsByType() {
+        ContentTagPO p1 = ContentTagPO.builder().id("tag_dom_01").name("编程").tagType("DOMAIN").referenceCount(50L).status("ACTIVE").build();
+        when(contentTagMapper.selectTopHotByType("DOMAIN", 10)).thenReturn(List.of(p1));
+
+        List<ContentTag> hots = repository.findTopHotTags(com.calles.platform.content.domain.model.tag.TagType.DOMAIN, 10);
+
+        assertThat(hots).hasSize(1);
+        assertThat(hots.get(0).getName()).isEqualTo("编程");
+        assertThat(hots.get(0).getTagType()).isEqualTo(com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+    }
+
+    /**
+     * 测试按标签类型获取全量有效标签。
+     */
+    @Test
+    @DisplayName("按标签类型获取全量有效标签")
+    void shouldFindByType() {
+        ContentTagPO p1 = ContentTagPO.builder().id("tag_dom_01").name("编程").tagType("DOMAIN").referenceCount(50L).status("ACTIVE").build();
+        when(contentTagMapper.selectByType("DOMAIN")).thenReturn(List.of(p1));
+
+        List<ContentTag> result = repository.findByType(com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getName()).isEqualTo("编程");
+        assertThat(result.get(0).getTagType()).isEqualTo(com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+    }
 }

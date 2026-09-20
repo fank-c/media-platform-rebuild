@@ -189,4 +189,26 @@ public class ContentTagRepositoryImpl implements ContentTagRepository {
                 .map(ContentTagPO::toDomain)
                 .toList();
     }
+
+    @Override
+    public List<ContentTag> findTopHotTags(com.calles.platform.content.domain.model.tag.TagType type, int limit) {
+        if (type == null) {
+            return findTopHotTags(limit);
+        }
+        // 步骤 1：检索指定类型的活跃热门词条并转为领域模型
+        return contentTagMapper.selectTopHotByType(type.getCode(), limit).stream()
+                .map(ContentTagPO::toDomain)
+                .toList();
+    }
+
+    @Override
+    public List<ContentTag> findByType(com.calles.platform.content.domain.model.tag.TagType type) {
+        if (type == null) {
+            return Collections.emptyList();
+        }
+        // 步骤 1：检索指定类型的全量活跃词条并转为领域模型
+        return contentTagMapper.selectByType(type.getCode()).stream()
+                .map(ContentTagPO::toDomain)
+                .toList();
+    }
 }

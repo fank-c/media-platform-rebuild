@@ -51,21 +51,61 @@ class TagControllerTest {
      * @throws Exception MockMvc 执行异常
      */
     @Test
-    @DisplayName("GET /api/content/tags/hot 获取热门标签成功")
+    @DisplayName("GET /api/content/tags/hot 获取热门标签成功，返回 tagType 字段")
     void shouldGetHotTagsSuccessfully() throws Exception {
         // 步骤 1: 准备热门标签实体 Mock 数据
         ContentTag tag1 = ContentTag.create("t1", "Java");
         tag1.incrementReference();
         ContentTag tag2 = ContentTag.create("t2", "SpringCloud");
 
-        when(tagService.getHotTags(10)).thenReturn(List.of(tag1, tag2));
+        when(tagService.getHotTags(null, 10)).thenReturn(List.of(tag1, tag2));
 
         // 步骤 2: 发送 HTTP GET 请求并断言状态码与响应体
         mockMvc.perform(get("/api/content/tags/hot?limit=10"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data[0].name").value("Java"))
+                .andExpect(jsonPath("$.data[0].tagType").value("TOPIC"))
                 .andExpect(jsonPath("$.data[0].referenceCount").value(1))
-                .andExpect(jsonPath("$.data[1].name").value("SpringCloud"));
+                .andExpect(jsonPath("$.data[1].name").value("SpringCloud"))
+                .andExpect(jsonPath("$.data[1].tagType").value("TOPIC"));
+    }
+
+    /**
+     * 测试 GET /api/content/tags/hot 带 type=DOMAIN 参数。
+     */
+    @Test
+    @DisplayName("GET /api/content/tags/hot?type=DOMAIN 按领域过滤热门标签")
+    void shouldGetHotTagsFilteredByType() throws Exception {
+        ContentTag tagDom = ContentTag.create("t_dom", "编程", com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+
+        when(tagService.getHotTags(com.calles.platform.content.domain.model.tag.TagType.DOMAIN, 5))
+                .thenReturn(List.of(tagDom));
+
+        mockMvc.perform(get("/api/content/tags/hot?type=DOMAIN&limit=5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data[0].name").value("编程"))
+                .andExpect(jsonPath("$.data[0].tagType").value("DOMAIN"));
+    }
+
+    /**
+     * 测试 GET /api/content/tags/domains 获取全量有效领域标签。
+     */
+    @Test
+    @DisplayName("GET /api/content/tags/domains 获取全量领域标签")
+    void shouldGetDomainTagsSuccessfully() throws Exception {
+        ContentTag tagDom1 = ContentTag.create("t_dom_1", "编程", com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+        ContentTag tagDom2 = ContentTag.create("t_dom_2", "摄影", com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+
+        when(tagService.getDomainTags()).thenReturn(List.of(tagDom1, tagDom2));
+
+        mockMvc.perform(get("/api/content/tags/domains"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data[0].name").value("编程"))
+                .andExpect(jsonPath("$.data[0].tagType").value("DOMAIN"))
+                .andExpect(jsonPath("$.data[1].name").value("摄影"))
+                .andExpect(jsonPath("$.data[1].tagType").value("DOMAIN"));
     }
 }

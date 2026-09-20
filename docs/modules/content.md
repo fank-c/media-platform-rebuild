@@ -138,7 +138,8 @@ graph TD
 | | `GET` | `/api/content/videos/{id}/tasks` | 作者本人 | 观测当前视频各子任务执行进度（0-100%）与就绪状态 | `200` 成功 |
 | **前台受众端** | `GET` | `/api/content/videos/{vid}` | 公开/脱敏 | 依据短码 `vid` 查询公开图文详情；私密/封禁视频安全脱敏为 `404` | `200` 成功<br/>`404` 隐藏 |
 | | `GET` | `/api/content/videos/{vid}/streams`| 公开/脱敏 | 查询已完成的所有播放流切片（按 4K > 1080P > 720P 排序） | `200` 成功 |
-| | `GET` | `/api/content/tags/hot` | 公开 | 查询全站热度最高的前 N 个标签 | `200` 成功 |
+| | `GET` | `/api/content/tags/hot` | 公开 | 查询热门标签，支持按 `type` (`DOMAIN`/`TOPIC`) 过滤 | `200` 成功 |
+| | `GET` | `/api/content/tags/domains` | 公开 | 查询全站所有正常启用的泛化领域标签（用于频道与分类推荐） | `200` 成功 |
 | **管理治理端** | `POST` | `/api/content/videos/admin/list` | `requireAdmin`| 管理端多维组合条件筛选与分页检索作品 | `200` 成功 |
 | | `POST` | `/api/content/videos/admin/{id}/ban`| `requireAdmin`| 封禁视频（`status=DISABLED`）➔ 事务写入 `content.video.banned` 事件 | `200` 成功 |
 | | `POST` | `/api/content/videos/admin/{id}/unban`| `requireAdmin`| 解封恢复视频（`status=ACTIVE`）➔ 事务写入 `content.video.unbanned` 事件 | `200` 成功 |

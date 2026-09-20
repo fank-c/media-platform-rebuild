@@ -93,10 +93,27 @@ public interface ContentTagRepository {
     int batchUpdateReferenceCount(Collection<String> tagIds, long delta);
 
     /**
-     * 获取全站高热度有效标签排行列表。
+     * 获取全站高热度有效标签排行列表（不限类型）。
      *
      * @param limit 获取数量上限
      * @return 按引用热度倒序排列的活跃标签实体列表
      */
     List<ContentTag> findTopHotTags(int limit);
+
+    /**
+     * 按指定标签类型获取高热度有效标签排行列表。
+     *
+     * @param type 标签类型枚举 (DOMAIN 或 TOPIC)
+     * @param limit 获取数量上限
+     * @return 按引用热度倒序排列的活跃标签实体列表
+     */
+    List<ContentTag> findTopHotTags(com.calles.platform.content.domain.model.tag.TagType type, int limit);
+
+    /**
+     * 获取指定类型且处于正常启用状态 (ACTIVE) 的全量标签列表。
+     *
+     * @param type 标签类型枚举 (DOMAIN 或 TOPIC)
+     * @return 对应的活跃标签实体列表
+     */
+    List<ContentTag> findByType(com.calles.platform.content.domain.model.tag.TagType type);
 }

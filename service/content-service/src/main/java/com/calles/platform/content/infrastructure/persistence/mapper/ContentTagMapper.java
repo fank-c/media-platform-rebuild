@@ -33,13 +33,13 @@ public interface ContentTagMapper extends BaseMapper<ContentTagPO> {
     ContentTagPO selectByName(@Param("name") String name);
 
     /**
-     * 幂等插入新标签词条；若遇到唯一键冲突 (uk_tag_name) 则静默忽略。
+     * 幂等插入新标签词条；若遇到唯一键冲突 (uk_content_tag_name) 则静默忽略。
      *
      * @param id 标签主键 ID (UUID)
      * @param name 标签名称
      * @return 影响行数（1=成功插入，0=冲突忽略）
      */
-    @Insert("INSERT IGNORE INTO content_tag(id, name, reference_count, status) VALUES(#{id}, #{name}, 0, 'ACTIVE')")
+    @Insert("INSERT IGNORE INTO content_tag(id, name, tag_type, reference_count, status) VALUES(#{id}, #{name}, 'TOPIC', 0, 'ACTIVE')")
     int insertIgnore(@Param("id") String id, @Param("name") String name);
 
     /**
@@ -50,10 +50,10 @@ public interface ContentTagMapper extends BaseMapper<ContentTagPO> {
      */
     @Insert("""
             <script>
-            INSERT IGNORE INTO content_tag (id, name, reference_count, status)
+            INSERT IGNORE INTO content_tag (id, name, tag_type, reference_count, status)
             VALUES
             <foreach collection='list' item='item' separator=','>
-                (#{item.id}, #{item.name}, 0, 'ACTIVE')
+                (#{item.id}, #{item.name}, COALESCE(#{item.tagType}, 'TOPIC'), 0, 'ACTIVE')
             </foreach>
             </script>
             """)
@@ -119,4 +119,23 @@ public interface ContentTagMapper extends BaseMapper<ContentTagPO> {
      */
     @Select("SELECT * FROM content_tag WHERE status = 'ACTIVE' ORDER BY reference_count DESC LIMIT #{limit}")
     List<ContentTagPO> selectTopHot(@Param("limit") int limit);
+
+    /**
+     * 获取指定类型且处于正常启用状态 (ACTIVE) 的热门高频标签列表。
+     *
+     * @param tagType 标签类型字符串编码 (DOMAIN 或 TOPIC)
+     * @param limit 获取数量上限
+     * @return 按引用热度倒序排列的标签列表
+     */
+    @Select("SELECT * FROM content_tag WHERE status = 'ACTIVE' AND tag_type = #{tagType} ORDER BY reference_count DESC LIMIT #{limit}")
+    List<ContentTagPO> selectTopHotByType(@Param("tagType") String tagType, @Param("limit") int limit);
+
+    /**
+     * 获取指定类型且处于正常启用状态 (ACTIVE) 的全量标签列表（按热度倒序、名称正序）。
+     *
+     * @param tagType 标签类型字符串编码 (DOMAIN 或 TOPIC)
+     * @return 匹配的标签列表
+     */
+    @Select("SELECT * FROM content_tag WHERE status = 'ACTIVE' AND tag_type = #{tagType} ORDER BY reference_count DESC, name ASC")
+    List<ContentTagPO> selectByType(@Param("tagType") String tagType);
 }

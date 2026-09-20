@@ -42,6 +42,10 @@ public class ContentTagPO {
     @TableField("status")
     private String status;
 
+    /** 标签类型 (DOMAIN / TOPIC)。 */
+    @TableField("tag_type")
+    private String tagType;
+
     /** 记录创建时间。 */
     @TableField("created_at")
     private LocalDateTime createdAt;
@@ -59,6 +63,7 @@ public class ContentTagPO {
         return ContentTag.builder()
                 .id(this.id)
                 .name(this.name)
+                .tagType(this.tagType != null ? com.calles.platform.content.domain.model.tag.TagType.fromCode(this.tagType) : com.calles.platform.content.domain.model.tag.TagType.TOPIC)
                 .referenceCount(this.referenceCount != null ? this.referenceCount : 0L)
                 .status(this.status != null ? CommonStatus.valueOf(this.status) : CommonStatus.ACTIVE)
                 .createdAt(this.createdAt)
@@ -79,6 +84,7 @@ public class ContentTagPO {
         return ContentTagPO.builder()
                 .id(domain.getId())
                 .name(domain.getName())
+                .tagType(domain.getTagType() != null ? domain.getTagType().getCode() : com.calles.platform.content.domain.model.tag.TagType.TOPIC.getCode())
                 .referenceCount(domain.getReferenceCount())
                 .status(domain.getStatus() != null ? domain.getStatus().getValue() : CommonStatus.ACTIVE.getValue())
                 .createdAt(domain.getCreatedAt())

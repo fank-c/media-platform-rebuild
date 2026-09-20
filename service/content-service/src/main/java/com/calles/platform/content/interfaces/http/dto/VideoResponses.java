@@ -194,13 +194,26 @@ public final class VideoResponses {
      *
      * @param id 标签主键 ID
      * @param name 标签文本名称 (如 "Java")
+     * @param tagType 标签类型编码 (DOMAIN=泛化领域, TOPIC=具体主题)
      * @param referenceCount 关联的已发布视频热度引用计数
      */
     public record HotTag(
             String id,
             String name,
+            String tagType,
             long referenceCount
-    ) { }
+    ) {
+        /**
+         * 兼容历史调用的重载构造方法，默认类型为 TOPIC。
+         *
+         * @param id 标签主键 ID
+         * @param name 标签名称
+         * @param referenceCount 引用计数
+         */
+        public HotTag(String id, String name, long referenceCount) {
+            this(id, name, "TOPIC", referenceCount);
+        }
+    }
 
     /**
      * 流水线单项子任务执行进度明细。

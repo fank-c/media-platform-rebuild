@@ -181,4 +181,30 @@ class ContentTagApplicationServiceTest {
         assertThat(tags).hasSize(1);
         verify(contentTagRepository).findTopHotTags(50);
     }
+
+    @Test
+    @DisplayName("getHotTags：按指定 TagType 获取热门标签")
+    void shouldGetHotTagsByType() {
+        ContentTag tagProg = ContentTag.create("tag_dom_01", "编程", com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+        when(contentTagRepository.findTopHotTags(com.calles.platform.content.domain.model.tag.TagType.DOMAIN, 20))
+                .thenReturn(List.of(tagProg));
+
+        List<ContentTag> tags = contentTagApplicationService.getHotTags(com.calles.platform.content.domain.model.tag.TagType.DOMAIN, 20);
+        assertThat(tags).hasSize(1);
+        assertThat(tags.get(0).getTagType()).isEqualTo(com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+        verify(contentTagRepository).findTopHotTags(com.calles.platform.content.domain.model.tag.TagType.DOMAIN, 20);
+    }
+
+    @Test
+    @DisplayName("getDomainTags：获取全量有效领域标签")
+    void shouldGetDomainTags() {
+        ContentTag tagProg = ContentTag.create("tag_dom_01", "编程", com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+        when(contentTagRepository.findByType(com.calles.platform.content.domain.model.tag.TagType.DOMAIN))
+                .thenReturn(List.of(tagProg));
+
+        List<ContentTag> domainTags = contentTagApplicationService.getDomainTags();
+        assertThat(domainTags).hasSize(1);
+        assertThat(domainTags.get(0).getName()).isEqualTo("编程");
+        verify(contentTagRepository).findByType(com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
+    }
 }

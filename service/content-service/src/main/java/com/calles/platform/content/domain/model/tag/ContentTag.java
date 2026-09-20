@@ -39,6 +39,9 @@ public class ContentTag {
     /** 标签治理可用状态 (ACTIVE=启用, DISABLED=下线屏蔽)。 */
     private CommonStatus status;
 
+    /** 标签类型 (DOMAIN=泛化领域, TOPIC=具体主题)。 */
+    private TagType tagType;
+
     /** 标签词条初次创建时间。 */
     private LocalDateTime createdAt;
 
@@ -46,14 +49,27 @@ public class ContentTag {
     private LocalDateTime updatedAt;
 
     /**
-     * 工厂方法：初始化创建全新标签。
+     * 工厂方法：初始化创建全新具体主题标签（默认类型为 TOPIC）。
      *
      * @param id 预生成的 UUID 主键标识
      * @param name 标签名称文本（会自动 trim）
-     * @return 初始热度为 0 且状态为 ACTIVE 的新标签实体
+     * @return 初始热度为 0、类型为 TOPIC 且状态为 ACTIVE 的新标签实体
      * @throws IllegalArgumentException 当 id 或 name 为空时抛出
      */
     public static ContentTag create(String id, String name) {
+        return create(id, name, TagType.TOPIC);
+    }
+
+    /**
+     * 工厂方法：初始化创建指定类型的新标签。
+     *
+     * @param id 预生成的 UUID 主键标识
+     * @param name 标签名称文本（会自动 trim）
+     * @param tagType 标签类型枚举 (DOMAIN 或 TOPIC)
+     * @return 初始热度为 0 且状态为 ACTIVE 的新标签实体
+     * @throws IllegalArgumentException 当 id 或 name 为空时抛出
+     */
+    public static ContentTag create(String id, String name, TagType tagType) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("标签ID不能为空");
         }
@@ -63,6 +79,7 @@ public class ContentTag {
         return ContentTag.builder()
                 .id(id)
                 .name(name.trim())
+                .tagType(tagType != null ? tagType : TagType.TOPIC)
                 .referenceCount(0L)
                 .status(CommonStatus.ACTIVE)
                 .build();

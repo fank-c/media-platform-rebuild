@@ -19,7 +19,7 @@ class ContentTagTest {
      * 测试创建新标签的正常路径，校验默认字段初始化与可用状态。
      */
     @Test
-    @DisplayName("创建新标签成功，初始热度为0且状态为ACTIVE")
+    @DisplayName("创建新标签成功，初始热度为0且状态为ACTIVE，默认类型为TOPIC")
     void shouldCreateTagSuccessfully() {
         // 步骤 1: 模拟通过静态工厂方法创建标签
         ContentTag tag = ContentTag.create("tag_001", "SpringCloud");
@@ -27,9 +27,42 @@ class ContentTagTest {
         // 步骤 2: 断言初始状态与字段
         assertThat(tag.getId()).isEqualTo("tag_001");
         assertThat(tag.getName()).isEqualTo("SpringCloud");
+        assertThat(tag.getTagType()).isEqualTo(TagType.TOPIC);
         assertThat(tag.getReferenceCount()).isZero();
         assertThat(tag.getStatus()).isEqualTo(CommonStatus.ACTIVE);
         assertThat(tag.isActive()).isTrue();
+    }
+
+    /**
+     * 测试创建显式指定类型（如 DOMAIN 领域标签）的新标签。
+     */
+    @Test
+    @DisplayName("显式创建 DOMAIN 领域标签成功")
+    void shouldCreateDomainTagSuccessfully() {
+        // 步骤 1: 显式创建 DOMAIN 类型标签
+        ContentTag tag = ContentTag.create("tag_dom_01", "编程", TagType.DOMAIN);
+
+        // 步骤 2: 断言类型为 DOMAIN
+        assertThat(tag.getId()).isEqualTo("tag_dom_01");
+        assertThat(tag.getName()).isEqualTo("编程");
+        assertThat(tag.getTagType()).isEqualTo(TagType.DOMAIN);
+        assertThat(tag.getStatus()).isEqualTo(CommonStatus.ACTIVE);
+    }
+
+    /**
+     * 测试 TagType 枚举解析与异常容错。
+     */
+    @Test
+    @DisplayName("TagType fromCode 解析与异常校验")
+    void shouldParseTagTypeFromCode() {
+        assertThat(TagType.fromCode("DOMAIN")).isEqualTo(TagType.DOMAIN);
+        assertThat(TagType.fromCode("topic")).isEqualTo(TagType.TOPIC);
+        assertThat(TagType.fromCode(null)).isNull();
+        assertThat(TagType.fromCode("   ")).isNull();
+
+        assertThatThrownBy(() -> TagType.fromCode("UNKNOWN"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("未知标签类型");
     }
 
     /**

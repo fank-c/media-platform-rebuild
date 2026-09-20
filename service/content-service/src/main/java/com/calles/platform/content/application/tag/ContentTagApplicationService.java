@@ -133,16 +133,40 @@ public class ContentTagApplicationService {
     }
 
     /**
-     * 获取全站热门标签列表。
+     * 获取全站热门标签列表（不限类型）。
      *
      * @param limit 期望获取数量（内部自动限制在 1 到 50 之间）
      * @return 按引用热度排序的热门标签领域实体列表
      */
     public List<ContentTag> getHotTags(int limit) {
+        return getHotTags(null, limit);
+    }
+
+    /**
+     * 按指定标签类型获取热门标签列表。
+     *
+     * @param type 标签类型枚举 (DOMAIN 或 TOPIC)，为 null 时表示不限类型
+     * @param limit 期望获取数量（内部自动限制在 1 到 50 之间）
+     * @return 按引用热度排序的热门标签领域实体列表
+     */
+    public List<ContentTag> getHotTags(com.calles.platform.content.domain.model.tag.TagType type, int limit) {
         // 步骤 1：施加最大 50 条的上限保护
         int boundedLimit = Math.max(1, Math.min(limit, 50));
-        // 步骤 2：按引用热度计数倒序检索字典
-        return contentTagRepository.findTopHotTags(boundedLimit);
+        // 步骤 2：按引用热度计数倒序检索字典（支持类型过滤）
+        if (type == null) {
+            return contentTagRepository.findTopHotTags(boundedLimit);
+        }
+        return contentTagRepository.findTopHotTags(type, boundedLimit);
+    }
+
+    /**
+     * 获取全站所有正常启用的泛化领域标签 (DOMAIN)。
+     *
+     * @return 领域标签实体列表，供前台频道筛选与创作者打标分类选择
+     */
+    public List<ContentTag> getDomainTags() {
+        // 步骤 1：检索所有启用的 DOMAIN 类型标签
+        return contentTagRepository.findByType(com.calles.platform.content.domain.model.tag.TagType.DOMAIN);
     }
 
     /**
