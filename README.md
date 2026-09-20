@@ -35,7 +35,6 @@ Calles 视频平台的渐进式微服务重构工程。相邻 `../calles` 是只
 1. [功能清单](docs/TODO.md)：查看各模块当前进度和下一步任务。
 2. [文档中心](docs/README.md)：按业务模块查接口、流程和限制。
 3. [接口文档](docs/api.md)：查看当前 HTTP 请求、响应和权限约束。
-4. [文件模块问题记录](docs/file-issues.md)：查看文件上传、删除和真实依赖验证缺口。
 
 若工程路径包含 `:`（如历史 `media-platform:rebuild` 命名），全量构建需使用 `./build.sh -DskipTests`；若工程目录已重命名且不包含 `:`（如 `media-platform-rebuild`），可直接使用标准 `./mvnw clean test` 或 `./mvnw clean package`。完整说明集中在快速开始，不在各文档重复维护启动步骤。
 

@@ -83,11 +83,11 @@ graph TD
 
 | 主线文档 | 核心图表与主线内容 | 关键涉及服务 |
 | :--- | :--- | :--- |
-| [**主线 01：账号生命周期与鉴权透传**](flows/01-auth-and-identity-flow.md) | 注册事务 ➔ Outbox ➔ MQ 异步资料建档；登录双 Token 签发；Redis 多设备会话池置换；网关 Token 拦截鉴权、SHA-256 缓存与下游受信 Header 透传时序图。 | `gateway`<br/>`auth`<br/>`user`<br/>`Redis`<br/>`RabbitMQ` |
-| [**主线 02：大文件资产 V2 暂存直传与归档**](flows/02-file-storage-direct-upload-flow.md) | 三种上传模式对比拓扑；客户端流式 PUT 直连 MinIO（零网关带宽消耗）；服务端 HEAD 校验、内部 Copy 转正与孤儿文件定时清理自愈时序图。 | `gateway`<br/>`file`<br/>`MinIO` |
-| [**主线 03：视频提审、异步机审与分级门禁**](flows/03-video-publish-and-pipeline-flow.md) | **【全平台技术核心】** 创作者提审 ➔ Feign 同步探活 ➔ Outbox 派发 ➔ 审核与转码多路并发 ➔ 专有回调 ➔ `PublishGatekeeper` 分级门禁决策（基准流就绪即发布，4K 异步追加，违规熔断）全流程时序图。 | `content`<br/>`file`<br/>`audit`<br/>`transcode`<br/>`RabbitMQ` |
-| [**主线 04：前台视频播放分发与网关防刷**](flows/04-video-playback-and-portal-flow.md) | 网关单 IP 令牌桶秒级限流（QPS<=30）；Base62 短码（`vid`）寻址防爬虫；多画质播放流切片汇聚与访问权限安全脱敏时序图。 | `gateway`<br/>`content`<br/>`Redis` |
-| [**主线 05：平台合规治理与全站广播下线**](flows/05-platform-governance-flow.md) | 管理端 RBAC 鉴权；状态原子跃迁；`content.video.banned` 领域事件广播驱动搜索引擎、推荐池与端侧长连接全网即时下线时序图。 | `gateway`<br/>`content`<br/>`audit`<br/>`RabbitMQ` |
+| [**主线 01：账号生命周期与鉴权透传**](flows/01-账号生命周期与鉴权透传.md) | 注册事务 ➔ Outbox ➔ MQ 异步资料建档；登录双 Token 签发；Redis 多设备会话池置换；网关 Token 拦截鉴权、SHA-256 缓存与下游受信 Header 透传时序图。 | `gateway`<br/>`auth`<br/>`user`<br/>`Redis`<br/>`RabbitMQ` |
+| [**主线 02：大文件资产 V2 暂存直传与归档**](flows/02-大文件直传与存储归档.md) | 三种上传模式对比拓扑；客户端流式 PUT 直连 MinIO（零网关带宽消耗）；服务端 HEAD 校验、内部 Copy 转正与孤儿文件定时清理自愈时序图。 | `gateway`<br/>`file`<br/>`MinIO` |
+| [**主线 03：视频提审、异步机审与分级门禁**](flows/03-视频创作提审与分级门禁.md) | **【全平台技术核心】** 创作者提审 ➔ Feign 同步探活 ➔ Outbox 派发 ➔ 审核与转码多路并发 ➔ 专有回调 ➔ `PublishGatekeeper` 分级门禁决策（基准流就绪即发布，4K 异步追加，违规熔断）全流程时序图。 | `content`<br/>`file`<br/>`audit`<br/>`transcode`<br/>`RabbitMQ` |
+| [**主线 04：前台视频播放分发与网关防刷**](flows/04-前台视频播放分发与网关防刷.md) | 网关单 IP 令牌桶秒级限流（QPS<=30）；Base62 短码（`vid`）寻址防爬虫；多画质播放流切片汇聚与访问权限安全脱敏时序图。 | `gateway`<br/>`content`<br/>`Redis` |
+| [**主线 05：平台合规治理与全站广播下线**](flows/05-平台合规治理与全站广播下线.md) | 管理端 RBAC 鉴权；状态原子跃迁；`content.video.banned` 领域事件广播驱动搜索引擎、推荐池与端侧长连接全网即时下线时序图。 | `gateway`<br/>`content`<br/>`audit`<br/>`RabbitMQ` |
 
 ---
 
@@ -114,7 +114,6 @@ graph TD
 
 - [**HTTP API 接口全景契约**](api.md)：集中速查全平台对外、对内与管理端接口请求参数、响应模型、权限门禁与状态码规范；
 - [**开发进度追踪清单**](TODO.md)：实时跟踪各微服务功能落地、测试用例覆盖与阶段演进状态；
-- [**文件历史问题排查**](file-issues.md)：文件存储历史遗留问题与专项验收记录。
 
 ---
 
