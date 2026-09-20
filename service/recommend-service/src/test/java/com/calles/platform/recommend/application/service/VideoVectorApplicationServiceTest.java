@@ -21,6 +21,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.springframework.dao.DuplicateKeyException;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -30,6 +32,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -226,5 +229,38 @@ class VideoVectorApplicationServiceTest {
         verify(contentServiceClient).taskCallback(callbackCaptor.capture());
         assertThat(callbackCaptor.getValue().status()).isEqualTo("FAILED");
         assertThat(callbackCaptor.getValue().errorMessage()).contains("本地内存耗尽");
+    }
+
+    @Test
+    @DisplayName("并发插入发生唯一键冲突且前置线程已完成时安全转入幂等回调兜底")
+    void shouldHandleConcurrentDuplicateKeyExceptionWhenAlreadyCompleted() {
+        String videoId = "vid-concurrent-done";
+        String vid = "cv999";
+
+        // 第一次查询返回空，模拟并发开始
+        // 第二次查询（冲突后重试）返回已被前置线程标记为 COMPLETED 的实体
+        VideoVector completedVector = new VideoVector(
+                "vvid-c1", videoId, vid, "local-hash-v1", 128, "[0.1]", true,
+                VectorStatus.COMPLETED, null, LocalDateTime.now(), LocalDateTime.now()
+        );
+        when(videoVectorRepository.findByVideoId(videoId))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(completedVector));
+
+        // 模拟并发插入抛出 DuplicateKeyException
+        doThrow(new DuplicateKeyException("Duplicate entry 'vid-concurrent-done' for key 'uk_recommend_video_vector_video_id'"))
+                .when(videoVectorRepository).save(any(VideoVector.class));
+
+        when(contentServiceClient.taskCallback(any())).thenReturn(ApiResponse.ok());
+
+        // 执行
+        service.processVideoEmbedding(videoId, vid, "author-1", "标题", "描述");
+
+        // 验证没有重复执行向量计算，直接走了幂等回调兜底
+        verify(embeddingRouter, never()).route(anyString());
+        ArgumentCaptor<TaskCallbackRequest> callbackCaptor = ArgumentCaptor.forClass(TaskCallbackRequest.class);
+        verify(contentServiceClient).taskCallback(callbackCaptor.capture());
+        assertThat(callbackCaptor.getValue().status()).isEqualTo("SUCCESS");
+        assertThat(callbackCaptor.getValue().videoId()).isEqualTo(videoId);
     }
 }

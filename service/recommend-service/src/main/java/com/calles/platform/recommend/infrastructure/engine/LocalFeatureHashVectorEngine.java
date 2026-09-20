@@ -73,7 +73,8 @@ public class LocalFeatureHashVectorEngine implements VectorEmbeddingEngine {
             int hash1 = murmurhash3_x86_32(bytes, 0, bytes.length, 0x9747b28c);
             int hash2 = murmurhash3_x86_32(bytes, 0, bytes.length, 0x1b873593);
 
-            int bucket = Math.abs(hash1 % dim);
+            // 位与 0x7fffffff 确保数值非负，规避 Integer.MIN_VALUE 取绝对值仍为负数的越界陷阱
+            int bucket = (hash1 & 0x7fffffff) % dim;
             float sign = (hash2 % 2 == 0) ? 1.0f : -1.0f;
 
             // 词长衰减加权，避免长杂质词统治权重

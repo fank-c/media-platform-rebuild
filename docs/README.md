@@ -23,14 +23,14 @@ graph TD
     end
 
     subgraph CoreServices ["核心微服务集群"]
-        Auth["认证服务 (auth:8010)"]
-        User["用户服务 (user:8020)"]
-        File["文件服务 (file:8040)"]
-        Content["内容服务 (content:8030)"]
-        Audit["审核服务 (audit:8050)"]
+        Auth["认证服务 (auth:8100)"]
+        User["用户服务 (user:8200)"]
+        Content["内容服务 (content:8300)"]
+        Audit["审核服务 (audit:8400)"]
+        Interaction["互动服务 (interaction:8500)"]
+        Recommend["推荐服务 (recommend:8600)"]
+        File["文件服务 (file:8700)"]
         Transcode["转码服务 (transcode:8800)"]
-        Interaction["互动服务 (interaction:8060)"]
-        Recommend["推荐服务 (recommend:8070)"]
     end
 
     subgraph InfraLayer ["基础设施层"]

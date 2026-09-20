@@ -40,40 +40,44 @@ public class VideoSubmittedConsumer {
     public void onVideoSubmitted(String payload) {
         log.info("推荐微服务接收到视频提审事件: payloadLength={}", payload != null ? payload.length() : 0);
 
+        // 步骤 1：反序列化强类型消息对象
+        VideoSubmittedMessage message;
         try {
-            // 步骤 1：反序列化强类型消息对象
-            VideoSubmittedMessage message = objectMapper.readValue(payload, VideoSubmittedMessage.class);
+            message = objectMapper.readValue(payload, VideoSubmittedMessage.class);
+        } catch (Exception e) {
+            log.error("反序列化视频提审事件消息失败，丢弃非法消息: payload={}, error={}", payload, e.getMessage(), e);
+            return;
+        }
 
-            // 步骤 2：防御性非空守卫
-            if (message == null || message.videoId() == null || message.videoId().isBlank()) {
-                log.warn("丢弃非法或缺失主键 videoId 的提审事件: payload={}", payload);
-                return;
+        // 步骤 2：防御性非空守卫
+        if (message == null || message.videoId() == null || message.videoId().isBlank()) {
+            log.warn("丢弃非法或缺失主键 videoId 的提审事件: payload={}", payload);
+            return;
+        }
+
+        // 步骤 3：绑定 traceId 全链路追踪上下文
+        String traceId = message.traceId() != null && !message.traceId().isBlank()
+                ? message.traceId()
+                : message.eventId();
+
+        try {
+            if (traceId != null && !traceId.isBlank()) {
+                MDC.put("traceId", traceId);
             }
 
-            // 步骤 3：在 Java 21 虚拟线程中异步推进向量化流水线
-            String traceId = message.traceId() != null && !message.traceId().isBlank()
-                    ? message.traceId()
-                    : message.eventId();
-
-            Thread.ofVirtual().name("recommend-vector-" + message.videoId()).start(() -> {
-                try {
-                    MDC.put("traceId", traceId);
-                    videoVectorApplicationService.processVideoEmbedding(
-                            message.videoId(),
-                            message.vid(),
-                            message.authorId(),
-                            message.title(),
-                            message.description()
-                    );
-                } catch (Exception e) {
-                    log.error("虚拟线程执行视频向量化流水线异常: videoId={}, error={}", message.videoId(), e.getMessage(), e);
-                } finally {
-                    MDC.remove("traceId");
-                }
-            });
-
+            // 步骤 4：在 Spring 容器托管的虚拟线程中推进向量化流水线
+            videoVectorApplicationService.processVideoEmbedding(
+                    message.videoId(),
+                    message.vid(),
+                    message.authorId(),
+                    message.title(),
+                    message.description()
+            );
         } catch (Exception e) {
-            log.error("反序列化视频提审事件消息失败: payload={}, error={}", payload, e.getMessage(), e);
+            log.error("推进视频特征向量化流水线发生未捕获致命异常: videoId={}, error={}", message.videoId(), e.getMessage(), e);
+            throw new RuntimeException("视频特征向量化消费处理失败: videoId=" + message.videoId(), e);
+        } finally {
+            MDC.remove("traceId");
         }
     }
 }

@@ -36,7 +36,7 @@ class VideoSubmittedConsumerTest {
     }
 
     @Test
-    @DisplayName("正确消费并解析合法的 content.video.submitted 提审消息并在虚拟线程派发")
+    @DisplayName("正确消费并解析合法的 content.video.submitted 提审消息并同步推进流水线")
     void shouldConsumeValidMessage() {
         String json = """
                 {
@@ -53,8 +53,7 @@ class VideoSubmittedConsumerTest {
 
         consumer.onVideoSubmitted(json);
 
-        // 异步派发至虚拟线程，利用 timeout 等待验证
-        verify(videoVectorApplicationService, timeout(2000)).processVideoEmbedding(
+        verify(videoVectorApplicationService).processVideoEmbedding(
                 eq("vid-300"),
                 eq("cv012345"),
                 eq("auth-50"),
@@ -77,6 +76,31 @@ class VideoSubmittedConsumerTest {
 
         verify(videoVectorApplicationService, never()).processVideoEmbedding(
                 anyString(), anyString(), anyString(), anyString(), anyString()
+        );
+    }
+
+    @Test
+    @DisplayName("流水线执行出现致命未捕获异常时向上抛出 RuntimeException 触发 MQ 重试")
+    void shouldThrowRuntimeExceptionWhenApplicationServiceFails() {
+        String json = """
+                {
+                    "eventId": "ev-101",
+                    "eventType": "content.video.submitted",
+                    "videoId": "vid-fatal-1",
+                    "vid": "cv012346",
+                    "authorId": "auth-50",
+                    "title": "测试",
+                    "description": "测试"
+                }
+                """;
+
+        org.mockito.Mockito.doThrow(new RuntimeException("数据库连接不可用"))
+                .when(videoVectorApplicationService)
+                .processVideoEmbedding(anyString(), anyString(), anyString(), anyString(), anyString());
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                RuntimeException.class,
+                () -> consumer.onVideoSubmitted(json)
         );
     }
 }

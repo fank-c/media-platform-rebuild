@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -60,7 +61,7 @@ public class VideoVectorApplicationService {
     public void processVideoEmbedding(String videoId, String vid, String authorId, String title, String description) {
         log.info("开始执行视频特征向量化流水线: videoId={}, vid={}", videoId, vid);
 
-        // 步骤 1：幂等性守卫校验
+        // 步骤 1：幂等性守卫校验与并发唯一键防重保护
         Optional<VideoVector> existingOpt = videoVectorRepository.findByVideoId(videoId);
         VideoVector videoVector;
         if (existingOpt.isPresent()) {
@@ -72,7 +73,22 @@ public class VideoVectorApplicationService {
             }
         } else {
             videoVector = VideoVector.init(videoId, vid);
-            videoVectorRepository.save(videoVector);
+            try {
+                videoVectorRepository.save(videoVector);
+            } catch (DataIntegrityViolationException ex) {
+                log.warn("检测到并发插入视频向量记录冲突，重新拉取已有记录: videoId={}, error={}", videoId, ex.getMessage());
+                existingOpt = videoVectorRepository.findByVideoId(videoId);
+                if (existingOpt.isPresent()) {
+                    videoVector = existingOpt.get();
+                    if (videoVector.getStatus() == VectorStatus.COMPLETED) {
+                        log.info("并发记录已由前置线程处理完成 (COMPLETED)，执行幂等回调兜底: videoId={}", videoId);
+                        notifyContentServiceSafe(videoId, true, null);
+                        return;
+                    }
+                } else {
+                    throw ex;
+                }
+            }
         }
 
         try {

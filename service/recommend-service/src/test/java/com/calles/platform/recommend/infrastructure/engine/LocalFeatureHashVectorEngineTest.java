@@ -84,6 +84,18 @@ class LocalFeatureHashVectorEngineTest {
         assertThat(res3.isValid()).isTrue();
     }
 
+    @Test
+    @DisplayName("验证非2的幂的任意奇数维度下不会发生负数取模越界")
+    void shouldHandleNonPowerOfTwoDimensionWithoutOverflow() {
+        RecommendEmbeddingProperties props = new RecommendEmbeddingProperties();
+        props.getLocal().setDimension(77); // 奇数且非2的幂
+        LocalFeatureHashVectorEngine oddEngine = new LocalFeatureHashVectorEngine(props);
+
+        EmbeddingResult result = oddEngine.generateEmbedding("测试任何可能导致负数哈希的随机长文本及特殊标点符号~!@#$%^&*()_+");
+        assertThat(result.isValid()).isTrue();
+        assertThat(result.dimension()).isEqualTo(77);
+    }
+
     private double cosineSimilarity(EmbeddingResult r1, EmbeddingResult r2) {
         double dotProduct = 0.0;
         for (int i = 0; i < r1.dimension(); i++) {
