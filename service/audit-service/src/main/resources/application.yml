@@ -47,8 +47,14 @@ audit:
     # 阿里云视频文件审核 Service 使用驼峰名称，必须与远端接口契约一致。
     video-service: ${AUDIT_ALIYUN_VIDEO_SERVICE:videoDetection}
     poll-timeout-seconds: ${AUDIT_ALIYUN_POLL_TIMEOUT_SECONDS:15}
-    poll-interval-millis: ${AUDIT_ALIYUN_POLL_INTERVAL_MILLIS:1500}
     short-probe-timeout-seconds: ${AUDIT_ALIYUN_SHORT_PROBE_TIMEOUT_SECONDS:3}
+    # 定时对账扫描任务执行间隔 (毫秒，默认 15000ms / 15s)
+    reconcile-interval-ms: ${AUDIT_ALIYUN_RECONCILE_INTERVAL_MS:15000}
+    # 动态超时预算参数：基准底噪 30s、时长系数 0.6、下限 45s、上限 600s
+    base-timeout-seconds: ${AUDIT_ALIYUN_BASE_TIMEOUT_SECONDS:30}
+    duration-ratio: ${AUDIT_ALIYUN_DURATION_RATIO:0.6}
+    min-timeout-seconds: ${AUDIT_ALIYUN_MIN_TIMEOUT_SECONDS:45}
+    max-timeout-seconds: ${AUDIT_ALIYUN_MAX_TIMEOUT_SECONDS:600}
 management:
   endpoints:
     web:

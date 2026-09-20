@@ -2,6 +2,7 @@ package com.calles.platform.audit.infrastructure.persistence.repository;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.calles.platform.audit.domain.model.AuditTask;
+import com.calles.platform.audit.domain.model.enums.AuditStage;
 import com.calles.platform.audit.domain.model.enums.CallbackStatus;
 import com.calles.platform.audit.domain.repository.AuditTaskRepository;
 import com.calles.platform.audit.infrastructure.persistence.entity.AuditTaskPO;
@@ -77,6 +78,22 @@ public class AuditTaskRepositoryImpl implements AuditTaskRepository {
             return Collections.emptyList();
         }
         // 步骤 2：批量映射为领域实体列表
+        return list.stream().map(AuditTaskPO::toDomain).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<AuditTask> findRunningMachineAuditTasks(int limit) {
+        // 步骤 1：构造条件，精准命中 idx_audit_stage_result 复合索引
+        LambdaQueryWrapper<AuditTaskPO> wrapper = new LambdaQueryWrapper<AuditTaskPO>()
+                .eq(AuditTaskPO::getStage, AuditStage.MACHINE_AUDITING.name())
+                .orderByAsc(AuditTaskPO::getCreatedAt)
+                .last("LIMIT " + Math.max(1, limit));
+
+        // 步骤 2：执行检索并转换为领域模型
+        List<AuditTaskPO> list = auditTaskMapper.selectList(wrapper);
+        if (list == null || list.isEmpty()) {
+            return Collections.emptyList();
+        }
         return list.stream().map(AuditTaskPO::toDomain).collect(Collectors.toList());
     }
 }

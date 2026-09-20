@@ -14,6 +14,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
  * @param description 视频简介文本快照
  * @param coverFileId 封面图片文件资产 ID
  * @param videoFileId 主视频文件资产 ID
+ * @param duration 视频播放时长（单位：秒）
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record VideoSubmittedPayload(
@@ -23,6 +24,21 @@ public record VideoSubmittedPayload(
         String title,
         String description,
         String coverFileId,
-        String videoFileId
+        String videoFileId,
+        Integer duration
 ) {
+    /**
+     * 向后兼容 7 参数旧事件结构构造函数，默认 duration 为 0。
+     */
+    public VideoSubmittedPayload(
+            String videoId,
+            String vid,
+            String authorId,
+            String title,
+            String description,
+            String coverFileId,
+            String videoFileId
+    ) {
+        this(videoId, vid, authorId, title, description, coverFileId, videoFileId, 0);
+    }
 }

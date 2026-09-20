@@ -19,6 +19,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
  * 视频提审消息消费者 {@link VideoSubmittedConsumer} 单元测试用例。
@@ -55,6 +56,7 @@ class VideoSubmittedConsumerTest {
                         "description": "测试视频简介",
                         "coverFileId": "f_cover_001",
                         "videoFileId": "f_video_001",
+                        "duration": 120,
                         "extraMetadata": {"codec": "h264"}
                     }
                 }
@@ -65,7 +67,7 @@ class VideoSubmittedConsumerTest {
         // When (执行消费者处理)
         consumer.onVideoSubmitted(message);
 
-        // Then (验证协调器收到正确的入参)
+        // Then (验证协调器收到正确的入参，包括视频时长)
         verify(auditTaskCoordinator).processVideoSubmission(
                 eq("v_test_001"),
                 eq("cv_0123456789012345678901"),
@@ -73,7 +75,8 @@ class VideoSubmittedConsumerTest {
                 eq("测试视频标题"),
                 eq("测试视频简介"),
                 eq("f_cover_001"),
-                eq("f_video_001")
+                eq("f_video_001"),
+                eq(120)
         );
     }
 
@@ -90,6 +93,7 @@ class VideoSubmittedConsumerTest {
                     "description": "扁平测试简介",
                     "coverFileId": "f_cover_flat",
                     "videoFileId": "f_video_flat",
+                    "duration": 60,
                     "traceId": "trace-flat-111"
                 }
                 """;
@@ -99,7 +103,7 @@ class VideoSubmittedConsumerTest {
         // When (执行消费者处理)
         consumer.onVideoSubmitted(message);
 
-        // Then (验证协调器成功接收扁平字段)
+        // Then (验证协调器成功接收扁平字段与时长)
         verify(auditTaskCoordinator).processVideoSubmission(
                 eq("v_flat_100"),
                 eq("cv_flat_100"),
@@ -107,7 +111,8 @@ class VideoSubmittedConsumerTest {
                 eq("扁平测试标题"),
                 eq("扁平测试简介"),
                 eq("f_cover_flat"),
-                eq("f_video_flat")
+                eq("f_video_flat"),
+                eq(60)
         );
     }
 
@@ -131,7 +136,7 @@ class VideoSubmittedConsumerTest {
         consumer.onVideoSubmitted(message);
 
         // Then (断言协调器未被触发)
-        verify(auditTaskCoordinator, never()).processVideoSubmission(any(), any(), any(), any(), any(), any(), any());
+        verifyNoInteractions(auditTaskCoordinator);
     }
 
     @Test
@@ -146,6 +151,6 @@ class VideoSubmittedConsumerTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("提审事件消费处理失败，触发重试");
 
-        verify(auditTaskCoordinator, never()).processVideoSubmission(any(), any(), any(), any(), any(), any(), any());
+        verifyNoInteractions(auditTaskCoordinator);
     }
 }

@@ -63,4 +63,12 @@ public interface AuditTaskRepository {
      * @return 待重试任务列表，未命中返回空列表
      */
     List<AuditTask> findPendingCallbacks(CallbackStatus status, int maxRetries, int limit);
+
+    /**
+     * 查询当前处于机审中 (MACHINE_AUDITING) 阶段的任务列表（供定时对账扫描器补查与超时判定）。
+     *
+     * @param limit 单批次最大拉取记录数
+     * @return 机审进行中的任务列表，未命中返回空列表
+     */
+    List<AuditTask> findRunningMachineAuditTasks(int limit);
 }

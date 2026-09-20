@@ -79,4 +79,29 @@ public class AliyunGreenProperties {
      * 云端回调模式下视频提交后的短时同步探测时限（秒），默认 3 秒（短视频快速出结果直接放行，超过则交由 Webhook 回调）。
      */
     private int shortProbeTimeoutSeconds = 3;
+
+    /**
+     * 系统定时对账扫描任务间隔（毫秒），默认 15000 毫秒 (15 秒)。
+     */
+    private long reconcileIntervalMs = 15000L;
+
+    /**
+     * 动态机审超时基准准备底噪（秒），默认 30 秒。
+     */
+    private int baseTimeoutSeconds = 30;
+
+    /**
+     * 动态机审超时时长加权系数，默认 0.6 秒/秒。
+     */
+    private double durationRatio = 0.6;
+
+    /**
+     * 动态机审超时最小保底下限（秒），默认 45 秒。
+     */
+    private int minTimeoutSeconds = 45;
+
+    /**
+     * 动态机审超时最大容忍上限（秒），默认 600 秒 (10 分钟)。
+     */
+    private int maxTimeoutSeconds = 600;
 }

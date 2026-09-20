@@ -37,7 +37,8 @@ public record VideoSubmittedMessage(
         String title,
         String description,
         String coverFileId,
-        String videoFileId
+        String videoFileId,
+        Integer duration
 ) {
     /**
      * 解析并获取最终的有效视频提审载荷。
@@ -57,7 +58,8 @@ public record VideoSubmittedMessage(
                 title,
                 description,
                 coverFileId,
-                videoFileId
+                videoFileId,
+                duration != null ? duration : 0
         );
     }
 }

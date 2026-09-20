@@ -129,11 +129,28 @@ public class AuditTaskCoordinator {
                 .toList();
         auditDetailRepository.insertBatch(details);
 
-        // 步骤 6：更新任务聚合根终审阶段与结论
+        // 步骤 6：一票否决短路：若已有维度命中 ILLEGAL 严重违规，直接终审驳回并完结
+        if (executionResult.overallLevel() == ReviewLevel.ILLEGAL) {
+            task.completeMachineAudit(ReviewLevel.ILLEGAL, executionResult.summaryReason());
+            auditTaskRepository.updateById(task);
+            callbackService.callbackContentService(task);
+            return task;
+        }
+
+        // 步骤 7：异步机审解耦：检查是否存在处于云端异步处理中的多媒体任务 (如 ASYNC_IN_PROGRESS)
+        boolean hasAsyncInProgress = executionResult.details().stream()
+                .anyMatch(d -> d.hitWords() != null && d.hitWords().contains("ASYNC_IN_PROGRESS"));
+        if (hasAsyncInProgress) {
+            // 保持在 MACHINE_AUDITING 状态，等待 Webhook 回调或定时对账扫描器推进，绝不提前推入人工待审池
+            log.info("审核任务 [{}] 多媒体机审已转入云端异步处理，保持机审中状态 (MACHINE_AUDITING) 并释放消费线程", task.getTaskNo());
+            return task;
+        }
+
+        // 步骤 8：无异步挂起，按常规机审结果更新任务聚合根终审阶段与结论
         task.completeMachineAudit(executionResult.overallLevel(), executionResult.summaryReason());
         auditTaskRepository.updateById(task);
 
-        // 步骤 7：若机审直接产生终局结果（PASSED 放行或 REJECTED 驳回），立即联动下游微服务完成门禁流转
+        // 步骤 9：若机审直接产生终局结果（PASSED 放行或 REJECTED 驳回），立即联动下游微服务完成门禁流转
         if (task.getStage() == AuditStage.FINISHED) {
             callbackService.callbackContentService(task);
         }
@@ -167,8 +184,35 @@ public class AuditTaskCoordinator {
             String coverFileId,
             String videoFileId
     ) {
+        return processVideoSubmission(videoId, vid, authorId, title, description, coverFileId, videoFileId, 0);
+    }
+
+    /**
+     * 针对视频业务提审的专属编排入口（支持视频时长）。
+     *
+     * @param videoId 关联视频全局主键 ID (UUID 32位)
+     * @param vid 视频公开对外短码 (如 cv10086)
+     * @param authorId 创作者账号唯一标识
+     * @param title 提审时的标题文本快照
+     * @param description 提审时的简介文本快照
+     * @param coverFileId 封面图片资产 ID
+     * @param videoFileId 主视频文件资产 ID
+     * @param duration 视频播放时长 (秒)
+     * @return 经过机审裁决或挂起流转后的审核任务聚合根实体
+     */
+    @Transactional
+    public AuditTask processVideoSubmission(
+            String videoId,
+            String vid,
+            String authorId,
+            String title,
+            String description,
+            String coverFileId,
+            String videoFileId,
+            Integer duration
+    ) {
         AuditContext context = AuditContext.forVideo(
-                null, videoId, vid, authorId, title, description, coverFileId, videoFileId
+                null, videoId, vid, authorId, title, description, coverFileId, videoFileId, duration, null
         );
         return submitTask(context);
     }

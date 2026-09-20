@@ -81,7 +81,8 @@ public class VideoSubmittedConsumer {
                     payload.title(),
                     payload.description(),
                     payload.coverFileId(),
-                    payload.videoFileId()
+                    payload.videoFileId(),
+                    payload.duration()
             );
         } catch (Exception e) {
             // 步骤 7：消费异常记录并向上抛出，交由 RabbitMQ 重试或转入死信队列 (DLQ)

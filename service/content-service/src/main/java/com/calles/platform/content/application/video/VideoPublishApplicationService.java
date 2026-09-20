@@ -203,6 +203,7 @@ public class VideoPublishApplicationService {
             payloadMap.put("description", video.getDescription() != null ? video.getDescription() : "");
             payloadMap.put("videoFileId", video.getVideoFileId());
             payloadMap.put("coverFileId", video.getCoverFileId());
+            payloadMap.put("duration", video.getDuration());
             payloadJson = objectMapper.writeValueAsString(payloadMap);
         } catch (Exception e) {
             log.error("构建视频提审 Outbox 载荷序列化异常: videoId={}", video.getId(), e);

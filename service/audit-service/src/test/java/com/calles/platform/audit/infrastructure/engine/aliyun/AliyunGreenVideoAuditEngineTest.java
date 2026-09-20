@@ -70,12 +70,12 @@ class AliyunGreenVideoAuditEngineTest {
         assertThat(result.hitWords()).contains("MISSING_VIDEO_FILE");
     }
 
-    /** 验证默认 Service 被正确传入阿里云请求，且无回调时可通过模拟轮询取得合规结果。 */
+    /** 验证提交任务即返回异步处理中状态，且正确使用 videoDetection Service，零线程阻塞。 */
     @Test
-    @DisplayName("轨道A：使用正确默认 Service 提交并主动轮询成功返回 NORMAL")
-    void shouldReturnNormalOnPollingSuccess() throws Exception {
+    @DisplayName("非阻塞提审：使用正确默认 Service 提交并立即返回 ASYNC_IN_PROGRESS")
+    void shouldReturnAsyncInProgressOnSubmit() throws Exception {
         when(fileServiceClient.getDownloadUrl(eq("video_123"), eq("user_1"), eq("USER")))
-                .thenReturn(ApiResponse.ok(new FileDownloadUrlDTO("http://minio.test/video.mp4", Instant.now().plusSeconds(300))));
+                .thenReturn(ApiResponse.ok(new FileDownloadUrlDTO("http://oss.test/video.mp4", Instant.now().plusSeconds(300))));
 
         // 模拟提交任务响应
         VideoModerationResponseBody submitBody = new VideoModerationResponseBody();
@@ -88,7 +88,23 @@ class AliyunGreenVideoAuditEngineTest {
 
         when(client.videoModeration(any(VideoModerationRequest.class))).thenReturn(submitResponse);
 
-        // 模拟轮询查询结果响应
+        EngineAuditResult result = engine.auditVideo("video_123", "user_1", "task_1");
+
+        // 断言提交即返回进行中，包含 taskId 与截止时间
+        assertThat(result.dimension()).isEqualTo(AuditDimension.VIDEO);
+        assertThat(result.hitWords()).contains("ASYNC_IN_PROGRESS");
+        assertThat(result.detailLog()).contains("ALIYUN_TASK_ID:aliyun_v_100");
+        assertThat(result.detailLog()).contains("DEADLINE:");
+
+        // 校验真正提交的请求 Service 是否与契约一致
+        ArgumentCaptor<VideoModerationRequest> requestCaptor = ArgumentCaptor.forClass(VideoModerationRequest.class);
+        verify(client).videoModeration(requestCaptor.capture());
+        assertThat(requestCaptor.getValue().getService()).isEqualTo("videoDetection");
+    }
+
+    @Test
+    @DisplayName("探针查询：云端完成时单次查询返回合规 NORMAL 明细")
+    void shouldReturnNormalOnQuerySuccess() throws Exception {
         VideoModerationResultResponseBody queryBody = new VideoModerationResultResponseBody();
         queryBody.setCode(200);
         VideoModerationResultResponseBody.VideoModerationResultResponseBodyData queryData = new VideoModerationResultResponseBody.VideoModerationResultResponseBodyData();
@@ -101,69 +117,16 @@ class AliyunGreenVideoAuditEngineTest {
 
         when(client.videoModerationResult(any(VideoModerationResultRequest.class))).thenReturn(queryResponse);
 
-        EngineAuditResult result = engine.auditVideo("video_123", "user_1", "task_1");
+        EngineAuditResult result = engine.queryVideoModerationResult("aliyun_v_100");
 
+        assertThat(result).isNotNull();
         assertThat(result.level()).isEqualTo(ReviewLevel.NORMAL);
         assertThat(result.detailLog()).contains("合规正常");
-
-        // 校验真正提交的请求，而非仅检查属性值，防止 Service 拼写错误再次漏检。
-        ArgumentCaptor<VideoModerationRequest> requestCaptor = ArgumentCaptor.forClass(VideoModerationRequest.class);
-        verify(client).videoModeration(requestCaptor.capture());
-        assertThat(requestCaptor.getValue().getService()).isEqualTo("videoDetection");
     }
 
     @Test
-    @DisplayName("轨道A：主动轮询超时自动降级为疑似人工审核")
-    void shouldDegradeWhenPollingTimesOut() throws Exception {
-        when(fileServiceClient.getDownloadUrl(eq("video_123"), eq("user_1"), eq("USER")))
-                .thenReturn(ApiResponse.ok(new FileDownloadUrlDTO("http://minio.test/video.mp4", Instant.now().plusSeconds(300))));
-
-        VideoModerationResponseBody submitBody = new VideoModerationResponseBody();
-        submitBody.setCode(200);
-        VideoModerationResponseBody.VideoModerationResponseBodyData submitData = new VideoModerationResponseBody.VideoModerationResponseBodyData();
-        submitData.setTaskId("aliyun_v_100");
-        submitBody.setData(submitData);
-        VideoModerationResponse submitResponse = new VideoModerationResponse();
-        submitResponse.setBody(submitBody);
-
-        when(client.videoModeration(any(VideoModerationRequest.class))).thenReturn(submitResponse);
-
-        // 轮询返回尚未就绪
-        VideoModerationResultResponseBody queryBody = new VideoModerationResultResponseBody();
-        queryBody.setCode(200);
-        VideoModerationResultResponseBody.VideoModerationResultResponseBodyData emptyData = new VideoModerationResultResponseBody.VideoModerationResultResponseBodyData();
-        queryBody.setData(emptyData);
-        VideoModerationResultResponse queryResponse = new VideoModerationResultResponse();
-        queryResponse.setBody(queryBody);
-
-        when(client.videoModerationResult(any(VideoModerationResultRequest.class))).thenReturn(queryResponse);
-
-        EngineAuditResult result = engine.auditVideo("video_123", "user_1", "task_1");
-
-        assertThat(result.level()).isEqualTo(ReviewLevel.SUSPICIOUS);
-        assertThat(result.hitWords()).contains("VIDEO_POLL_TIMEOUT");
-    }
-
-    @Test
-    @DisplayName("轨道B：配置回调地址时短时探测未完结则返回中间态等待 Webhook")
-    void shouldReturnAsyncInProgressWhenCallbackConfigured() throws Exception {
-        properties.setCallbackUrl("https://api.test/api/audit/callback/aliyun/video");
-        properties.setCallbackSeed("test_seed");
-
-        when(fileServiceClient.getDownloadUrl(eq("video_123"), eq("user_1"), eq("USER")))
-                .thenReturn(ApiResponse.ok(new FileDownloadUrlDTO("http://minio.test/video.mp4", Instant.now().plusSeconds(300))));
-
-        VideoModerationResponseBody submitBody = new VideoModerationResponseBody();
-        submitBody.setCode(200);
-        VideoModerationResponseBody.VideoModerationResponseBodyData submitData = new VideoModerationResponseBody.VideoModerationResponseBodyData();
-        submitData.setTaskId("aliyun_v_200");
-        submitBody.setData(submitData);
-        VideoModerationResponse submitResponse = new VideoModerationResponse();
-        submitResponse.setBody(submitBody);
-
-        when(client.videoModeration(any(VideoModerationRequest.class))).thenReturn(submitResponse);
-
-        // 3秒内短探测未出结果
+    @DisplayName("探针查询：云端未就绪时单次查询返回 null 供定时任务继续等待")
+    void shouldReturnNullWhenQueryStillInProgress() throws Exception {
         VideoModerationResultResponseBody queryBody = new VideoModerationResultResponseBody();
         queryBody.setCode(200);
         queryBody.setData(new VideoModerationResultResponseBody.VideoModerationResultResponseBodyData());
@@ -172,10 +135,25 @@ class AliyunGreenVideoAuditEngineTest {
 
         when(client.videoModerationResult(any(VideoModerationResultRequest.class))).thenReturn(queryResponse);
 
-        EngineAuditResult result = engine.auditVideo("video_123", "user_1", "task_1");
+        EngineAuditResult result = engine.queryVideoModerationResult("aliyun_v_100");
+
+        assertThat(result).isNull();
+    }
+
+    @Test
+    @DisplayName("轻量轮询：主动轮询超时自动降级为疑似人工审核")
+    void shouldDegradeWhenPollingTimesOut() throws Exception {
+        VideoModerationResultResponseBody queryBody = new VideoModerationResultResponseBody();
+        queryBody.setCode(200);
+        queryBody.setData(new VideoModerationResultResponseBody.VideoModerationResultResponseBodyData());
+        VideoModerationResultResponse queryResponse = new VideoModerationResultResponse();
+        queryResponse.setBody(queryBody);
+
+        when(client.videoModerationResult(any(VideoModerationResultRequest.class))).thenReturn(queryResponse);
+
+        EngineAuditResult result = engine.pollForVideoResult("aliyun_v_100", 1, 10);
 
         assertThat(result.level()).isEqualTo(ReviewLevel.SUSPICIOUS);
-        assertThat(result.hitWords()).contains("ASYNC_IN_PROGRESS");
-        assertThat(result.detailLog()).contains("aliyun_v_200");
+        assertThat(result.hitWords()).contains("VIDEO_POLL_TIMEOUT");
     }
 }

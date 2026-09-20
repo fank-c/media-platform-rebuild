@@ -23,6 +23,7 @@ public record AuditContext(
         String description,
         String coverFileId,
         String videoFileId,
+        Integer duration,
         Map<AuditDimension, EngineAuditResult> reusableResults
 ) {
     /**
@@ -53,7 +54,7 @@ public record AuditContext(
             String coverFileId,
             String videoFileId
     ) {
-        return forVideo(taskId, videoId, vid, authorId, title, description, coverFileId, videoFileId, null);
+        return forVideo(taskId, videoId, vid, authorId, title, description, coverFileId, videoFileId, 0, null);
     }
 
     /**
@@ -70,6 +71,24 @@ public record AuditContext(
             String videoFileId,
             Map<AuditDimension, EngineAuditResult> reusableResults
     ) {
+        return forVideo(taskId, videoId, vid, authorId, title, description, coverFileId, videoFileId, 0, reusableResults);
+    }
+
+    /**
+     * 构建包含视频时长与历史免审判定映射的完整视频审核上下文辅助工厂方法。
+     */
+    public static AuditContext forVideo(
+            String taskId,
+            String videoId,
+            String vid,
+            String authorId,
+            String title,
+            String description,
+            String coverFileId,
+            String videoFileId,
+            Integer duration,
+            Map<AuditDimension, EngineAuditResult> reusableResults
+    ) {
         return AuditContext.builder()
                 .taskId(taskId)
                 .bizType(AuditBizType.VIDEO)
@@ -80,6 +99,7 @@ public record AuditContext(
                 .description(description)
                 .coverFileId(coverFileId)
                 .videoFileId(videoFileId)
+                .duration(duration != null ? duration : 0)
                 .reusableResults(reusableResults)
                 .build();
     }

@@ -45,7 +45,6 @@ import java.util.Map;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 @ConditionalOnProperty(name = "audit.aliyun.enabled", havingValue = "true")
 public class AliyunGreenVideoAuditEngine implements VideoAuditEngine {
 
@@ -56,6 +55,31 @@ public class AliyunGreenVideoAuditEngine implements VideoAuditEngine {
     private final AliyunGreenProperties properties;
     private final FileServiceClient fileServiceClient;
     private final ObjectMapper objectMapper;
+    private final com.calles.platform.audit.domain.service.VideoAuditSlaCalculator slaCalculator;
+
+    public AliyunGreenVideoAuditEngine(
+            Client client,
+            AliyunGreenProperties properties,
+            FileServiceClient fileServiceClient,
+            ObjectMapper objectMapper
+    ) {
+        this(client, properties, fileServiceClient, objectMapper,
+                new com.calles.platform.audit.domain.service.VideoAuditSlaCalculator(properties));
+    }
+
+    public AliyunGreenVideoAuditEngine(
+            Client client,
+            AliyunGreenProperties properties,
+            FileServiceClient fileServiceClient,
+            ObjectMapper objectMapper,
+            com.calles.platform.audit.domain.service.VideoAuditSlaCalculator slaCalculator
+    ) {
+        this.client = client;
+        this.properties = properties;
+        this.fileServiceClient = fileServiceClient;
+        this.objectMapper = objectMapper;
+        this.slaCalculator = slaCalculator != null ? slaCalculator : new com.calles.platform.audit.domain.service.VideoAuditSlaCalculator(properties);
+    }
 
     @Override
     public AuditDimension getDimension() {
@@ -98,7 +122,7 @@ public class AliyunGreenVideoAuditEngine implements VideoAuditEngine {
         }
 
         try {
-            // 步骤 2：向文件微服务申请公网 MinIO 预签名拉流 URL
+            // 步骤 2：向文件微服务申请公网预签名拉流 URL
             String owner = (authorId != null && !authorId.isBlank()) ? authorId : "SYSTEM";
             ApiResponse<FileDownloadUrlDTO> urlResponse = fileServiceClient.getDownloadUrl(videoFileId, owner, "USER");
             if (urlResponse == null || urlResponse.data() == null || urlResponse.data().url() == null) {
@@ -150,32 +174,27 @@ public class AliyunGreenVideoAuditEngine implements VideoAuditEngine {
                 return fallbackSuspicious("ALIYUN_NO_TASK_ID", "未能取得阿里云视频任务编号，降级转人工审核");
             }
 
-            log.info("阿里云视频机审任务提交成功: aliyunTaskId=[{}], hasCallback=[{}]", aliyunTaskId, hasCallback);
+            // 步骤 5：动态推导超时时限与截止时刻，提交即返回（零线程物理阻塞）
+            com.calles.platform.audit.application.executor.model.AuditContext ctx =
+                    com.calles.platform.audit.application.executor.model.AuditContextHolder.get();
+            Integer duration = ctx != null ? ctx.duration() : 0;
+            int timeoutSeconds = slaCalculator != null ? slaCalculator.calculateTimeoutSeconds(duration) : 45;
+            java.time.Instant deadline = java.time.Instant.now().plusSeconds(timeoutSeconds);
 
-            // 步骤 5：依据网络配置分流执行双轨结果接收
-            if (!hasCallback) {
-                // 轨道 A：本地内网开发模式，启动持续主动轮询探针
-                return pollForVideoResult(aliyunTaskId, properties.getPollTimeoutSeconds(), properties.getPollIntervalMillis());
-            } else {
-                // 轨道 B：云端部署模式，先做短时探测（3秒），若未出结果则托管给 Webhook 回调
-                int probeSeconds = Math.max(1, properties.getShortProbeTimeoutSeconds());
-                EngineAuditResult probeResult = pollForVideoResult(aliyunTaskId, probeSeconds, 1000);
-                if (probeResult.level() != ReviewLevel.SUSPICIOUS || !isTimeoutResult(probeResult)) {
-                    log.info("视频机审在短时探测期内已出最终结果: level=[{}]", probeResult.level());
-                    return probeResult;
-                }
+            log.info("阿里云视频机审任务提交成功: aliyunTaskId=[{}], duration=[{}s], timeout=[{}s], deadline=[{}], hasCallback=[{}]",
+                    aliyunTaskId, duration, timeoutSeconds, deadline, hasCallback);
 
-                // 超过探测时限，返回进行中状态，由后续 Webhook 回调更新
-                log.info("视频机审耗时超过短探测窗口，转入异步 Webhook 监听等待: aliyunTaskId=[{}]", aliyunTaskId);
-                return EngineAuditResult.builder()
-                        .dimension(AuditDimension.VIDEO)
-                        .engineType(ENGINE_NAME)
-                        .level(ReviewLevel.SUSPICIOUS)
-                        .confidence(BigDecimal.valueOf(100.00))
-                        .hitWords(List.of("ASYNC_IN_PROGRESS"))
-                        .detailLog("视频较大已转入云端异步检测 (TaskId: " + aliyunTaskId + ")，等待 Webhook 回调通知")
-                        .build();
-            }
+            String detailLog = String.format("ALIYUN_TASK_ID:%s|DEADLINE:%s|DURATION:%d",
+                    aliyunTaskId, deadline.toString(), duration != null ? duration : 0);
+
+            return EngineAuditResult.builder()
+                    .dimension(AuditDimension.VIDEO)
+                    .engineType(ENGINE_NAME)
+                    .level(ReviewLevel.NORMAL)
+                    .confidence(BigDecimal.valueOf(100.00))
+                    .hitWords(List.of("ASYNC_IN_PROGRESS"))
+                    .detailLog(detailLog)
+                    .build();
 
         } catch (Exception e) {
             log.error("调用阿里云视频机审发生未受检异常: videoFileId=[{}], error=[{}]", videoFileId, e.getMessage(), e);
@@ -184,7 +203,42 @@ public class AliyunGreenVideoAuditEngine implements VideoAuditEngine {
     }
 
     /**
-     * 主动向阿里云查询视频审核结果并执行限时轮询。
+     * 单次向阿里云发起视频机审结果查询探针（供系统定时对账扫描器消费，零线程 sleep 阻塞）。
+     *
+     * @param aliyunTaskId 阿里云任务编号
+     * @return 若云端已出结果返回解析后的领域明细，若仍在处理中或查询失败返回 null
+     */
+    public EngineAuditResult queryVideoModerationResult(String aliyunTaskId) {
+        if (aliyunTaskId == null || aliyunTaskId.isBlank()) {
+            return null;
+        }
+        try {
+            // 步骤 1：组装查询请求载荷
+            Map<String, Object> queryParams = Map.of("taskId", aliyunTaskId);
+            VideoModerationResultRequest queryRequest = new VideoModerationResultRequest();
+            queryRequest.setService(properties.getVideoService());
+            queryRequest.setServiceParameters(objectMapper.writeValueAsString(queryParams));
+
+            // 步骤 2：发起 OpenAPI 单次查询
+            VideoModerationResultResponse queryResponse = client.videoModerationResult(queryRequest);
+            if (queryResponse != null && queryResponse.getBody() != null) {
+                VideoModerationResultResponseBody body = queryResponse.getBody();
+                if (body.getCode() != null && body.getCode() == 200 && body.getData() != null) {
+                    VideoModerationResultResponseBody.VideoModerationResultResponseBodyData data = body.getData();
+                    // 步骤 3：若帧或音频检测结果已产出，返回解析后的终局明细
+                    if (data.getFrameResult() != null || data.getAudioResult() != null) {
+                        return parseVideoResultData(data);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("单次查询阿里云视频结果发生异常: aliyunTaskId=[{}], error={}", aliyunTaskId, ex.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * 限时轮询查询视频审核结果（保留用于离线轻量单测）。
      *
      * @param aliyunTaskId 阿里云任务 ID
      * @param timeoutSeconds 最大超时时间 (秒)
@@ -196,33 +250,16 @@ public class AliyunGreenVideoAuditEngine implements VideoAuditEngine {
         long maxDurationMs = timeoutSeconds * 1000L;
 
         while (System.currentTimeMillis() - startTime < maxDurationMs) {
+            EngineAuditResult result = queryVideoModerationResult(aliyunTaskId);
+            if (result != null) {
+                return result;
+            }
             try {
                 Thread.sleep(intervalMillis);
-
-                // 步骤 1：组装查询请求
-                Map<String, Object> queryParams = Map.of("taskId", aliyunTaskId);
-                VideoModerationResultRequest queryRequest = new VideoModerationResultRequest();
-                queryRequest.setService(properties.getVideoService());
-                queryRequest.setServiceParameters(objectMapper.writeValueAsString(queryParams));
-
-                // 步骤 2：调用查询接口
-                VideoModerationResultResponse queryResponse = client.videoModerationResult(queryRequest);
-                if (queryResponse != null && queryResponse.getBody() != null) {
-                    VideoModerationResultResponseBody body = queryResponse.getBody();
-                    if (body.getCode() != null && body.getCode() == 200 && body.getData() != null) {
-                        VideoModerationResultResponseBody.VideoModerationResultResponseBodyData data = body.getData();
-                        // 步骤 3：若帧或音频检测结果已产出，说明机审完成
-                        if (data.getFrameResult() != null || data.getAudioResult() != null) {
-                            return parseVideoResultData(data);
-                        }
-                    }
-                }
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 log.warn("视频轮询被中断: aliyunTaskId=[{}]", aliyunTaskId);
                 break;
-            } catch (Exception ex) {
-                log.warn("单次轮询阿里云视频结果发生异常 (将继续重试): {}", ex.getMessage());
             }
         }
 
