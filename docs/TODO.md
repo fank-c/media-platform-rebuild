@@ -208,6 +208,13 @@
 
 ### 基础入口
 
-- [x] 提供服务启动入口与注册配置（工程骨架，无推荐业务接口）。
+- [x] 提供服务启动入口与注册配置（工程骨架，包含 MyBatis-Plus、MySQL、Redis、RabbitMQ、OpenFeign、Qdrant 向量库集成）。
 
-具体业务需求尚未细化，待讨论后拆分功能。
+### 视频特征向量化与内容门禁闭环
+
+- [x] 监听 RabbitMQ `content.video.submitted` 提审事件，在 Java 21 虚拟线程中异步计算视频高维特征向量。
+- [x] 设计双模向量引擎（优先标准通用 OpenAI 兼容协议，网络抖动或未配 Key 时自动降级为本地确定性 Feature Hashing 算法）。
+- [x] 对接 Qdrant 向量数据库（REST :6333），自动建立 `video_vectors` 集合（Cosine 距离），持久化 Point 并注入业务 Payload。
+- [x] 建立自属表 `recommend_video_vector` 与 Redis 向量热点缓存，保障服务内数据闭环与幂等防重。
+- [x] 通过 OpenFeign 客户端回调 `content-service` 的 `/api/content/videos/internal/task-callback` 接口，汇报 `VECTOR_EMBEDDING` 为 `SUCCESS`，打通平台视频发布门禁全链路。
+

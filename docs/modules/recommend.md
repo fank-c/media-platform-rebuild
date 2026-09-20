@@ -188,8 +188,22 @@ graph TD
 
 ---
 
-## 8. 核心源码入口索引
+## 8. 核心数据库与存储规范
+
+- **自属数据库表**：[`recommend_video_vector`](../../service/recommend-service/db/schema/recommend-video-vector.sql)（记录视频向量、模型标识、维度、Qdrant 同步状态与处理状态，唯一键 `video_id`，索引 `vid`）；
+- **Qdrant 向量数据库**：集合 `video_vectors`（Cosine 距离 HNSW 索引），Point ID 为视频 UUID，Payload 携带 `vid`、`authorId`、`title`、`modelName`；负责视频近邻向量索引与后续基于锚点视频的相似召回（Recommend API）。
+
+
+---
+
+## 9. 核心源码入口索引
 
 - **启动类**：[`RecommendApplication.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/RecommendApplication.java)
 - **本地配置文件**：[`application.yml`](../../service/recommend-service/src/main/resources/application.yml)
+- **MQ 提审消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)
+- **向量应用编排**：[`VideoVectorApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/VideoVectorApplicationService.java)
+- **向量引擎路由**：[`VectorEmbeddingEngineRouter.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/engine/VectorEmbeddingEngineRouter.java)
+- **Qdrant 客户端**：[`QdrantClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/qdrant/QdrantClient.java)
+- **内容门禁回调**：[`ContentServiceClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/client/ContentServiceClient.java)
 - **网关路由**：统一由网关转发 `/api/recommend/**` ➔ `lb://recommend-service`。
+

@@ -25,6 +25,39 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:media}
     password: ${RABBITMQ_PASSWORD:media}
+  datasource:
+    # 数据库连接配置：第一阶段共用同一 MySQL 实例，通过 recommend_* 前缀隔离表所有权
+    url: ${RECOMMEND_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${RECOMMEND_DB_USERNAME:media}
+    password: ${RECOMMEND_DB_PASSWORD:media}
+
+# 推荐模块业务专有配置
+recommend:
+  # 向量特征计算配置
+  embedding:
+    # 引擎类型：remote (默认优先远程大模型) | local (纯本地特征哈希) | mock (测试桩)
+    type: ${RECOMMEND_EMBEDDING_TYPE:remote}
+    # 远程异常/未配置 Key 时是否自动回退至本地算法保底
+    fallback-to-local: ${RECOMMEND_EMBEDDING_FALLBACK_TO_LOCAL:true}
+    openai:
+      base-url: ${RECOMMEND_EMBEDDING_OPENAI_BASE_URL:https://api.openai.com/v1}
+      api-key: ${RECOMMEND_EMBEDDING_OPENAI_API_KEY:}
+      model: ${RECOMMEND_EMBEDDING_OPENAI_MODEL:text-embedding-3-small}
+      dimension: ${RECOMMEND_EMBEDDING_OPENAI_DIMENSION:1536}
+      timeout-ms: ${RECOMMEND_EMBEDDING_OPENAI_TIMEOUT_MS:5000}
+    local:
+      dimension: ${RECOMMEND_EMBEDDING_LOCAL_DIMENSION:128}
+  # Qdrant 向量数据库配置
+  qdrant:
+    enabled: ${RECOMMEND_QDRANT_ENABLED:true}
+    host: ${RECOMMEND_QDRANT_HOST:localhost}
+    port: ${RECOMMEND_QDRANT_PORT:6333}
+    collection-name: ${RECOMMEND_QDRANT_COLLECTION:video_vectors}
+    timeout-ms: ${RECOMMEND_QDRANT_TIMEOUT_MS:3000}
+  # 回调内容服务参数
+  callback:
+    max-retries: 5
+
 management:
   endpoints:
     web:
