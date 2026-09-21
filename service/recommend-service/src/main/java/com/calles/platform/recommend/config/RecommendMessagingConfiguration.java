@@ -30,9 +30,34 @@ public class RecommendMessagingConfiguration {
     /** 视频提审发布领域事件路由键。 */
     public static final String VIDEO_SUBMITTED_ROUTING_KEY = "content.video.submitted";
 
+    /** 推荐微服务正式发布入池专属消费队列名称。 */
+    public static final String VIDEO_PUBLISHED_QUEUE = "recommend-service.video-published.v1";
+
+    /** 视频公开发布领域事件路由键。 */
+    public static final String VIDEO_PUBLISHED_ROUTING_KEY = "content.video.published";
+
+    /** 推荐微服务视频生命周期清退专属消费队列名称。 */
+    public static final String VIDEO_LIFECYCLE_QUEUE = "recommend-service.video-lifecycle.v1";
+
+    /** 视频下架领域事件路由键。 */
+    public static final String VIDEO_OFFLINED_ROUTING_KEY = "content.video.offlined";
+
+    /** 视频封禁领域事件路由键。 */
+    public static final String VIDEO_BANNED_ROUTING_KEY = "content.video.banned";
+
     @Bean
     public Queue recommendVideoSubmittedQueue() {
         return new Queue(VIDEO_SUBMITTED_QUEUE, true);
+    }
+
+    @Bean
+    public Queue recommendVideoPublishedQueue() {
+        return new Queue(VIDEO_PUBLISHED_QUEUE, true);
+    }
+
+    @Bean
+    public Queue recommendVideoLifecycleQueue() {
+        return new Queue(VIDEO_LIFECYCLE_QUEUE, true);
     }
 
     @Bean
@@ -45,5 +70,26 @@ public class RecommendMessagingConfiguration {
         return BindingBuilder.bind(recommendVideoSubmittedQueue)
                 .to(recommendMediaEventsExchange)
                 .with(VIDEO_SUBMITTED_ROUTING_KEY);
+    }
+
+    @Bean
+    public Binding recommendVideoPublishedBinding(Queue recommendVideoPublishedQueue, TopicExchange recommendMediaEventsExchange) {
+        return BindingBuilder.bind(recommendVideoPublishedQueue)
+                .to(recommendMediaEventsExchange)
+                .with(VIDEO_PUBLISHED_ROUTING_KEY);
+    }
+
+    @Bean
+    public Binding recommendVideoOfflinedBinding(Queue recommendVideoLifecycleQueue, TopicExchange recommendMediaEventsExchange) {
+        return BindingBuilder.bind(recommendVideoLifecycleQueue)
+                .to(recommendMediaEventsExchange)
+                .with(VIDEO_OFFLINED_ROUTING_KEY);
+    }
+
+    @Bean
+    public Binding recommendVideoBannedBinding(Queue recommendVideoLifecycleQueue, TopicExchange recommendMediaEventsExchange) {
+        return BindingBuilder.bind(recommendVideoLifecycleQueue)
+                .to(recommendMediaEventsExchange)
+                .with(VIDEO_BANNED_ROUTING_KEY);
     }
 }

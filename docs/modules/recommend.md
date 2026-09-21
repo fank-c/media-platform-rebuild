@@ -190,7 +190,9 @@ graph TD
 
 ## 8. 核心数据库与存储规范
 
-- **自属数据库表**：[`recommend_video_vector`](../../service/recommend-service/db/schema/recommend-video-vector.sql)（记录视频向量、模型标识、维度、Qdrant 同步状态与处理状态，唯一键 `video_id`，索引 `vid`）；
+- **自属数据库表**：
+  - [`recommend_video_vector`](../../service/recommend-service/db/schema/recommend-video-vector.sql)：记录视频向量、模型标识、维度、Qdrant 同步状态与处理状态，唯一键 `video_id`，索引 `vid`；
+  - [`recommend_candidate_video`](../../service/recommend-service/db/schema/recommend-candidate-video.sql)：推荐候选池轻量元数据表，维护作者打散维度（`author_id`）、领域/主题标签属性（`domain_tag_ids`/`topic_tag_ids`）与生命周期准入状态（`status: ACTIVE/OFFLINE/BANNED`）。
 - **Qdrant 向量数据库**：集合 `video_vectors`（Cosine 距离 HNSW 索引），Point ID 为视频 UUID，Payload 携带 `vid`、`authorId`、`title`、`modelName`；负责视频近邻向量索引与后续基于锚点视频的相似召回（Recommend API）。
 
 

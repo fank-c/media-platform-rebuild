@@ -218,3 +218,9 @@
 - [x] 建立自属表 `recommend_video_vector` 与 Redis 向量热点缓存，保障服务内数据闭环与幂等防重。
 - [x] 通过 OpenFeign 客户端回调 `content-service` 的 `/api/content/videos/internal/task-callback` 接口，汇报 `VECTOR_EMBEDDING` 为 `SUCCESS`，打通平台视频发布门禁全链路。
 
+### 推荐候选池库存与生命周期闭环
+
+- [x] 建立自属推荐候选池轻量元数据表 `recommend_candidate_video`，负责维护作者打散维度、领域/主题标签属性及推荐可用状态。
+- [x] 监听 RabbitMQ `content.video.published` 发布上线事件，以强幂等方式将新作品正式准入推荐候选库存池（`status=ACTIVE`）。
+- [x] 监听 RabbitMQ `content.video.offlined` 与 `content.video.banned` 生命周期事件，将候选状态变更为 `OFFLINE` 或 `BANNED`，实现合规清退与熔断下线。
+
