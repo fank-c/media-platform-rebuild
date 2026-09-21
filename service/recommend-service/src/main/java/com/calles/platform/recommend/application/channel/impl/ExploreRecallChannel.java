@@ -35,7 +35,7 @@ import java.util.*;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class ExploreRecallChannel implements RecommendRecallChannel {
+public class ExploreRecallChannel extends AbstractRecallChannel {
 
     /** 通道唯一业务标识。 */
     public static final String CHANNEL_NAME = "EXPLORE";
@@ -158,7 +158,7 @@ public class ExploreRecallChannel implements RecommendRecallChannel {
             Map<String, Double> scoreMap = new HashMap<>();
 
             for (ScoredPoint p : middleRange) {
-                String vid = extractVid(p);
+                String vid = extractVidFromPoint(p);
                 if (vid != null && !vid.isBlank()) {
                     vids.add(vid);
                     scoreMap.put(vid, p.score() != null ? Math.max(0.01, p.score()) : 0.5);
@@ -236,31 +236,5 @@ public class ExploreRecallChannel implements RecommendRecallChannel {
         }
 
         return result;
-    }
-
-    /**
-     * 从 Qdrant 打分点提取视频业务短码。
-     *
-     * @param point 向量检索打分结果点
-     * @return 视频短码 vid
-     */
-    private String extractVid(ScoredPoint point) {
-        if (point == null) return null;
-        if (point.payload() != null && point.payload().get("vid") != null) {
-            return point.payload().get("vid").toString();
-        }
-        return point.id();
-    }
-
-    /**
-     * 提取逗号分隔的标签字符串中的首个主要领域标签。
-     *
-     * @param tags 标签 ID 字符串
-     * @return 首要标签 ID，空时返回 null
-     */
-    private String extractPrimaryTag(String tags) {
-        if (tags == null || tags.isBlank()) return null;
-        String[] parts = tags.split(",");
-        return parts.length > 0 ? parts[0].trim() : null;
     }
 }

@@ -47,6 +47,11 @@ public class FollowingRecallChannel implements RecommendRecallChannel {
         return TARGET_PERCENTAGE;
     }
 
+    @Override
+    public boolean supports(RecallContext context) {
+        return context != null && context.isLogin();
+    }
+
     /**
      * 执行关注流召回。
      *

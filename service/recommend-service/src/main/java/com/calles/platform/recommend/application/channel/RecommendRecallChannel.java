@@ -42,4 +42,16 @@ public interface RecommendRecallChannel {
      * @return 召回候选物料列表 (按通道内专属度量打分降序排列，空列表代表无匹配候选)
      */
     List<RecalledCandidate> recall(RecallContext context, int count);
+
+    /**
+     * 判断该召回通道在当前上下文条件下是否应被激活执行。
+     *
+     * <p>支持各异构通道前置短路判断（例如个性化利用通道在游客或无向量画像时直接跳过，避免无效线程开销）。</p>
+     *
+     * @param context 统一召回上下文
+     * @return true 表示通道在当前上下文有效且需执行，false 表示跳过该通道
+     */
+    default boolean supports(RecallContext context) {
+        return true;
+    }
 }

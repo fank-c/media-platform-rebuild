@@ -16,6 +16,7 @@ import com.calles.platform.recommend.domain.model.profile.UserProfile;
 import com.calles.platform.recommend.domain.repository.CandidateVideoRepository;
 import com.calles.platform.recommend.domain.repository.UserBlockRepository;
 import com.calles.platform.recommend.domain.repository.UserProfileRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,6 +29,7 @@ import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -55,6 +57,24 @@ class RecommendFeedApplicationServiceTest {
 
     @InjectMocks
     private RecommendFeedApplicationService service;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(personalizedRecallChannel.getChannelName()).thenReturn("PERSONALIZED");
+        lenient().when(exploreRecallChannel.getChannelName()).thenReturn("EXPLORE");
+        lenient().when(trendingRecallChannel.getChannelName()).thenReturn("TRENDING");
+        lenient().when(followingRecallChannel.getChannelName()).thenReturn("FOLLOWING");
+
+        lenient().when(personalizedRecallChannel.getTargetRatioPercentage()).thenReturn(50);
+        lenient().when(exploreRecallChannel.getTargetRatioPercentage()).thenReturn(30);
+        lenient().when(trendingRecallChannel.getTargetRatioPercentage()).thenReturn(10);
+        lenient().when(followingRecallChannel.getTargetRatioPercentage()).thenReturn(10);
+
+        lenient().when(personalizedRecallChannel.supports(any())).thenReturn(true);
+        lenient().when(exploreRecallChannel.supports(any())).thenReturn(true);
+        lenient().when(trendingRecallChannel.supports(any())).thenReturn(true);
+        lenient().when(followingRecallChannel.supports(any())).thenReturn(true);
+    }
 
     private CandidateVideo createVideo(String id, String videoId, String vid, String authorId,
                                        String domain, String topic, CandidateStatus status) {
@@ -119,7 +139,7 @@ class RecommendFeedApplicationServiceTest {
         when(followingRecallChannel.recall(any(), anyInt())).thenReturn(Collections.emptyList());
 
         // 候选池补齐
-        org.mockito.Mockito.lenient().when(candidateVideoRepository.findRecentActive(anyInt())).thenReturn(Collections.emptyList());
+        lenient().when(candidateVideoRepository.findRecentActive(anyInt())).thenReturn(Collections.emptyList());
 
         RecommendFeedResult result = service.getPersonalizedFeed(userId, 3);
 
@@ -191,7 +211,7 @@ class RecommendFeedApplicationServiceTest {
         when(exploreRecallChannel.recall(any(), anyInt())).thenReturn(Collections.emptyList());
         when(trendingRecallChannel.recall(any(), anyInt())).thenReturn(Collections.emptyList());
         when(followingRecallChannel.recall(any(), anyInt())).thenReturn(Collections.emptyList());
-        org.mockito.Mockito.lenient().when(candidateVideoRepository.findRecentActive(anyInt())).thenReturn(Collections.emptyList());
+        lenient().when(candidateVideoRepository.findRecentActive(anyInt())).thenReturn(Collections.emptyList());
 
         RecommendFeedResult result = service.getPersonalizedFeed(null, 4);
 
@@ -205,4 +225,79 @@ class RecommendFeedApplicationServiceTest {
         assertThat(indexA1).isEqualTo(0);
         assertThat(indexA2).isGreaterThanOrEqualTo(3);
     }
+
+    @Test
+    @DisplayName("异常隔离与容错：单一通道执行异常时被安全捕获熔断，其他正常通道不受影响")
+    void shouldGracefullyIsolateChannelException() {
+        String userId = "user_fault_isolate";
+        UserProfile profile = UserProfile.initialize(userId);
+
+        when(userProfileRepository.findByUserId(userId)).thenReturn(Optional.of(profile));
+        when(userBlockRepository.findByUserId(userId)).thenReturn(Collections.emptyList());
+
+        // 核心个性化通道抛出向量库超时/连接异常
+        when(personalizedRecallChannel.recall(any(), anyInt())).thenThrow(new RuntimeException("Qdrant connection timeout"));
+
+        // 热度通道正常返回
+        CandidateVideo t1 = createVideo("ct1", "vt1", "vid_t1", "author_t1", "news", "daily", CandidateStatus.ACTIVE);
+        when(trendingRecallChannel.recall(any(), anyInt())).thenReturn(List.of(
+                new RecalledCandidate(t1, "TRENDING", 0.88, "全站热点")
+        ));
+        when(exploreRecallChannel.recall(any(), anyInt())).thenReturn(Collections.emptyList());
+        when(followingRecallChannel.recall(any(), anyInt())).thenReturn(Collections.emptyList());
+        lenient().when(candidateVideoRepository.findRecentActive(anyInt())).thenReturn(Collections.emptyList());
+
+        RecommendFeedResult result = service.getPersonalizedFeed(userId, 2);
+
+        // 验证整体流程并未被个别通道的未受检异常击垮
+        assertThat(result).isNotNull();
+        assertThat(result.getItems()).hasSize(1);
+        assertThat(result.getItems().get(0).getVid()).isEqualTo("vid_t1");
+        assertThat(result.getItems().get(0).getChannel()).isEqualTo("TRENDING");
+    }
+
+    @Test
+    @DisplayName("开闭原则与动态通道扩展：支持通过 List<RecommendRecallChannel> 动态编排自定义通道")
+    void shouldSupportDynamicChannelsViaOpenClosedPrinciple() {
+        String userId = "user_dynamic_test";
+        UserProfile profile = UserProfile.initialize(userId);
+
+        when(userProfileRepository.findByUserId(userId)).thenReturn(Optional.of(profile));
+        when(userBlockRepository.findByUserId(userId)).thenReturn(Collections.emptyList());
+
+        CandidateVideo customVideo = createVideo("cx1", "vx1", "vid_custom_1", "author_x", "sports", "football", CandidateStatus.ACTIVE);
+
+        // 自定义召回通道实现 (零侵入核心编排代码)
+        RecommendRecallChannel customChannel = new RecommendRecallChannel() {
+            @Override
+            public String getChannelName() {
+                return "SPORTS_TOPIC";
+            }
+
+            @Override
+            public int getTargetRatioPercentage() {
+                return 40;
+            }
+
+            @Override
+            public List<RecalledCandidate> recall(RecallContext context, int count) {
+                return List.of(new RecalledCandidate(customVideo, "SPORTS_TOPIC", 0.92, "热门赛事"));
+            }
+        };
+
+        RecommendFeedApplicationService dynamicService = new RecommendFeedApplicationService(
+                userProfileRepository,
+                userBlockRepository,
+                candidateVideoRepository,
+                List.of(customChannel)
+        );
+
+        RecommendFeedResult result = dynamicService.getPersonalizedFeed(userId, 1);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getItems()).hasSize(1);
+        assertThat(result.getItems().get(0).getVid()).isEqualTo("vid_custom_1");
+        assertThat(result.getItems().get(0).getChannel()).isEqualTo("SPORTS_TOPIC");
+    }
 }
+

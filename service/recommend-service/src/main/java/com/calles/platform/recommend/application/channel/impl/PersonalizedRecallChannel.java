@@ -30,7 +30,7 @@ import java.util.*;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PersonalizedRecallChannel implements RecommendRecallChannel {
+public class PersonalizedRecallChannel extends AbstractRecallChannel {
 
     /** 通道唯一业务标识。 */
     public static final String CHANNEL_NAME = "PERSONALIZED";
@@ -55,6 +55,15 @@ public class PersonalizedRecallChannel implements RecommendRecallChannel {
     @Override
     public int getTargetRatioPercentage() {
         return TARGET_PERCENTAGE;
+    }
+
+    @Override
+    public boolean supports(RecallContext context) {
+        return context != null
+                && context.isLogin()
+                && context.getUserProfile() != null
+                && context.getUserProfile().getUserVector() != null
+                && !context.getUserProfile().getUserVector().isEmpty();
     }
 
     @Override
@@ -150,35 +159,5 @@ public class PersonalizedRecallChannel implements RecommendRecallChannel {
         // 步骤 5：通道内降序排序并截断
         result.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
         return result.size() > count ? result.subList(0, count) : result;
-    }
-
-    /**
-     * 从 Qdrant 检索命中的点结构中提取视频短码 (vid)。
-     *
-     * @param point Qdrant 检索打分点对象
-     * @return 业务短码 vid，若 payload 中未包含则降级使用 point id
-     */
-    private String extractVidFromPoint(ScoredPoint point) {
-        if (point == null) {
-            return null;
-        }
-        if (point.payload() != null && point.payload().get("vid") != null) {
-            return point.payload().get("vid").toString();
-        }
-        return point.id();
-    }
-
-    /**
-     * 提取逗号分隔的标签字符串中的首要标签（泛化领域）。
-     *
-     * @param tags 逗号分隔的标签 ID 字符串 (如 "tag_tech,tag_ai")
-     * @return 首个标签标识，无标签时返回 null
-     */
-    private String extractPrimaryTag(String tags) {
-        if (tags == null || tags.isBlank()) {
-            return null;
-        }
-        String[] parts = tags.split(",");
-        return parts.length > 0 ? parts[0].trim() : null;
     }
 }
