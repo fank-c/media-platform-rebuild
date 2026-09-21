@@ -122,10 +122,21 @@ public class ExploreRecallChannel extends AbstractRecallChannel {
         return result;
     }
 
+    /** 近似探索向量检索深度上限 (30~40 之间的逃离窗口)。 */
+    private static final int SIMILAR_VECTOR_SEARCH_LIMIT = 35;
+
     /**
-     * 召回近似探索物料：截取向量检索次优区间 (Rank 6~25)。
+     * 召回近似探索物料：通过受限窗口向量检索与倒排，并在用户活跃粗领域内发散探索。
      *
-     * <p>避开头部 Top 5 最相似内容（留给核心个性化），向外发散探索相似但不雷同的内容品类。</p>
+     * <p>算法设计说明：
+     * <ul>
+     *   <li><b>逃离窗口与倒排</b>：限制检索深度在 30~40 之间（{@value #SIMILAR_VECTOR_SEARCH_LIMIT}），
+     *       倒排后按余弦相似度由低到高遍历，锁定外围弱关联物料，逃离高密度同质向量簇；</li>
+     *   <li><b>粗标签校验保底</b>：仅校验物料的主领域是否属于用户已有活跃大领域（Domain），
+     *       确保与用户兴趣保持一定大方向关联，同时不对细标签做人为约束，实现同大类下细分支的自然随机探索；</li>
+     *   <li><b>防重叠机制</b>：与核心个性化通道形成天然空间与语义错位，极大降低后续槽位交织冲突率。</li>
+     * </ul>
+     * </p>
      *
      * @param context 召回上下文
      * @param limit 期望获取的最大候选数量
@@ -141,23 +152,25 @@ public class ExploreRecallChannel extends AbstractRecallChannel {
         }
 
         try {
-            // 步骤 1：发起较大召回深度的 ANN 检索
+            // 步骤 1：发起深度受限的 ANN 检索 (30~40 逃离窗口)
             List<ScoredPoint> points = qdrantClient.searchPoints(
                     qdrantProperties.getCollectionName(),
                     profile.getUserVector().getVector(),
-                    30
+                    SIMILAR_VECTOR_SEARCH_LIMIT
             );
 
-            if (points == null || points.size() <= 5) {
+            if (points == null || points.isEmpty()) {
                 return Collections.emptyList();
             }
 
-            // 步骤 2：截取中后段次优区间 [5, min(30, points.size())] 避开头部同质化
-            List<ScoredPoint> middleRange = points.subList(5, Math.min(points.size(), 25));
+            // 步骤 2：对检索点集合执行倒排 (余弦相似度由低到高，锁定弱关联边缘带)
+            List<ScoredPoint> reversedPoints = new ArrayList<>(points);
+            Collections.reverse(reversedPoints);
+
             List<String> vids = new ArrayList<>();
             Map<String, Double> scoreMap = new HashMap<>();
 
-            for (ScoredPoint p : middleRange) {
+            for (ScoredPoint p : reversedPoints) {
                 String vid = extractVidFromPoint(p);
                 if (vid != null && !vid.isBlank()) {
                     vids.add(vid);
@@ -169,15 +182,42 @@ public class ExploreRecallChannel extends AbstractRecallChannel {
                 return Collections.emptyList();
             }
 
-            // 步骤 3：批量加载候选实体并校验可推荐状态
+            // 步骤 3：提取用户活跃的偏好粗领域集合 (未被严重抑制的大类)
+            Set<String> activeDomains = Collections.emptySet();
+            if (profile.getDomainStates() != null && !profile.getDomainStates().isEmpty()) {
+                activeDomains = profile.getDomainStates().keySet();
+            }
+
+            // 步骤 4：批量加载候选实体，按倒排顺序基于粗标签过滤采纳
             List<CandidateVideo> candidates = candidateVideoRepository.findByVids(vids);
-            List<RecalledCandidate> list = new ArrayList<>();
+            Map<String, CandidateVideo> candidateMap = new HashMap<>();
             for (CandidateVideo cv : candidates) {
-                if (cv.isRecommendable()) {
-                    Double s = scoreMap.get(cv.getVid());
-                    list.add(new RecalledCandidate(cv, SUB_CHANNEL_SIMILAR, s != null ? s : 0.6, "相似兴趣探索"));
+                if (cv != null && cv.getVid() != null) {
+                    candidateMap.put(cv.getVid(), cv);
                 }
             }
+
+            List<RecalledCandidate> list = new ArrayList<>();
+            for (String vid : vids) {
+                if (list.size() >= limit) {
+                    break;
+                }
+                CandidateVideo cv = candidateMap.get(vid);
+                if (cv == null || !cv.isRecommendable()) {
+                    continue;
+                }
+
+                // 粗标签 (Domain) 校验：若用户已建立粗领域画像，物料主领域必须命中，保证近似性
+                String primaryDomain = extractPrimaryTag(cv.getDomainTagIds());
+                if (!activeDomains.isEmpty() && (primaryDomain == null || !activeDomains.contains(primaryDomain))) {
+                    continue;
+                }
+
+                Double rawScore = scoreMap.get(cv.getVid());
+                double score = rawScore != null ? rawScore : 0.6;
+                list.add(new RecalledCandidate(cv, SUB_CHANNEL_SIMILAR, score, "相似领域探索"));
+            }
+
             return list;
         } catch (Exception ex) {
             log.warn("近似探索向量召回发生异常，降级为空列表: error={}", ex.getMessage());
