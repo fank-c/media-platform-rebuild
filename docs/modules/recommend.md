@@ -192,9 +192,11 @@ graph TD
 
 - **自属数据库表**：
   - [`recommend_video_vector`](../../service/recommend-service/db/schema/recommend-video-vector.sql)：记录视频向量、模型标识、维度、Qdrant 同步状态与处理状态，唯一键 `video_id`，索引 `vid`；
-  - [`recommend_candidate_video`](../../service/recommend-service/db/schema/recommend-candidate-video.sql)：推荐候选池轻量元数据表，维护作者打散维度（`author_id`）、领域/主题标签属性（`domain_tag_ids`/`topic_tag_ids`）与生命周期准入状态（`status: ACTIVE/OFFLINE/BANNED`）。
+  - [`recommend_candidate_video`](../../service/recommend-service/db/schema/recommend-candidate-video.sql)：推荐候选池轻量元数据表，维护作者打散维度（`author_id`）、领域/主题标签属性（`domain_tag_ids`/`topic_tag_ids`）与生命周期准入状态（`status: ACTIVE/OFFLINE/BANNED`）；
+  - [`recommend_user_profile`](../../service/recommend-service/db/schema/recommend-user-model.sql)：用户推荐兴趣画像与状态快照表，维护用户即时检索向量、细粒度主题偏好分快照、粗领域状态快照、近期观看短码序列与乐观锁版本；
+  - [`recommend_user_block`](../../service/recommend-service/db/schema/recommend-user-model.sql)：用户明确屏蔽与负反馈约束表，维护拉黑的视频、作者与主题标签，作为召回后的最高优先级一票否决门禁；
+  - [`recommend_feedback_log`](../../service/recommend-service/db/schema/recommend-user-model.sql)：推荐模块原始行为反馈事实流水表，只追加记录有效曝光、播放时长、滑过跳过与主动负反馈客观事实。
 - **Qdrant 向量数据库**：集合 `video_vectors`（Cosine 距离 HNSW 索引），Point ID 为视频 UUID，Payload 携带 `vid`、`authorId`、`title`、`modelName`；负责视频近邻向量索引与后续基于锚点视频的相似召回（Recommend API）。
-
 
 ---
 
@@ -203,9 +205,22 @@ graph TD
 - **启动类**：[`RecommendApplication.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/RecommendApplication.java)
 - **本地配置文件**：[`application.yml`](../../service/recommend-service/src/main/resources/application.yml)
 - **MQ 提审消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)
+- **MQ 发布与下线消费**：[`VideoPublishedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoPublishedConsumer.java)、[`VideoLifecycleConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoLifecycleConsumer.java)
 - **向量应用编排**：[`VideoVectorApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/VideoVectorApplicationService.java)
+- **候选库存应用编排**：[`CandidateVideoApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/CandidateVideoApplicationService.java)
+- **用户模型领域层**：
+  - 用户画像聚合根：[`UserProfile.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserProfile.java)
+  - 用户向量与 EMA 算法：[`UserVector.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserVector.java)
+  - 细主题与粗领域状态：[`TopicPreference.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/TopicPreference.java)、[`DomainState.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/DomainState.java)
+  - 用户屏蔽实体：[`UserBlock.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/block/UserBlock.java)
+  - 行为流水实体：[`FeedbackLog.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/feedback/FeedbackLog.java)
+- **用户模型仓储实现**：
+  - 画像仓储：[`UserProfileRepositoryImpl.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/persistence/repository/UserProfileRepositoryImpl.java)
+  - 屏蔽仓储：[`UserBlockRepositoryImpl.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/persistence/repository/UserBlockRepositoryImpl.java)
+  - 流水仓储：[`FeedbackLogRepositoryImpl.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/persistence/repository/FeedbackLogRepositoryImpl.java)
 - **向量引擎路由**：[`VectorEmbeddingEngineRouter.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/engine/VectorEmbeddingEngineRouter.java)
 - **Qdrant 客户端**：[`QdrantClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/qdrant/QdrantClient.java)
 - **内容门禁回调**：[`ContentServiceClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/client/ContentServiceClient.java)
 - **网关路由**：统一由网关转发 `/api/recommend/**` ➔ `lb://recommend-service`。
+
 

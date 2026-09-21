@@ -26,7 +26,17 @@ import lombok.Setter;
 @TableName("recommend_candidate_video")
 public class CandidateVideoPO {
 
-    /** 候选记录全局唯一主键 ID。 */
+    /**
+     * 候选记录全局唯一主键 ID。
+     *
+     * <p>业务含义与约束说明：
+     * <ul>
+     *   <li><b>格式规范</b>：32 位无连字符标准 UUID 字符串；</li>
+     *   <li><b>主键策略</b>：由应用层在消费发布上线事件准入推荐池时显式分配注入，采用 {@link IdType#INPUT} 模式，非自增；</li>
+     *   <li><b>物料账本</b>：作为推荐候选池库存表的物理主键，与 {@code video_id} 唯一键配合保证单视频在候选池中唯一的可用状态账本。</li>
+     * </ul>
+     * </p>
+     */
     @TableId(value = "id", type = IdType.INPUT)
     private String id;
 

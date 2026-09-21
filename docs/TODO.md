@@ -224,3 +224,11 @@
 - [x] 监听 RabbitMQ `content.video.published` 发布上线事件，以强幂等方式将新作品正式准入推荐候选库存池（`status=ACTIVE`）。
 - [x] 监听 RabbitMQ `content.video.offlined` 与 `content.video.banned` 生命周期事件，将候选状态变更为 `OFFLINE` 或 `BANNED`，实现合规清退与熔断下线。
 
+### 用户模型与行为反馈事实闭环
+
+- [x] 建立自属用户画像状态快照表 `recommend_user_profile`，维护即时检索向量、细主题偏好快照、粗领域状态快照、近期观看短码序列与乐观锁版本号。
+- [x] 建立自属用户明确屏蔽约束表 `recommend_user_block`，维护拉黑视频、作者、主题标签的硬过滤规则与 O(1) 判定。
+- [x] 建立自属原始行为反馈事实流水表 `recommend_feedback_log`，只追加记录有效曝光、播放消费、滑过跳过与负反馈客观事实。
+- [x] 领域层实现 `UserProfile` 聚合根、`UserVector` 值对象（封装增量指数移动平均 EMA 与 L2 归一化）、`UserBlock` 实体及完整持久化仓储实现。
+
+
