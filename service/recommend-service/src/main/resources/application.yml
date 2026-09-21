@@ -57,6 +57,16 @@ recommend:
     api-key: ${RECOMMEND_QDRANT_API_KEY:}
     collection-name: ${RECOMMEND_QDRANT_COLLECTION:video_vectors}
     timeout-ms: ${RECOMMEND_QDRANT_TIMEOUT_MS:3000}
+  # 推荐流待看缓冲池配置 (Feed Buffer Pool)
+  feed:
+    buffer:
+      enabled: ${RECOMMEND_FEED_BUFFER_ENABLED:true}
+      batch-generate-size: ${RECOMMEND_FEED_BUFFER_BATCH_SIZE:30}
+      default-pop-size: ${RECOMMEND_FEED_BUFFER_DEFAULT_POP_SIZE:10}
+      low-watermark: ${RECOMMEND_FEED_BUFFER_LOW_WATERMARK:15}
+      max-buffer-capacity: ${RECOMMEND_FEED_BUFFER_MAX_CAPACITY:60}
+      buffer-ttl-seconds: ${RECOMMEND_FEED_BUFFER_TTL_SECONDS:3600}
+      refill-lock-timeout-seconds: ${RECOMMEND_FEED_BUFFER_REFILL_LOCK_TIMEOUT_SECONDS:30}
   # 回调内容服务参数
   callback:
     max-retries: 5

@@ -4,7 +4,7 @@ import com.calles.platform.common.core.ApiResponse;
 import com.calles.platform.common.web.context.UserContext;
 import com.calles.platform.recommend.application.dto.RecommendFeedResult;
 import com.calles.platform.recommend.application.service.FeedbackApplicationService;
-import com.calles.platform.recommend.application.service.RecommendFeedApplicationService;
+import com.calles.platform.recommend.application.service.RecommendFeedBufferService;
 import com.calles.platform.recommend.application.service.UserBlockApplicationService;
 import com.calles.platform.recommend.domain.model.block.BlockType;
 import com.calles.platform.recommend.domain.model.block.UserBlock;
@@ -37,7 +37,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class RecommendFeedController {
 
-    private final RecommendFeedApplicationService recommendFeedApplicationService;
+    private final RecommendFeedBufferService recommendFeedBufferService;
     private final FeedbackApplicationService feedbackApplicationService;
     private final UserBlockApplicationService userBlockApplicationService;
 
@@ -56,8 +56,8 @@ public class RecommendFeedController {
         // 步骤 1：解析当前用户身份 (支持游客空值)
         String userId = resolveUserId(headerUserId);
 
-        // 步骤 2：调用推荐编排应用服务执行全链路推荐
-        RecommendFeedResult result = recommendFeedApplicationService.getPersonalizedFeed(userId, size);
+        // 步骤 2：调用推荐待看缓冲池门面服务 (优先读 Redis，低水位静默补水与高可用降级)
+        RecommendFeedResult result = recommendFeedBufferService.consumeFeed(userId, size);
 
         // 步骤 3：转换为前端网络传输 DTO
         List<RecommendItemDTO> itemDtos = result.getItems().stream()

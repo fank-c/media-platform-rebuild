@@ -4,7 +4,7 @@ import com.calles.platform.common.core.ApiResponse;
 import com.calles.platform.recommend.application.dto.RecommendFeedResult;
 import com.calles.platform.recommend.application.dto.RecommendItemResult;
 import com.calles.platform.recommend.application.service.FeedbackApplicationService;
-import com.calles.platform.recommend.application.service.RecommendFeedApplicationService;
+import com.calles.platform.recommend.application.service.RecommendFeedBufferService;
 import com.calles.platform.recommend.application.service.UserBlockApplicationService;
 import com.calles.platform.recommend.domain.model.block.BlockType;
 import com.calles.platform.recommend.domain.model.block.UserBlock;
@@ -37,7 +37,7 @@ import static org.mockito.Mockito.when;
 class RecommendFeedControllerTest {
 
     @Mock
-    private RecommendFeedApplicationService recommendFeedApplicationService;
+    private RecommendFeedBufferService recommendFeedBufferService;
     @Mock
     private FeedbackApplicationService feedbackApplicationService;
     @Mock
@@ -54,7 +54,7 @@ class RecommendFeedControllerTest {
                 new RecommendItemResult("vid_101", 0.95, "VECTOR", "为您精选"),
                 new RecommendItemResult("vid_102", 0.88, "COLD_START", "新鲜发布")
         );
-        when(recommendFeedApplicationService.getPersonalizedFeed(userId, 10))
+        when(recommendFeedBufferService.consumeFeed(userId, 10))
                 .thenReturn(new RecommendFeedResult(items, true));
 
         ApiResponse<RecommendFeedResponse> response = controller.getFeed(userId, 10);
