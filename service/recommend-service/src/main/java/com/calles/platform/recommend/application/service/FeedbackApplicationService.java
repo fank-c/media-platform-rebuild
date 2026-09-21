@@ -1,5 +1,6 @@
 package com.calles.platform.recommend.application.service;
 
+import com.calles.platform.recommend.config.RecommendEmbeddingProperties;
 import com.calles.platform.recommend.domain.model.CandidateVideo;
 import com.calles.platform.recommend.domain.model.VideoVector;
 import com.calles.platform.recommend.domain.model.block.BlockType;
@@ -45,6 +46,7 @@ public class FeedbackApplicationService {
     private final UserBlockRepository userBlockRepository;
     private final CandidateVideoRepository candidateVideoRepository;
     private final VideoVectorRepository videoVectorRepository;
+    private final RecommendEmbeddingProperties embeddingProperties;
     private final ObjectMapper objectMapper;
 
     /**
@@ -96,7 +98,7 @@ public class FeedbackApplicationService {
 
         // 步骤 4：加载或初始化用户画像
         UserProfile userProfile = userProfileRepository.findByUserId(effectiveUserId)
-                .orElseGet(() -> UserProfile.initialize(effectiveUserId, 512));
+                .orElseGet(() -> UserProfile.initialize(effectiveUserId, embeddingProperties.getDimension()));
 
         // 步骤 5：按行为类型分流驱动模型演进
         handleProfileUpdate(userProfile, effectiveUserId, vid, actionType, playDuration, videoDuration,

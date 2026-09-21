@@ -57,7 +57,7 @@ public class UserProfile {
                        LocalDateTime createdAt,
                        LocalDateTime updatedAt) {
         this.userId = Objects.requireNonNull(userId, "用户ID不能为空");
-        this.userVector = userVector != null ? userVector : UserVector.empty(512);
+        this.userVector = userVector != null ? userVector : UserVector.empty();
         this.topicPreferences = topicPreferences != null ? new ConcurrentHashMap<>(topicPreferences) : new ConcurrentHashMap<>();
         this.domainStates = domainStates != null ? new ConcurrentHashMap<>(domainStates) : new ConcurrentHashMap<>();
         this.recentWatchItems = recentWatchItems != null ? new ArrayList<>(recentWatchItems) : new ArrayList<>();
@@ -67,7 +67,17 @@ public class UserProfile {
     }
 
     /**
-     * 工厂方法：为新用户创建初始空白画像。
+     * 工厂方法：为新用户创建初始空白画像 (使用平台默认 1024 维度)。
+     *
+     * @param userId 用户账号ID
+     * @return 初始空白 UserProfile 实例
+     */
+    public static UserProfile initialize(String userId) {
+        return initialize(userId, UserVector.DEFAULT_DIMENSION);
+    }
+
+    /**
+     * 工厂方法：为新用户创建指定维度的初始空白画像。
      *
      * @param userId 用户账号ID
      * @param dimension 默认向量维度
@@ -76,7 +86,7 @@ public class UserProfile {
     public static UserProfile initialize(String userId, int dimension) {
         return new UserProfile(
                 userId,
-                UserVector.empty(dimension),
+                UserVector.empty(dimension > 0 ? dimension : UserVector.DEFAULT_DIMENSION),
                 new HashMap<>(),
                 new HashMap<>(),
                 new ArrayList<>(),

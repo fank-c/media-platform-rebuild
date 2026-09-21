@@ -84,7 +84,7 @@ public class UserProfileRepositoryImpl implements UserProfileRepository {
 
         // 1. 还原用户检索向量
         List<Float> vectorList = parseJson(po.getUserVector(), new TypeReference<List<Float>>() {}, Collections.emptyList());
-        int dimension = po.getDimension() != null ? po.getDimension() : 512;
+        int dimension = po.getDimension() != null ? po.getDimension() : UserVector.DEFAULT_DIMENSION;
         UserVector userVector = new UserVector(vectorList, dimension, po.getVectorUpdatedAt());
 
         // 2. 还原细主题偏好映射
@@ -147,7 +147,7 @@ public class UserProfileRepositoryImpl implements UserProfileRepository {
             po.setDimension(domain.getUserVector().getDimension());
             po.setVectorUpdatedAt(domain.getUserVector().getUpdatedAt());
         } else {
-            po.setDimension(512);
+            po.setDimension(UserVector.DEFAULT_DIMENSION);
         }
 
         // 2. 序列化细粒度主题偏好

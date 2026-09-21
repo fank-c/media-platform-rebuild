@@ -1,5 +1,6 @@
 package com.calles.platform.recommend.application.service;
 
+import com.calles.platform.recommend.config.RecommendEmbeddingProperties;
 import com.calles.platform.recommend.domain.model.CandidateStatus;
 import com.calles.platform.recommend.domain.model.CandidateVideo;
 import com.calles.platform.recommend.domain.model.VideoVector;
@@ -47,6 +48,8 @@ class FeedbackApplicationServiceTest {
     @Mock
     private VideoVectorRepository videoVectorRepository;
     @Spy
+    private RecommendEmbeddingProperties embeddingProperties = new RecommendEmbeddingProperties();
+    @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
 
     @InjectMocks
@@ -64,12 +67,12 @@ class FeedbackApplicationServiceTest {
         CandidateVideo candidate = mockCandidate(vid, "author_x", "tech", "java,spring");
         when(candidateVideoRepository.findByVid(vid)).thenReturn(Optional.of(candidate));
 
-        UserProfile profile = UserProfile.initialize(userId, 512);
+        UserProfile profile = UserProfile.initialize(userId);
         when(userProfileRepository.findByUserId(userId)).thenReturn(Optional.of(profile));
 
         // 模拟特征向量存在
         VideoVector videoVector = VideoVector.init("video_id_1", vid);
-        videoVector.markCompleted("test-model", 512, "[0.1, 0.2]", true);
+        videoVector.markCompleted("test-model", 1024, "[0.1, 0.2]", true);
         when(videoVectorRepository.findByVid(vid)).thenReturn(Optional.of(videoVector));
 
         // 播放 25 秒，总长 30 秒 (完播率 > 30%)
@@ -96,7 +99,7 @@ class FeedbackApplicationServiceTest {
         CandidateVideo candidate = mockCandidate(vid, "author_y", "games", "moba");
         when(candidateVideoRepository.findByVid(vid)).thenReturn(Optional.of(candidate));
 
-        UserProfile profile = UserProfile.initialize(userId, 512);
+        UserProfile profile = UserProfile.initialize(userId);
         when(userProfileRepository.findByUserId(userId)).thenReturn(Optional.of(profile));
 
         // 播放 1 秒，总长 60 秒 (完播率 < 10% 且时长 < 3s)
@@ -119,7 +122,7 @@ class FeedbackApplicationServiceTest {
         CandidateVideo candidate = mockCandidate(vid, authorId, "entertainment", "gossip");
         when(candidateVideoRepository.findByVid(vid)).thenReturn(Optional.of(candidate));
 
-        UserProfile profile = UserProfile.initialize(userId, 512);
+        UserProfile profile = UserProfile.initialize(userId);
         when(userProfileRepository.findByUserId(userId)).thenReturn(Optional.of(profile));
 
         feedbackApplicationService.recordFeedback(

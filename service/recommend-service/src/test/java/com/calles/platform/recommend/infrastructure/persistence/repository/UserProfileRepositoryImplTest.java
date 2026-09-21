@@ -77,7 +77,7 @@ class UserProfileRepositoryImplTest {
     @Test
     @DisplayName("saveOrUpdate：首次初始化保存执行 insert")
     void shouldInsertWhenNewUser() {
-        UserProfile profile = UserProfile.initialize("u_new", 512);
+        UserProfile profile = UserProfile.initialize("u_new");
         when(userProfileMapper.selectById("u_new")).thenReturn(null);
         when(userProfileMapper.insert(any(UserProfilePO.class))).thenReturn(1);
 
@@ -92,7 +92,7 @@ class UserProfileRepositoryImplTest {
     @Test
     @DisplayName("saveOrUpdate：既有画像正常执行 updateById")
     void shouldUpdateWhenExistingUser() {
-        UserProfile profile = UserProfile.initialize("u_exist", 512);
+        UserProfile profile = UserProfile.initialize("u_exist");
         profile.recordPositiveConsumption("vid_1", List.of(1.0f, 0.0f), List.of("tag_1"), "d1", 0.2);
 
         UserProfilePO existingPO = new UserProfilePO();
@@ -112,7 +112,7 @@ class UserProfileRepositoryImplTest {
     @Test
     @DisplayName("saveOrUpdate：乐观锁冲突 (影响行数为0) 抛出异常")
     void shouldThrowWhenOptimisticLockingFails() {
-        UserProfile profile = UserProfile.initialize("u_conflict", 512);
+        UserProfile profile = UserProfile.initialize("u_conflict");
 
         UserProfilePO existingPO = new UserProfilePO();
         existingPO.setUserId("u_conflict");

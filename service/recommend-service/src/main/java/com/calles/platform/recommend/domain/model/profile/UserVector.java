@@ -21,6 +21,9 @@ public class UserVector {
     /** 默认平滑更新系数 alpha (更新即时兴趣比例 20%，保留长期记忆 80%)。 */
     public static final double DEFAULT_ALPHA = 0.2;
 
+    /** 平台特征向量默认基准维度 (1024 维)。 */
+    public static final int DEFAULT_DIMENSION = 1024;
+
     /** 浮点特征向量数组 (不可变)。 */
     private final List<Float> vector;
 
@@ -31,19 +34,28 @@ public class UserVector {
     private final LocalDateTime updatedAt;
 
     public UserVector(List<Float> vector, int dimension, LocalDateTime updatedAt) {
-        this.dimension = dimension > 0 ? dimension : (vector != null ? vector.size() : 512);
+        this.dimension = dimension > 0 ? dimension : (vector != null && !vector.isEmpty() ? vector.size() : DEFAULT_DIMENSION);
         this.vector = vector != null ? Collections.unmodifiableList(new ArrayList<>(vector)) : Collections.emptyList();
         this.updatedAt = updatedAt != null ? updatedAt : LocalDateTime.now();
     }
 
     /**
-     * 工厂方法：创建冷启动空向量。
+     * 工厂方法：创建指定维度的冷启动空向量。
      *
      * @param dimension 预期特征维度
      * @return 空用户向量实例
      */
     public static UserVector empty(int dimension) {
-        return new UserVector(Collections.emptyList(), dimension, LocalDateTime.now());
+        return new UserVector(Collections.emptyList(), dimension > 0 ? dimension : DEFAULT_DIMENSION, LocalDateTime.now());
+    }
+
+    /**
+     * 工厂方法：创建默认 1024 维度的冷启动空向量。
+     *
+     * @return 空用户向量实例
+     */
+    public static UserVector empty() {
+        return empty(DEFAULT_DIMENSION);
     }
 
     /**

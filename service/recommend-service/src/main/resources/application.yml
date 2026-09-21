@@ -35,6 +35,8 @@ spring:
 recommend:
   # 向量特征计算配置
   embedding:
+    # 全局特征向量目标基准维度 (默认 1024 维)
+    dimension: ${RECOMMEND_EMBEDDING_DIMENSION:1024}
     # 引擎类型：remote (默认优先远程大模型) | local (纯本地特征哈希) | mock (测试桩)
     type: ${RECOMMEND_EMBEDDING_TYPE:remote}
     # 远程异常/未配置 Key 时是否自动回退至本地算法保底
@@ -43,10 +45,10 @@ recommend:
       base-url: ${RECOMMEND_EMBEDDING_OPENAI_BASE_URL:https://api.openai.com/v1}
       api-key: ${RECOMMEND_EMBEDDING_OPENAI_API_KEY:}
       model: ${RECOMMEND_EMBEDDING_OPENAI_MODEL:text-embedding-3-small}
-      dimension: ${RECOMMEND_EMBEDDING_OPENAI_DIMENSION:1536}
+      dimension: ${RECOMMEND_EMBEDDING_OPENAI_DIMENSION:1024}
       timeout-ms: ${RECOMMEND_EMBEDDING_OPENAI_TIMEOUT_MS:5000}
     local:
-      dimension: ${RECOMMEND_EMBEDDING_LOCAL_DIMENSION:128}
+      dimension: ${RECOMMEND_EMBEDDING_LOCAL_DIMENSION:1024}
   # Qdrant 向量数据库配置
   qdrant:
     enabled: ${RECOMMEND_QDRANT_ENABLED:true}

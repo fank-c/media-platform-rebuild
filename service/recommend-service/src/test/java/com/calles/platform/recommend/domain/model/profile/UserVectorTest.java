@@ -17,10 +17,13 @@ class UserVectorTest {
     @Test
     @DisplayName("empty：冷启动空向量判定")
     void shouldRecognizeEmptyVector() {
-        UserVector emptyVec = UserVector.empty(512);
+        UserVector emptyVec = UserVector.empty(1024);
         assertThat(emptyVec.isEmpty()).isTrue();
-        assertThat(emptyVec.getDimension()).isEqualTo(512);
+        assertThat(emptyVec.getDimension()).isEqualTo(1024);
         assertThat(emptyVec.getVector()).isEmpty();
+
+        UserVector defaultEmptyVec = UserVector.empty();
+        assertThat(defaultEmptyVec.getDimension()).isEqualTo(UserVector.DEFAULT_DIMENSION);
     }
 
     @Test

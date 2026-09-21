@@ -70,6 +70,14 @@ public class FeedbackLogRepositoryImpl implements FeedbackLogRepository {
         return pos.stream().map(this::toDomain).collect(Collectors.toList());
     }
 
+    @Override
+    public List<String> findTopVidsByPlays(java.time.LocalDateTime since, int limit) {
+        int validLimit = limit > 0 ? Math.min(limit, 100) : 20;
+        java.time.LocalDateTime validSince = since != null ? since : java.time.LocalDateTime.now().minusDays(1);
+        List<String> vids = mapper.selectTopVidsByPlays(validSince, validLimit);
+        return vids != null ? vids : Collections.emptyList();
+    }
+
     private FeedbackLog toDomain(FeedbackLogPO po) {
         if (po == null) {
             return null;

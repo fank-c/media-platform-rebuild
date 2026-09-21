@@ -21,6 +21,9 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "recommend.embedding")
 public class RecommendEmbeddingProperties {
 
+    /** 推荐系统特征向量全局目标基准维度 (默认 1024 维)。 */
+    private int dimension = 1024;
+
     /** 引擎模式：remote (优先远程大模型), local (纯本地算法), mock (测试桩)。 */
     private String type = "remote";
 
@@ -44,8 +47,8 @@ public class RecommendEmbeddingProperties {
         /** 目标 Embedding 模型名称。 */
         private String model = "text-embedding-3-small";
 
-        /** 特征向量目标维度 (text-embedding-3-small 默认 1536)。 */
-        private int dimension = 1536;
+        /** 特征向量目标维度 (主流标准 1024)。 */
+        private int dimension = 1024;
 
         /** HTTP 通信超时时间 (毫秒)。 */
         private int timeoutMs = 5000;
@@ -53,7 +56,7 @@ public class RecommendEmbeddingProperties {
 
     @Data
     public static class LocalProperties {
-        /** 本地特征散列向量维度 (默认 128 维)。 */
-        private int dimension = 128;
+        /** 本地特征散列向量维度 (默认 1024 维)。 */
+        private int dimension = 1024;
     }
 }

@@ -33,4 +33,13 @@ public interface FeedbackLogRepository {
      * @return 行为流水实体列表
      */
     List<FeedbackLog> findRecentByUserId(String userId, int limit);
+
+    /**
+     * 查询指定时间窗口内有效播放量最高的视频短码列表。
+     *
+     * @param since 起始时间戳
+     * @param limit 最大返回条数
+     * @return 热门视频 vid 列表
+     */
+    List<String> findTopVidsByPlays(java.time.LocalDateTime since, int limit);
 }
