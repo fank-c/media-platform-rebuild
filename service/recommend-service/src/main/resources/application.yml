@@ -52,6 +52,7 @@ recommend:
     enabled: ${RECOMMEND_QDRANT_ENABLED:true}
     host: ${RECOMMEND_QDRANT_HOST:localhost}
     port: ${RECOMMEND_QDRANT_PORT:6333}
+    api-key: ${RECOMMEND_QDRANT_API_KEY:}
     collection-name: ${RECOMMEND_QDRANT_COLLECTION:video_vectors}
     timeout-ms: ${RECOMMEND_QDRANT_TIMEOUT_MS:3000}
   # 回调内容服务参数

@@ -114,9 +114,12 @@ graph TD
 
 | HTTP 方法 | URI 路径 | 鉴权要求 | 核心处理流与调用链 | 关键响应状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| `GET` | `/api/recommend/feed` | 可选用户态 | 首页瀑布流 ➔ 判断游客/登录态 ➔ 多路召回 ➔ 排序与打散 ➔ 记录曝光 ➔ 返回推荐短码列表 | `200` 成功返回列表 |
+| `GET` | `/api/recommend/feed` | 可选用户态 | 首页瀑布流 ➔ 判断游客/登录态 ➔ 多路召回 ➔ 排序与打散 ➔ 记录曝光 ➔ 返回推荐短码列表 | `200` 成功返回瀑布流物料 |
+| `POST` | `/api/recommend/feedback` | 可选用户态 | 行为流水上报 ➔ 写入 feedback_log 存证 ➔ 正向完播推进向量/标签、滑过抑制粗领域、负反馈拉黑 | `200` 反馈上报成功 |
+| `POST` | `/api/recommend/blocks` | `requireUser` | 用户明确屏蔽 ➔ 添加视频/作者/主题标签黑名单 ➔ 落地 user_block 表 | `200` 屏蔽成功 |
+| `DELETE` | `/api/recommend/blocks` | `requireUser` | 撤销明确屏蔽 ➔ 移除指定维度的屏蔽记录 | `200` 撤销成功 |
+| `GET` | `/api/recommend/blocks` | `requireUser` | 查询屏蔽黑名单 ➔ 获取当前用户的所有生效屏蔽项 | `200` 成功返回列表 |
 | `GET` | `/api/recommend/videos/{vid}/related` | 可选用户态 | 相关推荐 ➔ 提取当前视频标签与嵌入 ➔ 近邻召回 ➔ 过滤当前视频本身 ➔ 返回相关列表 | `200` 成功返回列表<br/>`404` 视频不存在 |
-| `POST` | `/api/recommend/feedback` | `requireUser` | 用户行为负反馈（如“不感兴趣/减少此类推荐”） ➔ 降低对应标签权重 ➔ 写入屏蔽集合 | `200` 反馈已接收 |
 
 ### 4.1 接口响应报文契约
 
@@ -206,6 +209,10 @@ graph TD
 - **本地配置文件**：[`application.yml`](../../service/recommend-service/src/main/resources/application.yml)
 - **MQ 提审消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)
 - **MQ 发布与下线消费**：[`VideoPublishedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoPublishedConsumer.java)、[`VideoLifecycleConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoLifecycleConsumer.java)
+- **推荐编排应用服务**：[`RecommendFeedApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedApplicationService.java)
+- **行为流水应用服务**：[`FeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/FeedbackApplicationService.java)
+- **用户屏蔽应用服务**：[`UserBlockApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/UserBlockApplicationService.java)
+- **Web 控制器与 DTO**：[`RecommendFeedController.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/web/RecommendFeedController.java)
 - **向量应用编排**：[`VideoVectorApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/VideoVectorApplicationService.java)
 - **候选库存应用编排**：[`CandidateVideoApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/CandidateVideoApplicationService.java)
 - **用户模型领域层**：
@@ -222,5 +229,51 @@ graph TD
 - **Qdrant 客户端**：[`QdrantClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/qdrant/QdrantClient.java)
 - **内容门禁回调**：[`ContentServiceClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/client/ContentServiceClient.java)
 - **网关路由**：统一由网关转发 `/api/recommend/**` ➔ `lb://recommend-service`。
+
+---
+
+## 10. 单次推送多路物料配比与槽位混合编排架构 (E&E 与 Slot Blending)
+
+在首页推荐瀑布流（`GET /api/recommend/feed`）中，单次下发物料并非单一算法模型的同质化输出，而是采用工业级 **“探索与利用平衡（Exploration & Exploitation, E&E）”** 混合流架构。
+
+### 10.1 多路物料构成与配比设计
+
+单次推送（以标准 `size = 10` 为例）的物料结构配比如下：
+
+| 召回通道类别 | 目标配比 | 核心定位与业务目的 | 召回实现策略与特征依赖 | 降级与演进策略 |
+| :--- | :---: | :--- | :--- | :--- |
+| **核心推荐 (Personalized)** | **50%** (5条) | 满足已知兴趣，保障基本盘留存与完播时长 | 基于 Qdrant ANN 向量余弦检索 Top 候选，叠加细主题偏好分（$BaseScore \times DomainSuppression + TopicBonus$） | 游客/冷启动时降级为最新发布候选池；向量检索异常时平滑回退 |
+| **探索发现 (Explore)** | **30%** (3条) | 破除信息茧房（Filter Bubble），试探新兴趣点 | 拆分为两大探索子通道：<br/>1. **近似探索 (20%, 2条)**：取 Qdrant 检索中后段（Rank 6~20）或次级偏好标签物料；<br/>2. **跨领域随机探索 (10%, 1条)**：从用户未产生曝光记录的粗领域中随机采样 ACTIVE 优质物料 | 本服务自闭环，当用户全领域曝光饱和时退化为全站轮询采样 |
+| **近期高热度 (Trending)** | **10%** (1条) | 引入全站高共鸣爆款，提供社会认同与热点时效 | 从全站近期消费频次最高、完播最好的物料池中召回 Top 物料 | **阶段演进**：<br/>• 阶段一（当前）：基于 `recommend_feedback_log` 近 24h 消费量或最新优质物料作为热榜；<br/>• 阶段二（未来）：对接 `interaction-service` 全站点赞/播放热度榜 |
+| **关注推荐 (Following)** | **10%** (1条) | 强化创作者社交黏性，促成私域互动回流 | 召回当前登录用户关注的创作者在近期（如 7 天内）发布的最新物料 | **阶段演进**：<br/>• 阶段一（当前）：通道预留，由于 `user-service` 关注功能尚未迁移，当前返回空并自动溢出回补核心推荐配额；<br/>• 阶段二（未来）：通过 OpenFeign 同步调用 `user-service` 关注列表 |
+
+### 10.2 槽位交织编排模板 (Slot Blending Pattern)
+
+为避免同类物料扎堆引发用户的模式疲劳（Pattern Fatigue），系统采用固定槽位模板进行交织混合。以 `size = 10` 为例：
+
+```
+槽位 01 [核心推荐] ➔ 抓住第一眼眼球，呈现最契合用户画像的高分物料
+槽位 02 [关注推荐] ➔ 熟人与偏爱创作者最新动态 (若未关注/无新作，核心推荐自动顶替)
+槽位 03 [核心推荐] ➔ 巩固核心偏好
+槽位 04 [近似探索] ➔ 相关领域的延伸探索 (同大类下的新主题)
+槽位 05 [近期高热度] ➔ 全站爆款破圈，提供热点共鸣
+槽位 06 [核心推荐] ➔ 核心偏好回拉
+槽位 07 [随机探索] ➔ 跨粗领域的全新尝试 (完全未涉足的领域)
+槽位 08 [核心推荐] ➔ 核心偏好回拉
+槽位 09 [近似探索] ➔ 次级兴趣标签延伸
+槽位 10 [核心推荐] ➔ 结尾高契合物料，维持刷屏吸引力
+```
+
+### 10.3 配额不足的自动降级与吸收铁律
+
+1. **游客 / 未登录用户**：
+   - 关注通道（0%）与核心个性化通道（0%）自动失效；
+   - 配额自动全量向“冷启动兜底池 + 跨领域探索池”吸收，维持全站优质新鲜内容均匀分发。
+2. **轻度用户 / 关注列表无更新**：
+   - 关注通道为空时，其 10% 配额优先被“核心推荐”吸收；若核心池不足则被“探索通道”吸收。
+3. **探索池或热度池不足**：
+   - 任何通道召回不足额时，差额物料自动从候选库最新 ACTIVE 物料中补齐。
+4. **统一收敛守门**：
+   - 混合组装完毕后，最终统一送入 **四道硬过滤（状态/自斥/拉黑/近期已看）** 与 **同作者打散重排（物理间隔 $\ge 2$）**，确保交付给客户端的物料既符合多样性配比，又绝不违背硬性约束。
 
 

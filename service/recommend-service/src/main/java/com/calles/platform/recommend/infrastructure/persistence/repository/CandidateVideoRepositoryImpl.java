@@ -60,4 +60,29 @@ public class CandidateVideoRepositoryImpl implements CandidateVideoRepository {
         }
         return candidateVideoMapper.updateStatusByVideoId(videoId.trim(), status.getCode());
     }
+
+    @Override
+    public java.util.List<CandidateVideo> findRecentActive(int limit) {
+        int validLimit = limit > 0 ? Math.min(limit, 100) : 20;
+        java.util.List<CandidateVideoPO> pos = candidateVideoMapper.selectRecentActive(validLimit);
+        if (pos == null || pos.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        return pos.stream().map(CandidateVideoPO::toDomain).collect(java.util.stream.Collectors.toList());
+    }
+
+    @Override
+    public java.util.List<CandidateVideo> findByVids(java.util.List<String> vids) {
+        if (vids == null || vids.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CandidateVideoPO> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+        wrapper.in(CandidateVideoPO::getVid, vids);
+        java.util.List<CandidateVideoPO> pos = candidateVideoMapper.selectList(wrapper);
+        if (pos == null || pos.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        return pos.stream().map(CandidateVideoPO::toDomain).collect(java.util.stream.Collectors.toList());
+    }
 }

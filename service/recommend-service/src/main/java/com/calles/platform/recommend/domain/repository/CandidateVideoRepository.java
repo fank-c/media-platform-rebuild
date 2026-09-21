@@ -49,4 +49,20 @@ public interface CandidateVideoRepository {
      * @return 影响的行数
      */
     int updateStatusByVideoId(String videoId, CandidateStatus status);
+
+    /**
+     * 查询最新发布的有效推荐候选列表 (状态为 ACTIVE，发布时间倒序)。
+     *
+     * @param limit 最大条数
+     * @return 候选视频领域实体列表
+     */
+    java.util.List<CandidateVideo> findRecentActive(int limit);
+
+    /**
+     * 批量根据公开业务短码列表查询候选实体列表。
+     *
+     * @param vids 视频业务短码列表
+     * @return 匹配的候选视频领域实体列表
+     */
+    java.util.List<CandidateVideo> findByVids(java.util.List<String> vids);
 }

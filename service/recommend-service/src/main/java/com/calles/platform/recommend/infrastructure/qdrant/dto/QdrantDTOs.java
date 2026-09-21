@@ -71,4 +71,45 @@ public final class QdrantDTOs {
             @JsonProperty("status") String status,
             @JsonProperty("time") Double time
     ) {}
+
+    /**
+     * 向量最近邻相似检索请求体 (Search Points Request)。
+     *
+     * @param vector 待检索的目标特征向量
+     * @param limit 最大召回点条数
+     * @param withPayload 是否在结果中附带业务载荷字典
+     */
+    public record SearchPointsRequest(
+            @JsonProperty("vector") List<Float> vector,
+            @JsonProperty("limit") int limit,
+            @JsonProperty("with_payload") boolean withPayload
+    ) {}
+
+    /**
+     * 检索匹配点结果项。
+     *
+     * @param id 点 UUID 标识
+     * @param score 相似度打分 (余弦相似度 0.0 ~ 1.0)
+     * @param payload 业务载荷字典 (如 vid, authorId 等)
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ScoredPoint(
+            @JsonProperty("id") String id,
+            @JsonProperty("score") Double score,
+            @JsonProperty("payload") Map<String, Object> payload
+    ) {}
+
+    /**
+     * 向量检索响应体。
+     *
+     * @param result 匹配点列表
+     * @param status 状态
+     * @param time 耗时
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record SearchPointsResponse(
+            @JsonProperty("result") List<ScoredPoint> result,
+            @JsonProperty("status") String status,
+            @JsonProperty("time") Double time
+    ) {}
 }

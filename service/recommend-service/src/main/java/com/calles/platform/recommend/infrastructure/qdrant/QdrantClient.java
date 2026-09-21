@@ -3,6 +3,7 @@ package com.calles.platform.recommend.infrastructure.qdrant;
 import com.calles.platform.recommend.config.QdrantProperties;
 import com.calles.platform.recommend.infrastructure.qdrant.dto.QdrantDTOs;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -45,10 +46,15 @@ public class QdrantClient {
         factory.setConnectTimeout(Duration.ofMillis(timeout));
         factory.setReadTimeout(Duration.ofMillis(timeout));
 
-        this.restClient = RestClient.builder()
+        var clientBuilder = RestClient.builder()
                 .baseUrl(properties.getBaseUrl())
-                .requestFactory(factory)
-                .build();
+                .requestFactory(factory);
+
+        if (properties.getApiKey() != null && !properties.getApiKey().isBlank()) {
+            clientBuilder.defaultHeader("api-key", properties.getApiKey());
+        }
+
+        this.restClient = clientBuilder.build();
     }
 
     /**
@@ -131,6 +137,44 @@ public class QdrantClient {
         } catch (Exception e) {
             log.warn("同步视频向量至 Qdrant 失败 (进入降级容错): videoId={}, error={}", rawId, e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * 在指定向量集合中执行基于向量的 ANN 最近邻相似检索。
+     *
+     * @param collectionName 集合名称
+     * @param vector 检索目标向量 (通常为用户兴趣向量)
+     * @param limit 最大检索召回条数
+     * @return 匹配的点结构列表 (含相似度分数与载荷)，若服务未启用或请求异常降级返回空列表
+     */
+    public List<QdrantDTOs.ScoredPoint> searchPoints(String collectionName, List<Float> vector, int limit) {
+        if (!properties.isEnabled() || vector == null || vector.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        try {
+            // 步骤 1：构造检索请求体 (启用 with_payload 附带业务元数据)
+            int validLimit = limit > 0 ? limit : 20;
+            QdrantDTOs.SearchPointsRequest request = new QdrantDTOs.SearchPointsRequest(vector, validLimit, true);
+
+            // 步骤 2：通过 REST API 发送搜索请求
+            QdrantDTOs.SearchPointsResponse response = restClient.post()
+                    .uri("/collections/{name}/points/search", collectionName)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(QdrantDTOs.SearchPointsResponse.class);
+
+            if (response != null && response.result() != null) {
+                log.debug("Qdrant 向量检索成功: collection={}, count={}", collectionName, response.result().size());
+                return response.result();
+            }
+            return Collections.emptyList();
+
+        } catch (Exception e) {
+            log.warn("Qdrant 向量检索失败 (进入降级容错): collection={}, error={}", collectionName, e.getMessage());
+            return Collections.emptyList();
         }
     }
 

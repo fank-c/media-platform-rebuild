@@ -23,6 +23,9 @@ public class QdrantProperties {
     /** Qdrant REST API 监听端口 (默认 6333)。 */
     private int port = 6333;
 
+    /** Qdrant 服务端 API Key 认证密钥 (开启认证时必填)。 */
+    private String apiKey;
+
     /** 视频特征集合名称。 */
     private String collectionName = "video_vectors";
 

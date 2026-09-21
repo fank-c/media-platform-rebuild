@@ -59,4 +59,18 @@ public interface CandidateVideoMapper extends BaseMapper<CandidateVideoPO> {
             WHERE video_id = #{videoId}
             """)
     int updateStatusByVideoId(@Param("videoId") String videoId, @Param("status") String status);
+
+    /**
+     * 查询最新发布的有效推荐候选列表 (按发布时间倒序，用于冷启动或候选池补齐)。
+     *
+     * @param limit 最大返回条数
+     * @return 候选 PO 列表
+     */
+    @Select("""
+            SELECT * FROM recommend_candidate_video
+            WHERE status = 'ACTIVE'
+            ORDER BY published_at DESC
+            LIMIT #{limit}
+            """)
+    java.util.List<CandidateVideoPO> selectRecentActive(@Param("limit") int limit);
 }
