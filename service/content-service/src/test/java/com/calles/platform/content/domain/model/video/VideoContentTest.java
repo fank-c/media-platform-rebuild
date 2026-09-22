@@ -43,8 +43,6 @@ class VideoContentTest {
         assertThat(video.getVisibility()).isEqualTo(ContentVisibility.PUBLIC);
         assertThat(video.getDuration()).isEqualTo(720);
         assertThat(video.getTags()).isEqualTo("Java,微服务,SpringBoot");
-        assertThat(video.getViewCount()).isZero();
-        assertThat(video.getLikeCount()).isZero();
         assertThat(video.getRevision()).isZero();
     }
 
@@ -166,23 +164,6 @@ class VideoContentTest {
                 .hasMessageContaining("只有已发布 (PUBLISHED)");
     }
 
-    /**
-     * 测试异步同步更新互动数据快照（播放量、点赞、评论、收藏、分享）。
-     */
-    @Test
-    @DisplayName("更新互动快照计数")
-    void shouldUpdateMetricsSnapshot() {
-        // 步骤 1: 初始化草稿并设置快照计数值
-        VideoContent video = createSampleDraft();
-        video.updateMetricsSnapshot(1000L, 50L, 10L, 20L, 5L);
-
-        // 步骤 2: 断言快照计数值已正确赋值
-        assertThat(video.getViewCount()).isEqualTo(1000L);
-        assertThat(video.getLikeCount()).isEqualTo(50L);
-        assertThat(video.getCommentCount()).isEqualTo(10L);
-        assertThat(video.getStarCount()).isEqualTo(20L);
-        assertThat(video.getShareCount()).isEqualTo(5L);
-    }
 
     /**
      * 辅助方法：快速构建一份合法的样例视频草稿实体。

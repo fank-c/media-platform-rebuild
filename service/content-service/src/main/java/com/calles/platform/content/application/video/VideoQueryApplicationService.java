@@ -89,11 +89,6 @@ public class VideoQueryApplicationService {
                 video.getStatus().getValue(),
                 video.getPublishStatus().getValue(),
                 video.getVisibility().getValue(),
-                video.getViewCount(),
-                video.getLikeCount(),
-                video.getCommentCount(),
-                video.getStarCount(),
-                video.getShareCount(),
                 video.getPublishedAt(),
                 video.getCreatedAt()
         );

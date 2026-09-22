@@ -1,249 +1,201 @@
 # 互动模块 · interaction-service 架构设计与实现文档
 
-互动模块（`interaction-service`）是平台视频社交关系、高并发互动计数与用户行为中枢（运行端口：8060）。负责点赞（Like）、收藏（Star）、投币（Coin）、转发与评论互动等高并发写场景的架构支撑。核心采用 **Redis 高并发写缓冲（Write-Behind Cache）+ 批量聚合落库 + 领域事件异步广播** 架构，化解瞬间爆款视频的点赞并发冲击与数据库行锁竞争，同时为推荐系统提供实时用户兴趣特征流。
+互动模块（`interaction-service`）是平台视频社交关系、高频互动行为与视频统计数据的**第一责任人与主动管理者**（运行端口：8500）。负责点赞（Like）、收藏（Star/Folder）、播放心跳（Heartbeat）、观看历史（Watch History）与视频公开统计计数（VideoCounter）的闭环支撑。
 
 ---
 
 ## 1. 模块定位与架构边界
 
 ### 1.1 核心业务职责
-- **高并发轻量互动操作**：
-  - 支持对指定视频进行点赞、取消点赞、收藏、取消收藏、投币等操作；
-  - 严格支持请求幂等性：同一用户对同一视频重复提交点赞，保持最终状态一致且不重复递增计数；
-  - 批量聚合查询：为前端播放页和列表卡片提供登录用户针对当前视频的“互动状态快照”（是否已点赞、是否已收藏、投币枚数）。
-- **读写分离与高并发写缓冲（Write-Behind）**：
-  - 引入 Redis 作为第一道高吞吐防线，所有点赞/收藏写操作优先在 Redis 内存数据结构（SET / ZSET / HyperLogLog）完成；
-  - 计数器与用户关联双轨维护：使用 Redis SET 记录点赞用户集合实现 $O(1)$ 判定，使用原子计数器支撑前台毫秒级读响应；
-  - 异步延迟批量落库：通过后台定时任务将 Redis 增量缓冲分批写入 MySQL 物理表，消除数据库行锁竞争。
-- **互动事件异步驱动与协同**：
-  - 将用户点赞、收藏行为通过 Transactional Outbox 异步发布至 RabbitMQ；
-  - 驱动 `content-service` 异步更新视频主表中的静态点赞计数快照；
-  - 驱动 `recommend-service` 实时计算协同过滤矩阵，动态调整热门推荐池权重。
+- **视频交互统计的主动管理者（所有权独占）**：
+  - 独占维护视频的播放量（`view_count`）、点赞数（`like_count`）、收藏数（`star_count`）、分享数（`share_count`）；
+  - `content-service` 的 `video_content` 主表彻底移除上述高频计数字段，高频交互行为产生时完全在 `interaction-service` 闭环，无需往内容服务发送增量计数同步事件，根除写放大与行锁竞争。
+- **高并发点赞事实与状态反转**：
+  - 维护用户对视频的点赞明细，支持毫秒级状态反转（点赞/取消点赞）；
+  - 严格支持幂等：重复点赞或重复取消点赞不会导致计数异常递增或递减。
+- **多收藏夹与视频收藏管理**：
+  - 支持用户默认收藏夹（自动初始化）与自定义多收藏夹；
+  - 提供视频加入收藏夹、移除收藏及收藏列表分页查询。
+- **播放心跳（Heartbeat）与观看历史断点**：
+  - 客户端周期上报心跳（当前播放头秒数、时段增量时长、视频总时长）；
+  - 服务端记录断点续播进度（`last_position`）、累计观看时长与完播判定；
+  - 结合时间窗口防刷机制（默认 30 分钟去重），驱动视频有效播放量原子累加。
+- **一站式前台状态快照**：
+  - 为前台播放页提供一站式聚合快照接口（`GET /api/interactions/videos/{vid}/my-state`），一次请求聚合返回点赞、收藏状态与断点续播秒数。
+- **公开统计与批量计数装配**：
+  - 提供单视频与批量视频统计接口，供网关或前端卡片列表组装完整视频展示数据。
 
-### 1.2 防腐与禁止承担的工作
-- **严禁跨库直接修改视频元数据**：互动服务绝不直接连库操作 `video_content` 主表，所有计数同步严格通过消息队列领域事件完成；
-- **严禁代理视频播放权限鉴定**：是否可播由 `content-service` 与网关负责，互动服务仅关注互动行为本身；
-- **不承接用户认证**：完全基于网关鉴权通过后透传的 `X-User-Id` 与 `X-User-Role`。
-
-### 1.3 参与的全局业务主线导航
-- 核心支撑 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-前台视频播放分发与网关防刷.md)（播放页互动状态展示与即时操作）
-- 关键输入 [主线 05：平台合规治理、违规封禁与全站事件广播下线](../flows/05-平台合规治理与全站广播下线.md)（违规视频互动数据熔断）
+### 1.2 防腐与边界铁律
+- **严禁反向直接修改视频主表**：互动服务绝不跨服务调用 content-service 的 RPC 修改视频内容元数据；
+- **纯粹的交互行为中枢**：推荐特征工程相关的领域事件与模型打分，待基础交互架构夯实后按需通过异步 MQ 订阅，当前阶段不耦合推荐逻辑；
+- **不承接用户认证**：完全基于网关统一验签透传的 `X-User-Id` 与 `X-User-Role` 上下文。
 
 ---
 
-## 2. 高并发点赞写缓冲与批量落库时序图
+## 2. 核心交互流程时序图
+
+### 2.1 播放心跳与断点续播时序
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Client as 客户端 (用户)
-    participant Gateway as API 网关
-    participant Interaction as InteractionService
-    participant Redis as Redis (高并发写缓冲)
-    participant Outbox as 互动发件箱 (interaction_outbox)
-    participant Job as 批量落库任务 (LikeFlushJob)
-    participant MySQL as MySQL (interaction_like)
-    participant RMQ as RabbitMQ (media.platform.events)
+    participant App as 客户端播放器
+    participant GW as API 网关 (gateway-service)
+    participant IS as 互动服务 (interaction-service)
+    participant DB as MySQL (interaction_*)
+    participant Redis as Redis / 本地防刷组件
 
-    Client->>Gateway: POST /api/interactions/videos/{vid}/like
-    Gateway->>Interaction: 路由转发 (透传 X-User-Id)
+    App->>GW: POST /api/interactions/videos/{vid}/heartbeat (position, deltaDuration, videoDuration)
+    GW->>IS: 路由转发 (透传 X-User-Id)
+    IS->>DB: 更新/插入 interaction_watch_history (last_position, watched_duration, last_watch_at)
     
-    Note over Interaction,Redis: 阶段 1：Redis 毫秒级写缓冲与幂等原子判定
-    Interaction->>Redis: SADD interaction:video:likes:{vid} {userId}
-    Redis-->>Interaction: 返回 1 (成功点赞) 或 0 (已点赞过)
-    
-    alt 重复点赞 (返回 0)
-        Interaction-->>Client: 200 OK (幂等返回已点赞状态)
-    else 首次点赞 (返回 1)
-        Interaction->>Redis: INCR interaction:video:like_cnt:{vid}
-        Interaction->>Redis: SADD interaction:dirty_videos {vid} (标记脏数据桶)
-        
-        Note over Interaction,Outbox: 阶段 2：记录本地事件发件箱
-        Interaction->>Outbox: 插入待发送事件 interaction.video.liked
-        Interaction-->>Client: 200 OK (点赞成功，毫秒级响应)
-        
-        Note over Job,MySQL: 阶段 3：后台调度批量削峰落库 (Write-Behind)
-        Note over Job: 每 5 秒触发一次批量刷盘任务
-        Job->>Redis: SMEMBERS interaction:dirty_videos (拉取变动视频清单)
-        Job->>MySQL: 批量执行 INSERT INTO interaction_like ... ON DUPLICATE KEY UPDATE
-        Job->>Outbox: 批量发布消息至 RabbitMQ
-        Outbox->>RMQ: basicPublish (Topic: media.platform.events)
-        RMQ-->>Outbox: ACK 确认
+    alt 累计有效时长 >= 5s
+        IS->>Redis: tryAcquireFirstPlay (30分钟窗口去重判定)
+        alt 属于窗口内首次有效播放
+            IS->>DB: 原子递增 interaction_video_counter.view_count (+1)
+        else 窗口期内重复上报
+            Note over IS: 仅刷新断点与累计时长，跳过播放量自增
+        end
     end
+    
+    IS-->>App: 200 OK (返回最新断点与完播状态)
 ```
 
----
-
-## 3. 互动事件驱动协同拓扑图
+### 2.2 点赞与计数闭环时序
 
 ```mermaid
-graph TD
-    User["用户客户端"]
-    GW["API 网关 gateway-service"]
-    IS["互动服务 interaction-service"]
-    Redis[("Redis 互动计数与点赞集合")]
-    MQ[["RabbitMQ (media.platform.events)"]]
-    CS["内容服务 content-service"]
-    RS["推荐服务 recommend-service"]
+sequenceDiagram
+    autonumber
+    participant Client as 客户端
+    participant GW as API 网关
+    participant IS as 互动服务 (interaction-service)
+    participant DB as MySQL (interaction_like & interaction_video_counter)
 
-    User -->|POST 点赞或收藏操作| GW
-    GW -->|路由转发| IS
-    IS -->|内存原子操作与判重| Redis
-    IS -->|发布领域事件 interaction.video.liked| MQ
-    
-    MQ -->|消费事件: 增量更新点赞快照| CS
-    MQ -->|消费事件: 实时计算推荐权重| RS
-    
-    CS -->|下线或封禁事件 content.video.banned| MQ
-    MQ -->|消费下线: 剔除互动热点缓存| IS
+    Client->>GW: POST /api/interactions/videos/{vid}/like
+    GW->>IS: 路由转发 (透传 X-User-Id)
+    IS->>DB: 检索 interaction_like
+    alt 首次点赞
+        IS->>DB: 插入 interaction_like (status=1)
+        IS->>DB: 原子递增 interaction_video_counter.like_count (+1)
+    else 此前曾取消点赞
+        IS->>DB: 更新 interaction_like (status=1)
+        IS->>DB: 原子递增 interaction_video_counter.like_count (+1)
+    else 已处于点赞状态 (重复请求)
+        Note over IS: 幂等响应，不重复修改计数
+    end
+    IS-->>Client: 200 OK (action=LIKE, active=true)
 ```
 
 ---
 
-## 4. 第一套件：HTTP 接口服务链路
+## 3. 数据库独占表结构设计 (MySQL)
 
-所有对外接口统一挂载于 `/api/interactions/**` 下：
-
-| HTTP 方法 | URI 路径 | 鉴权要求 | 核心处理流与调用链 | 关键响应状态 |
-| :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/api/interactions/videos/{vid}/like` | `requireUser` | 点赞视频 ➔ Redis SET 原子判定 ➔ 计数自增 ➔ 写入脏视频桶 ➔ 登记 Outbox | `200` 成功 (status=LIKED)<br/>`404` 视频不存在 |
-| `DELETE`| `/api/interactions/videos/{vid}/like` | `requireUser` | 取消点赞 ➔ Redis SREM 原子移除 ➔ 计数自减 ➔ 登记 Outbox `unliked` | `200` 成功 (status=UNLIKED) |
-| `POST` | `/api/interactions/videos/{vid}/star` | `requireUser` | 收藏视频 ➔ 校验收藏夹 ➔ 写入 `interaction_star` ➔ Redis 计数递增 ➔ 派发收藏事件 | `200` 成功 (status=STARRED) |
-| `DELETE`| `/api/interactions/videos/{vid}/star` | `requireUser` | 取消收藏 ➔ 标记逻辑删除 ➔ Redis 计数递减 ➔ 派发 `unstarred` 事件 | `200` 成功 (status=UNSTARRED) |
-| `POST` | `/api/interactions/videos/{vid}/coin` | `requireUser` | 投币互动 ➔ 校验本人硬币余额 ➔ 限制单视频上限（最多2枚）➔ 事务扣减并记录流水 | `200` 投币成功<br/>`400` 硬币不足或超限 |
-| `GET` | `/api/interactions/videos/{vid}/my-state` | `requireUser` | 查询本人互动快照 ➔ 批量读取 Redis 点赞 SET、收藏表与投币表 ➔ 汇聚聚合对象返回 | `200` 成功返回快照 |
-| `GET` | `/api/interactions/videos/{vid}/summary` | 匿名开放 | 获取公开互动统计 ➔ 优先命中 Redis 聚合计数（点赞数、收藏数、投币数、分享数） | `200` 成功返回计数 |
-
-### 4.1 接口请求与响应报文规范
-
-#### 1. 用户点赞响应 (`POST /api/interactions/videos/{vid}/like`)
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "videoId": "cv05hG9Kq2RtLw7XbPmZv4Ya",
-    "liked": true,
-    "totalLikes": 12850,
-    "timestamp": 1773728000000
-  }
-}
-```
-
-#### 2. 用户互动快照 (`GET /api/interactions/videos/{vid}/my-state`)
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": {
-    "videoId": "cv05hG9Kq2RtLw7XbPmZv4Ya",
-    "isLiked": true,
-    "isStarred": false,
-    "coinsGiven": 2,
-    "hasShared": false
-  }
-}
-```
-
----
-
-## 5. 第二套件：MQ 消息链路
-
-### 5.1 发布的领域事件
-
-| 事件名称 | 路由键 RoutingKey | 触发场景 | 消费方与业务联动 |
-| :--- | :--- | :--- | :--- |
-| `interaction.video.liked` | `interaction.video.liked` | 用户完成点赞操作 | `content-service` 增量刷新点赞缓存<br/>`recommend-service` 增加该视频权重与用户偏好 |
-| `interaction.video.unliked` | `interaction.video.unliked` | 用户取消点赞 | `content-service` 扣减计数<br/>`recommend-service` 衰减权重 |
-| `interaction.video.starred` | `interaction.video.starred` | 用户收藏视频 | `recommend-service` 高权重强化用户兴趣向量 |
-| `interaction.video.coined` | `interaction.video.coined` | 用户投币 | `user-service` 统计作者创作收益<br/>`recommend-service` 显著提升视频曝光推荐池 |
-
-- **事件载荷格式规范**：
-  ```json
-  {
-    "eventId": "evt_int_89a012345678abcdef0123456789",
-    "eventType": "interaction.video.liked",
-    "timestamp": 1773728000000,
-    "traceId": "9b12a83f98274ac09d7e345b1287e0fa",
-    "payload": {
-      "videoId": "cv05hG9Kq2RtLw7XbPmZv4Ya",
-      "userId": "u_9876543210abcdef9876543210abcdef",
-      "authorId": "u_1001",
-      "currentLikes": 12850,
-      "actionTime": 1773728000000
-    }
-  }
-  ```
-
-### 5.2 消费的外部领域事件
-
-- **`content.video.published`**：
-  - 收到视频发布成功通知后，在 Redis 中预热该视频的初始互动计数槽位（`interaction:video:like_cnt:{vid} = 0`）；
-- **`content.video.banned` / `content.video.offlined`**：
-  - 收到视频下线或封禁事件后，立即封锁该视频的写操作（拒绝新的点赞投币），并从热门互动排行榜中剔除。
-
----
-
-## 6. 第三套件：定时任务与异步补偿调度链路
-
-### 6.1 Redis 脏计数异步批量回写调度器 (`InteractionFlushScheduler`)
-- **执行频率**：默认每 5 秒触发一次；
-- **削峰填谷机制**：
-  1. 从 Redis 脏数据集合 `interaction:dirty_videos` 中弹出（`SPOP`）一批视频 ID（限制每次最多 100 个）；
-  2. 批量读取其当前在 Redis 中的点赞增量计数与点赞用户关系流水；
-  3. 开启 MySQL JDBC Batch 执行批量插入与计数更新：
-     ```sql
-     INSERT INTO interaction_like (video_id, user_id, status, created_at)
-     VALUES (?, ?, 'ACTIVE', NOW())
-     ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = NOW();
-     ```
-  4. 彻底解决高峰期每秒数万次点赞直击 MySQL 导致的锁表瘫痪。
-
-### 6.2 热门互动榜单定时计算任务 (`InteractionTrendingJob`)
-- **执行频率**：每 10 分钟执行一次；
-- **计算模型**：基于过去 24 小时内的互动增量综合得分公式：
-  $$\text{Score} = \text{Likes} \times 1.0 + \text{Coins} \times 2.0 + \text{Stars} \times 3.0$$
-  结合牛顿冷却定律时间衰减因子，生成前台热门榜单并缓存至 Redis ZSET `interaction:trending:rank`。
-
----
-
-## 7. 数据库表结构全景 (Schema)
-
-### 7.1 视频点赞关系表 (`interaction_like`)
 ```sql
+-- 1. 视频互动统计计数聚合表 (interaction-service 独占)
+CREATE TABLE IF NOT EXISTS `interaction_video_counter` (
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `view_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计播放量',
+    `like_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计点赞数',
+    `star_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计收藏数',
+    `share_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计分享数',
+    `comment_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计评论数 (预留)',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`vid`),
+    CONSTRAINT `ck_int_counter_view` CHECK (`view_count` >= 0),
+    CONSTRAINT `ck_int_counter_like` CHECK (`like_count` >= 0),
+    CONSTRAINT `ck_int_counter_star` CHECK (`star_count` >= 0),
+    CONSTRAINT `ck_int_counter_share` CHECK (`share_count` >= 0),
+    CONSTRAINT `ck_int_counter_comment` CHECK (`comment_count` >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频互动统计计数聚合表';
+
+-- 2. 用户点赞事实与状态表
 CREATE TABLE IF NOT EXISTS `interaction_like` (
-    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    `video_id` CHAR(32) NOT NULL COMMENT '视频内部唯一ID',
-    `user_id` CHAR(32) NOT NULL COMMENT '用户唯一ID',
-    `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE=已赞, CANCELLED=已取消',
+    `id` CHAR(32) NOT NULL COMMENT '主键 UUID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '点赞状态: 1=已赞, 0=已取消',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_video_user` (`video_id`, `user_id`),
-    KEY `idx_user_likes` (`user_id`, `status`, `created_at`)
+    UNIQUE KEY `uk_like_user_vid` (`user_id`, `vid`),
+    KEY `idx_like_vid_status` (`vid`, `status`),
+    KEY `idx_like_user_list` (`user_id`, `status`, `created_at` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频点赞记录表';
-```
 
-### 7.2 视频收藏关系表 (`interaction_star`)
-```sql
-CREATE TABLE IF NOT EXISTS `interaction_star` (
-    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    `video_id` CHAR(32) NOT NULL COMMENT '视频唯一ID',
-    `user_id` CHAR(32) NOT NULL COMMENT '用户唯一ID',
-    `folder_id` CHAR(32) NULL COMMENT '所属收藏夹ID (NULL为默认收藏夹)',
-    `status` VARCHAR(16) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE, DELETED',
+-- 3. 用户收藏夹表
+CREATE TABLE IF NOT EXISTS `interaction_star_folder` (
+    `id` CHAR(32) NOT NULL COMMENT '收藏夹主键 UUID',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
+    `title` VARCHAR(64) NOT NULL COMMENT '收藏夹标题',
+    `is_default` TINYINT NOT NULL DEFAULT 0 COMMENT '是否默认收藏夹: 1=是, 0=否',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1=正常, 0=已删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_video_user_folder` (`video_id`, `user_id`, `folder_id`),
-    KEY `idx_user_stars` (`user_id`, `status`, `created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频收藏记录表';
+    KEY `idx_folder_user` (`user_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏夹表';
+
+-- 4. 收藏视频明细表
+CREATE TABLE IF NOT EXISTS `interaction_star_item` (
+    `id` CHAR(32) NOT NULL COMMENT '明细主键 UUID',
+    `folder_id` CHAR(32) NOT NULL COMMENT '所属收藏夹ID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID (反查冗余)',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_folder_vid` (`folder_id`, `vid`),
+    KEY `idx_item_user_vid` (`user_id`, `vid`),
+    KEY `idx_item_folder_time` (`folder_id`, `created_at` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏明细表';
+
+-- 5. 用户视频观看历史与心跳断点表
+CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
+    `id` CHAR(32) NOT NULL COMMENT '记录主键 UUID',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `last_position` INT NOT NULL DEFAULT 0 COMMENT '上次播放头进度 (秒)，用于断点续播',
+    `watched_duration` INT NOT NULL DEFAULT 0 COMMENT '累计有效观看总时长 (秒)',
+    `video_duration` INT NOT NULL DEFAULT 0 COMMENT '视频总时长 (秒)',
+    `completed` TINYINT NOT NULL DEFAULT 0 COMMENT '是否完播: 1=是, 0=否',
+    `first_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '首次观看时间',
+    `last_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最近一次心跳活跃时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_watch_user_vid` (`user_id`, `vid`),
+    KEY `idx_watch_user_recent` (`user_id`, `last_watch_at` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户视频观看历史与进度表';
 ```
 
 ---
 
-## 8. 核心源码入口索引
+## 4. 外部 HTTP API 契约列表
+
+| 业务分类 | 方法 | 路径 | 鉴权要求 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| **点赞** | `POST` | `/api/interactions/videos/{vid}/like` | 需登录 | 点赞视频，原子累加 like_count |
+| | `DELETE` | `/api/interactions/videos/{vid}/like` | 需登录 | 取消点赞，原子扣减 like_count |
+| **收藏** | `POST` | `/api/interactions/videos/{vid}/star` | 需登录 | 收藏视频（可选 folderId，默认为默认收藏夹） |
+| | `DELETE` | `/api/interactions/videos/{vid}/star` | 需登录 | 取消收藏（可选 folderId） |
+| | `GET` | `/api/interactions/star/folders` | 需登录 | 获取当前用户所有收藏夹 |
+| | `POST` | `/api/interactions/star/folders` | 需登录 | 创建自定义收藏夹 |
+| | `GET` | `/api/interactions/star/items` | 需登录 | 分页查询指定收藏夹内的视频 |
+| **观看心跳** | `POST` | `/api/interactions/videos/{vid}/heartbeat` | 登录/匿名 | 上报心跳（position, deltaDuration, videoDuration） |
+| | `GET` | `/api/interactions/videos/{vid}/watch-progress` | 登录/匿名 | 获取视频断点续播位置 |
+| | `GET` | `/api/interactions/watch/history` | 需登录 | 分页查询我的观看历史列表 |
+| | `DELETE` | `/api/interactions/watch/history` | 需登录 | 删除单条（带 vid 参数）或清空历史 |
+| **播放页快照** | `GET` | `/api/interactions/videos/{vid}/my-state` | 登录/匿名 | 一站式返回点赞、收藏状态与断点秒数 |
+| **公开统计** | `GET` | `/api/interactions/videos/{vid}/stat` | 开放 | 获取单视频的公开互动计数字段 |
+| | `POST` | `/api/interactions/videos/stats` | 开放/内部 | 批量查询多个视频的公开计数（供视频列表装配） |
+| | `POST` | `/api/interactions/videos/{vid}/share` | 登录/匿名 | 记录视频分享并自增 share_count |
+
+---
+
+## 5. 核心源码入口索引
 
 - **服务启动类**：[`InteractionApplication.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/InteractionApplication.java)
-- **本地配置文件**：[`application.yml`](../../service/interaction-service/src/main/resources/application.yml)
-- **网关路由规则**：定义于 `gateway-service` 路由配置中，统一映射 `/api/interactions/**` ➔ `lb://interaction-service`。
+- **配置文件**：[`application.yml`](../../service/interaction-service/src/main/resources/application.yml)
+- **计数聚合根**：[`VideoCounter.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/domain/model/counter/VideoCounter.java)
+- **心跳服务**：[`WatchHeartbeatApplicationService.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/application/watch/WatchHeartbeatApplicationService.java)
+- **点赞服务**：[`LikeApplicationService.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/application/like/LikeApplicationService.java)
+- **收藏服务**：[`StarApplicationService.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/application/star/StarApplicationService.java)
+- **聚合控制器**：[`InteractionStatController.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionStatController.java)

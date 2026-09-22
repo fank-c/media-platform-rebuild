@@ -20,6 +20,15 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+  datasource:
+    url: ${INTERACTION_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${INTERACTION_DB_USERNAME:media}
+    password: ${INTERACTION_DB_PASSWORD:media}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
 management:
   endpoints:
     web:

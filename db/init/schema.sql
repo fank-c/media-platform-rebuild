@@ -158,11 +158,6 @@ CREATE TABLE IF NOT EXISTS `video_content` (
     `publish_status` VARCHAR(24) NOT NULL DEFAULT 'DRAFT' COMMENT '发布生命周期: DRAFT, AUDITING, PUBLISHED, REJECTED, OFFLINE',
     `reject_reason` VARCHAR(255) NULL COMMENT '审核拒绝或下架原因',
     `visibility` VARCHAR(16) NOT NULL DEFAULT 'PUBLIC' COMMENT '可见范围: PUBLIC, PRIVATE, UNLISTED',
-    `view_count` BIGINT NOT NULL DEFAULT 0 COMMENT '播放量快照',
-    `like_count` BIGINT NOT NULL DEFAULT 0 COMMENT '点赞数快照',
-    `comment_count` BIGINT NOT NULL DEFAULT 0 COMMENT '评论数快照',
-    `star_count` BIGINT NOT NULL DEFAULT 0 COMMENT '收藏数快照',
-    `share_count` BIGINT NOT NULL DEFAULT 0 COMMENT '分享数快照',
     `published_at` DATETIME(3) NULL COMMENT '首次公开发布时间',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `revision` BIGINT NOT NULL DEFAULT 0 COMMENT '并发修改版本乐观锁',
@@ -492,4 +487,79 @@ CREATE TABLE IF NOT EXISTS `user_counter` (
     CONSTRAINT `ck_user_counter_following` CHECK (`following_count` >= 0),
     CONSTRAINT `ck_user_counter_follower` CHECK (`follower_count` >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户互动与关系计数表';
+
+-- interaction-service: 视频互动统计计数聚合表 (高频交互主导者)
+CREATE TABLE IF NOT EXISTS `interaction_video_counter` (
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `view_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计播放量',
+    `like_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计点赞数',
+    `star_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计收藏数',
+    `share_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计分享数',
+    `comment_count` BIGINT NOT NULL DEFAULT 0 COMMENT '累计评论数 (预留)',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`vid`),
+    CONSTRAINT `ck_int_counter_view` CHECK (`view_count` >= 0),
+    CONSTRAINT `ck_int_counter_like` CHECK (`like_count` >= 0),
+    CONSTRAINT `ck_int_counter_star` CHECK (`star_count` >= 0),
+    CONSTRAINT `ck_int_counter_share` CHECK (`share_count` >= 0),
+    CONSTRAINT `ck_int_counter_comment` CHECK (`comment_count` >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频互动统计计数聚合表';
+
+-- interaction-service: 用户点赞事实与状态表
+CREATE TABLE IF NOT EXISTS `interaction_like` (
+    `id` CHAR(32) NOT NULL COMMENT '主键 UUID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '点赞状态: 1=已赞, 0=已取消',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_like_user_vid` (`user_id`, `vid`),
+    KEY `idx_like_vid_status` (`vid`, `status`),
+    KEY `idx_like_user_list` (`user_id`, `status`, `created_at` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频点赞记录表';
+
+-- interaction-service: 用户收藏夹表
+CREATE TABLE IF NOT EXISTS `interaction_star_folder` (
+    `id` CHAR(32) NOT NULL COMMENT '收藏夹主键 UUID',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
+    `title` VARCHAR(64) NOT NULL COMMENT '收藏夹标题',
+    `is_default` TINYINT NOT NULL DEFAULT 0 COMMENT '是否默认收藏夹: 1=是, 0=否',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1=正常, 0=已删除',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    KEY `idx_folder_user` (`user_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏夹表';
+
+-- interaction-service: 收藏视频明细表
+CREATE TABLE IF NOT EXISTS `interaction_star_item` (
+    `id` CHAR(32) NOT NULL COMMENT '明细主键 UUID',
+    `folder_id` CHAR(32) NOT NULL COMMENT '所属收藏夹ID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID (反查冗余)',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_folder_vid` (`folder_id`, `vid`),
+    KEY `idx_item_user_vid` (`user_id`, `vid`),
+    KEY `idx_item_folder_time` (`folder_id`, `created_at` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏明细表';
+
+-- interaction-service: 用户视频观看历史与心跳断点表
+CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
+    `id` CHAR(32) NOT NULL COMMENT '记录主键 UUID',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `last_position` INT NOT NULL DEFAULT 0 COMMENT '上次播放头进度 (秒)，用于断点续播',
+    `watched_duration` INT NOT NULL DEFAULT 0 COMMENT '累计有效观看总时长 (秒)',
+    `video_duration` INT NOT NULL DEFAULT 0 COMMENT '视频总时长 (秒)',
+    `completed` TINYINT NOT NULL DEFAULT 0 COMMENT '是否完播: 1=是, 0=否',
+    `first_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '首次观看时间',
+    `last_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最近一次心跳活跃时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_watch_user_vid` (`user_id`, `vid`),
+    KEY `idx_watch_user_recent` (`user_id`, `last_watch_at` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户视频观看历史与进度表';
+
 

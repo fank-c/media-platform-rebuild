@@ -69,21 +69,6 @@ public class VideoContent {
     /** 公开可见性范围。 */
     private ContentVisibility visibility;
 
-    /** 播放量快照。 */
-    private long viewCount;
-
-    /** 点赞数快照。 */
-    private long likeCount;
-
-    /** 评论数快照。 */
-    private long commentCount;
-
-    /** 收藏数快照。 */
-    private long starCount;
-
-    /** 分享数快照。 */
-    private long shareCount;
-
     /** 正式公开/发布时间。 */
     private LocalDateTime publishedAt;
 
@@ -142,11 +127,6 @@ public class VideoContent {
                 .status(CommonStatus.ACTIVE)
                 .publishStatus(PublishStatus.DRAFT)
                 .visibility(ContentVisibility.PUBLIC)
-                .viewCount(0L)
-                .likeCount(0L)
-                .commentCount(0L)
-                .starCount(0L)
-                .shareCount(0L)
                 .deleted(0)
                 .revision(0L)
                 .build();
@@ -253,23 +233,6 @@ public class VideoContent {
         }
     }
 
-    /**
-     * 刷新互动计数快照（由 interaction 互动微服务异步事件批量回写）。
-     *
-     * @param viewCount 播放总次数
-     * @param likeCount 点赞总次数
-     * @param commentCount 评论总条数
-     * @param starCount 收藏总次数
-     * @param shareCount 分享转发总次数
-     */
-    public void updateMetricsSnapshot(long viewCount, long likeCount, long commentCount,
-                                      long starCount, long shareCount) {
-        this.viewCount = Math.max(0, viewCount);
-        this.likeCount = Math.max(0, likeCount);
-        this.commentCount = Math.max(0, commentCount);
-        this.starCount = Math.max(0, starCount);
-        this.shareCount = Math.max(0, shareCount);
-    }
 
     /**
      * 基础属性合法性前置断言校验。

@@ -1,0 +1,100 @@
+package com.calles.platform.interaction.infrastructure.persistence.repository;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.calles.platform.interaction.domain.model.star.StarItem;
+import com.calles.platform.interaction.domain.repository.StarItemRepository;
+import com.calles.platform.interaction.infrastructure.persistence.entity.StarItemPO;
+import com.calles.platform.interaction.infrastructure.persistence.mapper.StarItemMapper;
+import java.util.List;
+import java.util.Optional;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Repository;
+
+/**
+ * 收藏视频明细仓储实现类。
+ */
+@Repository
+@RequiredArgsConstructor
+public class StarItemRepositoryImpl implements StarItemRepository {
+
+    private final StarItemMapper mapper;
+
+    @Override
+    public Optional<StarItem> findByFolderAndVid(String folderId, String vid) {
+        if (folderId == null || vid == null) {
+            return Optional.empty();
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .eq(StarItemPO::getFolderId, folderId)
+                .eq(StarItemPO::getVid, vid);
+        StarItemPO po = mapper.selectOne(wrapper);
+        return Optional.ofNullable(po).map(StarItemPO::toDomain);
+    }
+
+    @Override
+    public boolean isStarredByUser(String userId, String vid) {
+        if (userId == null || vid == null) {
+            return false;
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .eq(StarItemPO::getUserId, userId)
+                .eq(StarItemPO::getVid, vid);
+        return mapper.selectCount(wrapper) > 0;
+    }
+
+    @Override
+    public List<StarItem> findByFolderId(String folderId, int offset, int limit) {
+        if (folderId == null || folderId.isBlank()) {
+            return List.of();
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .eq(StarItemPO::getFolderId, folderId)
+                .orderByDesc(StarItemPO::getCreatedAt)
+                .last("LIMIT " + Math.max(0, offset) + ", " + Math.max(1, limit));
+        List<StarItemPO> pos = mapper.selectList(wrapper);
+        if (pos == null) {
+            return List.of();
+        }
+        return pos.stream().map(StarItemPO::toDomain).toList();
+    }
+
+    @Override
+    public long countByFolderId(String folderId) {
+        if (folderId == null || folderId.isBlank()) {
+            return 0L;
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .eq(StarItemPO::getFolderId, folderId);
+        return mapper.selectCount(wrapper);
+    }
+
+    @Override
+    public void save(StarItem item) {
+        if (item == null) {
+            return;
+        }
+        mapper.insert(StarItemPO.fromDomain(item));
+    }
+
+    @Override
+    public int deleteByFolderAndVid(String folderId, String vid) {
+        if (folderId == null || vid == null) {
+            return 0;
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .eq(StarItemPO::getFolderId, folderId)
+                .eq(StarItemPO::getVid, vid);
+        return mapper.delete(wrapper);
+    }
+
+    @Override
+    public int deleteByUserAndVid(String userId, String vid) {
+        if (userId == null || vid == null) {
+            return 0;
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .eq(StarItemPO::getUserId, userId)
+                .eq(StarItemPO::getVid, vid);
+        return mapper.delete(wrapper);
+    }
+}
