@@ -97,10 +97,21 @@ public class VideoCounter {
     }
 
     /**
-     * 原子递增分享计数。
+     * 原子增加分享统计计数值。
+     *
+     * @param delta 分享增量值（必须大于 0，非正数将被忽略）
+     */
+    public void incrementShareCount(long delta) {
+        if (delta > 0) {
+            this.shareCount += delta;
+            this.updatedAt = LocalDateTime.now();
+        }
+    }
+
+    /**
+     * 原子增加单次分享统计计数值（便捷重载，增量固定为 1）。
      */
     public void incrementShareCount() {
-        this.shareCount += 1L;
-        this.updatedAt = LocalDateTime.now();
+        incrementShareCount(1L);
     }
 }

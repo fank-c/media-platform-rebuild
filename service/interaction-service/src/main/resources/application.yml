@@ -29,6 +29,14 @@ mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
 
+# 互动统计计数相关配置
+interaction:
+  counter:
+    # 脏计数批量异步刷盘的执行间隔周期 (毫秒)，默认 5000ms (5秒)，防止对数据库造成瞬时过高写并发
+    flush-rate-ms: ${INTERACTION_COUNTER_FLUSH_RATE_MS:5000}
+    # 视频计数在 Redis 中的持久保留天数，默认 7 天
+    cache-ttl-days: ${INTERACTION_COUNTER_TTL_DAYS:7}
+
 management:
   endpoints:
     web:
