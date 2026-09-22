@@ -3,6 +3,7 @@ package com.calles.platform.interaction.infrastructure.redis;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,8 +26,8 @@ class VideoCounterRedisCacheTest {
      */
     @BeforeEach
     void setUp() {
-        // 传入 null 模拟 Redis 缺失时的内存自动降级模式
-        cache = new VideoCounterRedisCache(null);
+        // 传入 null 模拟 Redis 缺失时的内存自动降级模式，默认 TTL 设置为 30 分钟
+        cache = new VideoCounterRedisCache(null, Duration.ofMinutes(30));
     }
 
     @Test
@@ -79,5 +80,44 @@ class VideoCounterRedisCacheTest {
 
         assertThat(list).hasSize(2);
         assertThat(list).extracting(VideoCounter::getVid).containsExactlyInAnyOrder("vid_1", "vid_2");
+    }
+
+    @Test
+    @DisplayName("支持自定义 TTL 时长并在入参为空时保底为 30 分钟")
+    void shouldRespectConfiguredCacheTtl() {
+        assertThat(cache.getCacheTtl()).isEqualTo(Duration.ofMinutes(30));
+
+        VideoCounterRedisCache fallbackTtlCache = new VideoCounterRedisCache(null, null);
+        assertThat(fallbackTtlCache.getCacheTtl()).isEqualTo(Duration.ofMinutes(30));
+
+        VideoCounterRedisCache customTtlCache = new VideoCounterRedisCache(null, Duration.ofMinutes(15));
+        assertThat(customTtlCache.getCacheTtl()).isEqualTo(Duration.ofMinutes(15));
+    }
+
+    @Test
+    @DisplayName("从 Redis 读命中时自动对 Key 执行滑动续期")
+    @SuppressWarnings("unchecked")
+    void shouldRenewTtlWhenReadingFromRedis() {
+        org.springframework.data.redis.core.StringRedisTemplate mockTemplate =
+                org.mockito.Mockito.mock(org.springframework.data.redis.core.StringRedisTemplate.class);
+        org.springframework.data.redis.core.HashOperations<String, Object, Object> hashOps =
+                org.mockito.Mockito.mock(org.springframework.data.redis.core.HashOperations.class);
+        org.mockito.Mockito.when(mockTemplate.opsForHash()).thenReturn(hashOps);
+
+        java.util.Map<Object, Object> entries = java.util.Map.of(
+                "view", "88",
+                "like", "20",
+                "star", "5",
+                "share", "2"
+        );
+        org.mockito.Mockito.when(hashOps.entries("int:counter:vid_hot")).thenReturn(entries);
+
+        VideoCounterRedisCache redisCache = new VideoCounterRedisCache(mockTemplate, java.time.Duration.ofMinutes(20));
+        VideoCounter result = redisCache.getCounter("vid_hot", () -> null);
+
+        assertThat(result.getViewCount()).isEqualTo(88);
+        assertThat(result.getLikeCount()).isEqualTo(20);
+        // 验证滑动续期确实被触发
+        org.mockito.Mockito.verify(mockTemplate).expire("int:counter:vid_hot", java.time.Duration.ofMinutes(20));
     }
 }

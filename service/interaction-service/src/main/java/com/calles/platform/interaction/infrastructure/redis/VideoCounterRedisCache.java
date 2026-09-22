@@ -13,8 +13,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
+
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -23,8 +26,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>核心机制：
  * <ul>
- *   <li>写操作：直接在 Redis Hash 执行 {@code HINCRBY} 原子指令，并将变动的 {@code vid} 标记至脏集合；</li>
- *   <li>读操作：优先从 Redis 读取，未命中时通过回调从数据库冷加载并回写缓存；</li>
+ *   <li>写操作：直接在 Redis Hash 执行 {@code HINCRBY} 原子指令，并将变动的 {@code vid} 标记至脏集合，同时滑动续期；</li>
+ *   <li>读操作：优先从 Redis 读取，命中的热点视频自动触发滑动续期（延长 TTL）；未命中时冷加载并回写缓存；</li>
+ *   <li>快速淘汰：冷视频在 TTL 到期后由 Redis 自动释放内存，避免常驻空间浪费；</li>
  *   <li>容错降级：当 Redis 未配置或网络异常时，透明降级至本地内存缓存，确保高可用。</li>
  * </ul>
  * </p>
@@ -39,9 +43,6 @@ public class VideoCounterRedisCache {
     /** 记录存在未持久化增量变动的视频短码 Set 集合键名。 */
     private static final String DIRTY_SET_KEY = "int:counter:dirty";
 
-    /** 视频计数 Hash 缓存默认过期时间 (30分钟)，热点访问或每次变动时自动续期。 */
-    private static final Duration CACHE_TTL = Duration.ofMinutes(30);
-
     /** Hash 域字段名：累计播放量。 */
     private static final String FIELD_VIEW = "view";
 
@@ -54,6 +55,15 @@ public class VideoCounterRedisCache {
     /** Hash 域字段名：累计分享数。 */
     private static final String FIELD_SHARE = "share";
 
+    /** 视频计数在 Redis 中的缓存过期时间，默认 30 分钟，支持配置注入。
+     * -- GETTER --
+     *  获取当前生效的缓存过期时间。
+     *
+     * @return 过期时长
+     */
+    @Getter
+    private final Duration cacheTtl;
+
     /** Redis 字符串与哈希操作模板，允许为 null（用于非 Redis 依赖环境透明降级）。 */
     private final StringRedisTemplate redisTemplate;
 
@@ -64,12 +74,31 @@ public class VideoCounterRedisCache {
     private final Set<String> localDirtySet = ConcurrentHashMap.newKeySet();
 
     /**
-     * 构造方法。
+     * 完整依赖注入构造方法。
      *
-     * @param redisTemplate Spring Redis 操作模板（可选注入，支持缺失时透明降级为本地内存模式）
+     * @param redisTemplate Spring Redis 操作模板（可选注入）
+     * @param cacheTtl 缓存过期时间（默认 30 分钟，从配置项 interaction.counter.cache-ttl 获取）
      */
-    public VideoCounterRedisCache(@Autowired(required = false) StringRedisTemplate redisTemplate) {
+    public VideoCounterRedisCache(
+            @Autowired(required = false) StringRedisTemplate redisTemplate,
+            @Value("${interaction.counter.cache-ttl:30m}") Duration cacheTtl) {
         this.redisTemplate = redisTemplate;
+        this.cacheTtl = cacheTtl != null ? cacheTtl : Duration.ofMinutes(30);
+    }
+
+    /**
+     * 对热点视频键执行滑动续期（重置 TTL）。
+     *
+     * @param key Redis 完整键名
+     */
+    private void renewTtl(String key) {
+        if (redisTemplate != null) {
+            try {
+                redisTemplate.expire(key, cacheTtl);
+            } catch (Exception e) {
+                log.debug("刷新 Redis 计数 TTL 异常: {}", e.getMessage());
+            }
+        }
     }
 
     /**
@@ -129,7 +158,9 @@ public class VideoCounterRedisCache {
             try {
                 String key = COUNTER_KEY_PREFIX + vid;
                 Map<Object, Object> entries = redisTemplate.opsForHash().entries(key);
-                if (entries != null && !entries.isEmpty()) {
+                if (!entries.isEmpty()) {
+                    // 步骤 1.1: 读命中触发滑动续期，确保活跃热点视频生命周期自动顺延
+                    renewTtl(key);
                     return parseFromHashEntries(vid, entries);
                 }
             } catch (Exception e) {
@@ -269,7 +300,7 @@ public class VideoCounterRedisCache {
                     redisTemplate.opsForHash().put(key, field, "0");
                 }
                 // 续期当前计数 Hash 键
-                redisTemplate.expire(key, CACHE_TTL);
+                renewTtl(key);
                 // 标记该视频发生变动，加入脏集合等待异步调度刷盘
                 redisTemplate.opsForSet().add(DIRTY_SET_KEY, vid);
                 return;
@@ -302,8 +333,11 @@ public class VideoCounterRedisCache {
         // 步骤 1: 优先尝试从 Redis 中查询
         if (redisTemplate != null) {
             try {
-                Map<Object, Object> entries = redisTemplate.opsForHash().entries(COUNTER_KEY_PREFIX + vid);
+                String key = COUNTER_KEY_PREFIX + vid;
+                Map<Object, Object> entries = redisTemplate.opsForHash().entries(key);
                 if (entries != null && !entries.isEmpty()) {
+                    // 步骤 1.1: 批量命中触发滑动续期
+                    renewTtl(key);
                     return parseFromHashEntries(vid, entries);
                 }
             } catch (Exception ignored) {
@@ -332,7 +366,7 @@ public class VideoCounterRedisCache {
                 map.put(FIELD_STAR, String.valueOf(counter.getStarCount()));
                 map.put(FIELD_SHARE, String.valueOf(counter.getShareCount()));
                 redisTemplate.opsForHash().putAll(key, map);
-                redisTemplate.expire(key, CACHE_TTL);
+                renewTtl(key);
                 return;
             } catch (Exception ignored) {
             }
