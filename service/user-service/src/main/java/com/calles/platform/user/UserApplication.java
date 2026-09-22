@@ -12,7 +12,7 @@ import com.calles.platform.user.config.UserProfileProperties;
  * 用户服务启动入口，只扫描 user-service 自有且显式标注的持久化 Mapper。
  */
 @SpringBootApplication
-@MapperScan(basePackages = "com.calles.platform.user.infrastructure.persistence", annotationClass = Mapper.class)
+@MapperScan(basePackages = "com.calles.platform.user.infrastructure.persistence.mapper", annotationClass = Mapper.class)
 @EnableConfigurationProperties({UserMessagingProperties.class, UserProfileProperties.class})
 public class UserApplication {
     /**

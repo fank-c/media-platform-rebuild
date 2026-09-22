@@ -1,8 +1,8 @@
 package com.calles.platform.user.application.follow;
 
 import com.calles.platform.common.core.event.EventEnvelope;
-import com.calles.platform.user.domain.event.UserFollowedPayload;
-import com.calles.platform.user.domain.event.UserUnfollowedPayload;
+import com.calles.platform.user.domain.follow.event.UserFollowedPayload;
+import com.calles.platform.user.domain.follow.event.UserUnfollowedPayload;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;

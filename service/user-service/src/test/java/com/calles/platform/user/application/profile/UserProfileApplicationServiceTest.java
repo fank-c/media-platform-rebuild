@@ -12,9 +12,9 @@ import static org.mockito.Mockito.when;
 
 import com.calles.platform.user.domain.profile.ProfileStatus;
 import com.calles.platform.user.domain.profile.UserProfile;
-import com.calles.platform.user.infrastructure.persistence.UserProfileMapper;
-import com.calles.platform.user.interfaces.http.dto.ProfileResponses;
-import com.calles.platform.user.interfaces.http.dto.UserProfilePatchRequest;
+import com.calles.platform.user.infrastructure.persistence.mapper.profile.UserProfileMapper;
+import com.calles.platform.user.interfaces.http.profile.dto.ProfileResponses;
+import com.calles.platform.user.interfaces.http.profile.dto.UserProfilePatchRequest;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;

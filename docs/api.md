@@ -1191,7 +1191,11 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 
 本文核对了当前各微服务控制器源码及关联契约组件：
 - **认证服务**：[AuthController](../service/auth-service/src/main/java/com/calles/platform/auth/interfaces/http/AuthController.java)
-- **用户服务**：[UserProfileController](../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserProfileController.java)
+- **用户服务**：
+  - 前台个人与公开资料：[UserProfileController](../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/profile/UserProfileController.java)
+  - 社交关系与关注粉丝：[UserFollowController](../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/follow/UserFollowController.java)
+  - 管理端用户资料治理：[AdminUserProfileController](../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/profile/AdminUserProfileController.java)
+  - 内部协同关注调用端点：[UserFollowInternalController](../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/follow/UserFollowInternalController.java)
 - **文件服务**：[FileController](../service/file-service/src/main/java/com/calles/platform/file/interfaces/http/FileController.java)
 - **内容服务**：
   - 创作者端：[CreatorVideoController](../service/content-service/src/main/java/com/calles/platform/content/interfaces/http/video/CreatorVideoController.java)

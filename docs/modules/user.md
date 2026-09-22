@@ -227,7 +227,7 @@ sequenceDiagram
   - Queue：`user.account-created.v1`
   - Exchange：`media.platform.events`
   - RoutingKey：`auth.account.created`
-- **消费类入口**：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/AccountCreatedConsumer.java)
+- **消费类入口**：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/consumer/AccountCreatedConsumer.java)
 - **强幂等消费与本地事务保障**：
   1. 解析事件载荷，提取 `accountId`、`email` 等信息；
   2. 开启本地数据库事务：
@@ -318,13 +318,14 @@ CREATE TABLE IF NOT EXISTS `user_counter` (
 
 - **启动入口类**：[`UserApplication.java`](../../service/user-service/src/main/java/com/calles/platform/user/UserApplication.java)
 - **控制器与用例**：
-  - 用户资料控制器：[`UserProfileController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserProfileController.java)
+  - 用户前台资料控制器：[`UserProfileController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/profile/UserProfileController.java)
+  - 管理端资料治理控制器：[`AdminUserProfileController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/profile/AdminUserProfileController.java)
   - 资料用例编排服务：[`UserProfileApplicationService.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/UserProfileApplicationService.java)
-  - 关注与粉丝控制器：[`UserFollowController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserFollowController.java)
-  - 关注内部协同端点：[`UserFollowInternalController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserFollowInternalController.java)
+  - 关注与粉丝控制器：[`UserFollowController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/follow/UserFollowController.java)
+  - 关注内部协同端点：[`UserFollowInternalController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/follow/UserFollowInternalController.java)
   - 关注核心编排服务：[`UserFollowApplicationService.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/follow/UserFollowApplicationService.java)
 - **事件驱动与消息投递**：
-  - 账号建档消费者：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/AccountCreatedConsumer.java)
+  - 账号建档消费者：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/consumer/AccountCreatedConsumer.java)
   - 关注领域事件发布器：[`UserFollowEventPublisher.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/follow/UserFollowEventPublisher.java)
 - **安全与防盗链策略**：
   - 头像域名合规校验：[`AvatarDisplayPolicy.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/AvatarDisplayPolicy.java)
