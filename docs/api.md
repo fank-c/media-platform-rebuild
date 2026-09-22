@@ -66,6 +66,13 @@ Authorization: Bearer <accessToken>
 | POST | `/api/users/batch` | 已登录 | 批量公开摘要 |
 | POST | `/api/users/admin/list` | 管理员 | 筛选分页资料 |
 | PATCH | `/api/users/admin/{accountId}` | 管理员 | 修改已有正常资料 |
+| POST | `/api/users/{targetUserId}/follow` | 普通用户 | 关注指定用户 |
+| DELETE | `/api/users/{targetUserId}/follow` | 普通用户 | 取消关注用户 |
+| GET | `/api/users/{targetUserId}/relation` | 开放/已登录 | 查询双方社交关系 |
+| GET | `/api/users/{accountId}/following` | 已登录 | 分页查询关注列表 |
+| GET | `/api/users/{accountId}/followers` | 已登录 | 分页查询粉丝列表 |
+| GET | `/api/users/{accountId}/stats` | 已登录 | 查询用户关系统计快照 |
+| GET | `/api/users/internal/{accountId}/following-ids` | 内部微服务 | 内部提取关注博主ID列表 |
 | POST | `/api/files` | 普通用户 | 普通上传 |
 | POST | `/api/files/direct-upload` | 普通用户 | V1 直传初始化 |
 | POST | `/api/files/direct-upload/v2` | 普通用户；默认关闭 | V2 直传初始化 |
@@ -270,6 +277,111 @@ ID、状态及文本字段为字符串，`revision` 为非负整数，`gender` �
 管理员，路径账号 ID 规则同上，正文使用本人 PATCH 的字段和版本规则。成功 `200`，返回管理资料视图。
 
 只修改已有正常资料：不存在或已删除 `404`；停用资料或版本冲突 `409`；参数不合法 `400`；非管理员 `403`。不提供新建、恢复、启停资料或修改认证角色能力。
+
+### 关注用户：POST /api/users/{targetUserId}/follow
+
+普通用户，关注目标创作者。成功 `200`，支持严格幂等（重复操作不累加计数），禁止关注自己。
+
+- 关键错误：未登录 `401`；关注自己 `400`；目标用户不存在或已被封禁 `404`。
+- 成功响应：
+  ```json
+  {
+    "code": 200,
+    "message": "ok",
+    "data": {
+      "targetUserId": "u_1002",
+      "followStatus": 1,
+      "mutual": false
+    }
+  }
+  ```
+
+### 取消关注：DELETE /api/users/{targetUserId}/follow
+
+普通用户，取消关注目标用户。成功 `200`，软状态置零，具备天然幂等性。
+
+- 关键错误：未登录 `401`；取关自己 `400`。
+- 成功响应：
+  ```json
+  {
+    "code": 200,
+    "message": "ok",
+    "data": {
+      "targetUserId": "u_1002",
+      "followStatus": 0,
+      "mutual": false
+    }
+  }
+  ```
+
+### 关系查询：GET /api/users/{targetUserId}/relation
+
+开放接口（支持未登录/已登录访问）。查询当前登录用户与目标用户的社交拓扑关系。
+
+- 关系枚举：`NONE`（无关系）、`FOLLOWING`（我关注了他）、`FOLLOWED_BY`（他关注了我）、`MUTUAL`（互相关注）。
+- 成功响应：
+  ```json
+  {
+    "code": 200,
+    "message": "ok",
+    "data": {
+      "targetUserId": "u_1002",
+      "relation": "MUTUAL"
+    }
+  }
+  ```
+
+### 关注列表：GET /api/users/{accountId}/following
+
+已登录用户，按时间倒序分页查询目标用户的关注列表。支持 `page`（默认 1）和 `size`（默认 20）。
+
+- 成功响应：
+  ```json
+  {
+    "code": 200,
+    "message": "ok",
+    "data": {
+      "total": 1,
+      "page": 1,
+      "size": 20,
+      "items": [
+        {
+          "accountId": "u_1002",
+          "nickname": "极客数码",
+          "avatarUrl": "https://img.calles.com/avatar.jpg",
+          "bio": "科技自媒体",
+          "followTime": "2026-09-22T10:00:00",
+          "mutual": true
+        }
+      ]
+    }
+  }
+  ```
+
+### 粉丝列表：GET /api/users/{accountId}/followers
+
+已登录用户，按时间倒序分页查询目标用户的粉丝列表。参数与响应结构同关注列表。
+
+### 关系统计快照：GET /api/users/{accountId}/stats
+
+已登录用户，查询用户的关注数与粉丝数。
+
+- 成功响应：
+  ```json
+  {
+    "code": 200,
+    "message": "ok",
+    "data": {
+      "accountId": "u_1001",
+      "followingCount": 42,
+      "followerCount": 128
+    }
+  }
+  ```
+
+### 内部关注清单：GET /api/users/internal/{accountId}/following-ids
+
+仅供内部微服务协同（如推荐服务 `FollowingRecallChannel`）。返回目标用户关注的所有博主 ID 列表。
 
 ## 4. 文件接口
 

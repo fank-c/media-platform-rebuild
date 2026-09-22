@@ -90,6 +90,87 @@ sequenceDiagram
 
 ---
 
+## 3.1 用户关注与取关原子事务时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 客户端 (用户)
+    participant GW as API 网关 (gateway:8000)
+    participant Ctrl as UserFollowController
+    participant Svc as UserFollowApplicationService
+    participant DB as MySQL (user_follow / user_counter)
+    participant MQ as RabbitMQ (media.platform.events)
+    participant Rec as 推荐服务 (recommend-service)
+
+    Client->>GW: POST /api/users/{targetUserId}/follow
+    GW->>Ctrl: 路由转发 (校验 Token 并透传 X-User-Id)
+    Ctrl->>Svc: follow(userId, targetUserId)
+
+    Note over Svc: 步骤 1：前置安全与状态校验
+    Svc->>Svc: 校验 userId != targetUserId (自关抛 400)
+    Svc->>DB: 校验 targetProfile 是否存在且正常 (不存在抛 404)
+
+    Note over Svc,DB: 步骤 2：开启本地事务 (写入关系 + 原子自增计数)
+    alt 首次关注
+        Svc->>DB: INSERT IGNORE INTO user_follow (follow_status=1)
+        Svc->>DB: INSERT INTO user_counter ... ON DUPLICATE KEY UPDATE following_count+1
+        Svc->>DB: INSERT INTO user_counter ... ON DUPLICATE KEY UPDATE follower_count+1
+    else 取关后重新关注
+        Svc->>DB: UPDATE user_follow SET follow_status=1 WHERE follow_status=0
+        Svc->>DB: UPDATE user_counter SET following_count=following_count+1
+        Svc->>DB: UPDATE user_counter SET follower_count=follower_count+1
+    else 重复关注 (幂等)
+        Svc->>Svc: 状态已为 1，跳过计数累加
+    end
+
+    Note over Svc,DB: 步骤 3：判定互相关注
+    Svc->>DB: SELECT follow_status FROM user_follow WHERE user_id=target AND follow_id=user
+    DB-->>Svc: 返回互关状态 (mutual)
+
+    Note over Svc,MQ: 步骤 4：事务提交后 (afterCommit) 广播事件
+    Svc->>MQ: 发布 user.relation.followed.v1
+    MQ-->>Rec: 异步消费，更新作者与偏好推荐权重
+
+    Svc-->>Ctrl: 返回 FollowResponses.Action
+    Ctrl-->>Client: 200 OK { targetUserId, followStatus: 1, mutual: true/false }
+```
+
+---
+
+## 3.2 关注与粉丝列表分页聚合时序图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 客户端
+    participant GW as API 网关
+    participant Ctrl as UserFollowController
+    participant Svc as UserFollowApplicationService
+    participant FMap as UserFollowMapper (user_follow)
+    participant PMap as UserProfileApplicationService (user_profile)
+
+    Client->>GW: GET /api/users/{accountId}/following?page=1&size=20
+    GW->>Ctrl: 鉴权转发
+    Ctrl->>Svc: getFollowingList(accountId, currentUserId, page=1, size=20)
+
+    Note over Svc,FMap: 阶段 1：利用覆盖索引高效拉取关注主键与时间
+    Svc->>FMap: selectFolloweeList(accountId, offset=0, limit=20)
+    FMap-->>Svc: 返回 TargetFollowRow 清单 (targetId, followTime)
+
+    Note over Svc,PMap: 阶段 2：批量聚合目标博主公开名片 (走 Redis 缓存加速)
+    Svc->>PMap: batchPublic(targetIds)
+    PMap-->>Svc: 返回 BatchItem 列表 (nickname, avatarUrl, bio)
+
+    Note over Svc: 阶段 3：计算目标博主与当前用户的互关标记 (mutual)
+    Svc->>FMap: 检查 targetId 是否也关注了 accountId
+    
+    Svc-->>Ctrl: 组装 FollowResponses.Page (含 total, items)
+    Ctrl-->>Client: 200 OK (公开名片 + 关注时间 + 互关标识)
+```
+
+---
+
 ## 4. 第一套件：HTTP 接口服务链路
 
 所有端点均挂载于统一前缀 `/api/users/**` 下：
@@ -102,6 +183,13 @@ sequenceDiagram
 | `POST` | `/api/users/batch` | 内部或已登录 | 批量查询创作者资料 ➔ 保持入参顺序 ➔ 批量组装名片列表（缺失或封禁用户标记 `unavailable=true`） | `200` 成功 |
 | `POST` | `/api/users/admin/list` | `requireAdmin` | 管理员动态多条件分页检索资料（支持状态、时间、昵称模糊匹配） | `200` 成功 |
 | `PATCH` | `/api/users/admin/{accountId}`| `requireAdmin` | 管理员强制纠偏违规昵称或违规头像（同样遵循版本号自增控制） | `200` 成功<br/>`409` 版本冲突 |
+| `POST` | `/api/users/{targetUserId}/follow` | `requireUser` | 关注创作者 ➔ 幂等写入/更新 ➔ 原子维护 `user_counter` 双方计数 ➔ 异步广播领域事件 | `200` 成功<br/>`400` 自关拦截<br/>`404` 目标不存在 |
+| `DELETE`| `/api/users/{targetUserId}/follow` | `requireUser` | 取消关注 ➔ 软状态置 0 ➔ 原子递减双方计数 ➔ 异步广播取关事件 | `200` 成功<br/>`400` 自关拦截 |
+| `GET` | `/api/users/{targetUserId}/relation` | 开放/已登录 | 双方拓扑关系智能判定（`NONE`, `FOLLOWING`, `FOLLOWED_BY`, `MUTUAL`） | `200` 成功 |
+| `GET` | `/api/users/{accountId}/following` | `requireAuthenticated` | 关注列表分页 ➔ 关联公开名片与关注时间 ➔ 标记互关状态 | `200` 成功 |
+| `GET` | `/api/users/{accountId}/followers` | `requireAuthenticated` | 粉丝列表分页 ➔ 关联公开名片与粉丝时间 ➔ 标记互关状态 | `200` 成功 |
+| `GET` | `/api/users/{accountId}/stats` | `requireAuthenticated` | 用户关系统计快照查询（关注数、粉丝数） | `200` 成功 |
+| `GET` | `/api/users/internal/{accountId}/following-ids` | 内部微服务 | 内部提取关注博主ID列表，赋能 `recommend-service` 关注流召回 | `200` 成功 |
 
 ### 4.1 接口响应报文契约
 
@@ -194,6 +282,36 @@ CREATE TABLE IF NOT EXISTS `user_event_consume` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MQ消息消费防重记录表';
 ```
 
+### 7.3 用户关注关系表 (`user_follow`)
+```sql
+CREATE TABLE IF NOT EXISTS `user_follow` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '自增主键',
+    `user_id` CHAR(32) NOT NULL COMMENT '关注者用户ID (发起人)',
+    `follow_id` CHAR(32) NOT NULL COMMENT '被关注者用户ID (目标用户)',
+    `follow_status` TINYINT NOT NULL DEFAULT 1 COMMENT '关注状态: 1=已关注, 0=已取消',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '初次关注时间',
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最后状态更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_user_follow` (`user_id`, `follow_id`),
+    KEY `idx_user_following` (`user_id`, `follow_status`, `updated_at` DESC) COMMENT '我的关注列表高效分页',
+    KEY `idx_follow_fans` (`follow_id`, `follow_status`, `updated_at` DESC) COMMENT '我的粉丝列表高效分页'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户关注关系表';
+```
+
+### 7.4 用户互动与关系统计快照表 (`user_counter`)
+```sql
+CREATE TABLE IF NOT EXISTS `user_counter` (
+    `account_id` CHAR(32) NOT NULL COMMENT '用户ID (与 user_profile.account_id 一致)',
+    `following_count` BIGINT NOT NULL DEFAULT 0 COMMENT '关注数',
+    `follower_count` BIGINT NOT NULL DEFAULT 0 COMMENT '粉丝数',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`account_id`),
+    CONSTRAINT `ck_user_counter_following` CHECK (`following_count` >= 0),
+    CONSTRAINT `ck_user_counter_follower` CHECK (`follower_count` >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户互动与关系计数表';
+```
+
 ---
 
 ## 8. 核心源码入口索引
@@ -202,10 +320,16 @@ CREATE TABLE IF NOT EXISTS `user_event_consume` (
 - **控制器与用例**：
   - 用户资料控制器：[`UserProfileController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserProfileController.java)
   - 资料用例编排服务：[`UserProfileApplicationService.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/UserProfileApplicationService.java)
-- **事件驱动与消费者**：
+  - 关注与粉丝控制器：[`UserFollowController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserFollowController.java)
+  - 关注内部协同端点：[`UserFollowInternalController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/UserFollowInternalController.java)
+  - 关注核心编排服务：[`UserFollowApplicationService.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/follow/UserFollowApplicationService.java)
+- **事件驱动与消息投递**：
   - 账号建档消费者：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/AccountCreatedConsumer.java)
+  - 关注领域事件发布器：[`UserFollowEventPublisher.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/follow/UserFollowEventPublisher.java)
 - **安全与防盗链策略**：
   - 头像域名合规校验：[`AvatarDisplayPolicy.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/AvatarDisplayPolicy.java)
 - **自动化测试规范**：
-  - 乐观锁并发测试：`UserProfileRevisionTest.java`
+  - 关注核心用例测试：`UserFollowApplicationServiceTest.java`
+  - 关注 HTTP 契约测试：`UserFollowControllerTest.java`
+  - 资料生命周期与并发测试：`UserProfileApplicationServiceTest.java`
   - 消费幂等建档测试：`AccountCreatedConsumerTest.java`

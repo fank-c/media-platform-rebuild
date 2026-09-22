@@ -55,6 +55,16 @@
 - [x] 管理员筛选并分页查询未删除资料。
 - [x] 管理员按版本修改已有正常资料，不创建、启停或恢复资料。
 
+### 用户关注与社交关系
+
+- [x] 关注与取消关注创作者，支持幂等处理与自关拦截。
+- [x] 采用 `follow_status`（0/1）软状态标记与覆盖索引支撑高频变动。
+- [x] 独立 `user_counter` 计数快照表，通过原生原子自增/自减维护关注数与粉丝数，与资料表彻底解耦。
+- [x] 双方社交关系智能判定（未关注、已关注、被关注、互相关注）。
+- [x] 分页查询关注与粉丝列表，聚合公开资料与成为粉丝/关注时间。
+- [x] 关注/取关成功后在事务提交后向 RabbitMQ 广播领域事件（`user.relation.followed.v1` / `user.relation.unfollowed.v1`）。
+- [x] 暴露内部查询端点获取关注列表，赋能推荐服务关注召回通道。
+
 ## 文件模块 · file-service
 
 说明：[文件模块](modules/file.md)。
@@ -198,9 +208,36 @@
 
 ### 基础入口
 
-- [x] 提供服务启动入口与注册配置（工程骨架，无互动业务接口）。
+- [x] 提供服务启动入口与注册配置（工程骨架，集成 Redis、MySQL、MyBatis-Plus、RabbitMQ）。
 
-具体业务需求尚未细化，待讨论后拆分功能。
+### 视频点赞、收藏与交互账本 (Like & Star Ledger)
+
+- [x] 持久化维护用户点赞记录表（`interaction_like`）与有效状态。
+- [x] 用户系统默认收藏夹自动初始化与防误删保护。
+- [x] 用户自建自定义收藏夹生命周期管理（创建、重名检查、级联删除明细）。
+- [x] 视频收藏至指定/默认收藏夹与取消收藏，持久化明细表（`interaction_star_item`）维护。
+- [x] 分页查询用户本人点赞列表与收藏夹内视频短码明细列表。
+- [x] 基于 Redis 用户维度短缓存提供 O(1) 幂等判重与状态快照响应。
+
+### 时段增量缓冲与 RPC 定时回写 (Delta Buffer & Flush)
+
+- [x] Redis 时段增量写缓冲器（`InteractionRedisBuffer`），记录当前窗口内指标变动增量（$\Delta \text{like}, \Delta \text{star}, \Delta \text{view}, \Delta \text{share}, \Delta \text{comment}$）。
+- [x] 基于 Lua 脚本实现增量数据的原子提取与置零（Drain & Clear），杜绝提取期间并发丢失新增量。
+- [x] 落地定时 RPC 批量回写调度器（`MetricsDeltaFlushScheduler`），通过 OpenFeign 批量推送至 `content-service`。
+- [x] RPC 调用失败时支持原子增量回滚恢复，确保数据不丢失。
+- [x] `content-service` 开放内部受信任端点 `POST /api/content/videos/internal/metrics-delta`，执行底层原子字段累加。
+
+### 播放会话结账与推荐反馈 (Session Feedback)
+
+- [x] 开放客户端播放器离场结账端点 `POST /api/interactions/videos/{vid}/session-finish`，接收完整播放上下文（时长、完播率、是否赞藏等）。
+- [x] 会话结账累加播放量时段增量至 Redis。
+- [x] 事务性发件箱（Outbox）打包派发高价值聚合事件 `interaction.user.session-feedback`。
+- [x] `recommend-service` 声明专属消费队列与消费者（`SessionFeedbackConsumer`），一次性完成行为流水留存与画像微调。
+
+### 阶段二规划项
+
+- [ ] 树形评论与楼中楼盖楼系统（接入机审与多级排序）。
+- [ ] 播放进度断点续播与防刷风控门禁。
 
 ## 推荐模块 · recommend-service
 
