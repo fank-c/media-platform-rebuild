@@ -32,7 +32,7 @@ public class InteractionWatchController {
     private final InteractionAccessPolicy accessPolicy;
 
     /**
-     * 上报视频播放心跳与断点。
+     * 仅接受已登录用户上报的视频播放心跳与断点，未登录时不写入历史或计数。
      *
      * @param vid 视频业务公开短码
      * @param request 心跳数据体 (当前位置、时段增量、总时长)
@@ -42,12 +42,12 @@ public class InteractionWatchController {
     public ApiResponse<InteractionResponses.WatchProgress> heartbeat(
             @PathVariable String vid,
             @RequestBody InteractionRequests.Heartbeat request) {
-        // 提取用户身份；若当前未登录则使用匿名会话标示
-        String userId = accessPolicy.getCurrentUser().map(UserInfo::userId).orElse("anonymous");
+        // 步骤 1：先校验登录身份，再处理心跳，避免游客写入观看历史或播放量。
+        UserInfo user = accessPolicy.requireUser();
 
         WatchHistory history = watchService.processHeartbeat(
                 vid,
-                userId,
+                user.userId(),
                 request != null ? request.position() : 0,
                 request != null ? request.deltaDuration() : 0,
                 request != null ? request.videoDuration() : 0
@@ -63,15 +63,16 @@ public class InteractionWatchController {
     }
 
     /**
-     * 获取指定视频的断点续播进度。
+     * 获取指定视频的断点续播进度；游客返回零进度，不读取旧的匿名历史。
      *
      * @param vid 视频编码
      * @return 断点进度数据
      */
     @GetMapping("/videos/{vid}/watch-progress")
     public ApiResponse<InteractionResponses.WatchProgress> getProgress(@PathVariable String vid) {
-        String userId = accessPolicy.getCurrentUser().map(UserInfo::userId).orElse("anonymous");
-        return ApiResponse.ok(watchService.getWatchProgress(vid, userId)
+        // 步骤 1：仅登录用户查询个人历史，游客不共享 anonymous 断点。
+        return ApiResponse.ok(accessPolicy.getCurrentUser()
+                .flatMap(user -> watchService.getWatchProgress(vid, user.userId()))
                 .map(h -> new InteractionResponses.WatchProgress(
                         h.getVid(), h.getLastPosition(), h.getWatchedDuration(), h.getVideoDuration(), h.isCompleted()))
                 .orElseGet(() -> new InteractionResponses.WatchProgress(vid, 0, 0, 0, false)));

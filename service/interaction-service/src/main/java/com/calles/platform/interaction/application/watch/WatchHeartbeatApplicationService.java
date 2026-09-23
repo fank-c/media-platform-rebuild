@@ -32,7 +32,7 @@ public class WatchHeartbeatApplicationService {
      * 处理播放端心跳上报。
      *
      * @param vid 视频业务公开短码
-     * @param userId 登录用户 ID (若未登录可由上层传入游客标识或匿名短码)
+     * @param userId 已通过入口鉴权的登录用户 ID
      * @param position 当前播放头秒数位置
      * @param deltaDuration 距上次心跳新增播放秒数
      * @param videoDuration 视频总秒数

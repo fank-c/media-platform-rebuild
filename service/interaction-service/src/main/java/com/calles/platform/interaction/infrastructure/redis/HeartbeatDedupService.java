@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 /**
  * 视频播放心跳与播放量防刷去重服务。
  *
- * <p>通过时间窗口（默认 30 分钟）限制同一用户或会话针对同一视频重复计费有效播放量。</p>
+ * <p>通过时间窗口（默认 30 分钟）限制同一登录用户针对同一视频重复计费有效播放量。</p>
  */
 @Slf4j
 @Component

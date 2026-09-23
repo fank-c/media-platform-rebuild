@@ -96,15 +96,17 @@ public class InteractionStatController {
     }
 
     /**
-     * 记录并自增视频分享计数。
+     * 仅为已登录用户记录分享并自增视频分享计数；游客不产生分享计数。
      *
      * @param vid 视频编码
      * @return 动作响应
      */
     @PostMapping("/videos/{vid}/share")
     public ApiResponse<InteractionResponses.ActionResult> share(@PathVariable String vid) {
-        String userId = accessPolicy.getCurrentUser().map(UserInfo::userId).orElse("anonymous");
-        queryService.recordShare(vid, userId);
+        // 步骤 1：先拒绝未登录请求，避免游客触发不可防重的分享计数。
+        UserInfo user = accessPolicy.requireUser();
+        // 步骤 2：向计数用例传递登录用户 ID；现阶段只维护公开分享总数。
+        queryService.recordShare(vid, user.userId());
         return ApiResponse.ok(new InteractionResponses.ActionResult(vid, "SHARE", true));
     }
 }

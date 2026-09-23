@@ -17,8 +17,8 @@
   - 支持用户默认收藏夹（自动初始化）与自定义多收藏夹；
   - 提供视频加入收藏夹、移除收藏及收藏列表分页查询。
 - **播放心跳（Heartbeat）与观看历史断点**：
-  - 客户端周期上报心跳（当前播放头秒数、时段增量时长、视频总时长）；
-  - 服务端记录断点续播进度（`last_position`）、累计观看时长与完播判定；
+  - 已登录客户端周期上报心跳（当前播放头秒数、时段增量时长、视频总时长）；游客心跳返回 `401`，不记录观看历史或播放量；
+  - 服务端记录登录用户的断点续播进度（`last_position`）、累计观看时长与完播判定；游客查询进度返回零进度，不读取旧的 `anonymous` 历史；
   - 结合时间窗口防刷机制（默认 30 分钟去重），驱动视频有效播放量原子累加。
 - **一站式前台状态快照**：
   - 为前台播放页提供一站式聚合快照接口（`GET /api/interactions/videos/{vid}/my-state`），一次请求聚合返回点赞、收藏状态与断点续播秒数。
@@ -179,14 +179,16 @@ CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
 | | `GET` | `/api/interactions/star/folders` | 需登录 | 获取当前用户所有收藏夹 |
 | | `POST` | `/api/interactions/star/folders` | 需登录 | 创建自定义收藏夹 |
 | | `GET` | `/api/interactions/star/items` | 需登录 | 分页查询指定收藏夹内的视频 |
-| **观看心跳** | `POST` | `/api/interactions/videos/{vid}/heartbeat` | 登录/匿名 | 上报心跳（position, deltaDuration, videoDuration） |
-| | `GET` | `/api/interactions/videos/{vid}/watch-progress` | 登录/匿名 | 获取视频断点续播位置 |
+| **观看心跳** | `POST` | `/api/interactions/videos/{vid}/heartbeat` | 需登录 | 上报心跳（position, deltaDuration, videoDuration）；未登录返回 `401`，不记录历史与播放量 |
+| | `GET` | `/api/interactions/videos/{vid}/watch-progress` | 登录/匿名 | 登录用户获取断点；游客返回零进度，不读取匿名历史 |
 | | `GET` | `/api/interactions/watch/history` | 需登录 | 分页查询我的观看历史列表 |
 | | `DELETE` | `/api/interactions/watch/history` | 需登录 | 删除单条（带 vid 参数）或清空历史 |
 | **播放页快照** | `GET` | `/api/interactions/videos/{vid}/my-state` | 登录/匿名 | 一站式返回点赞、收藏状态与断点秒数 |
 | **公开统计** | `GET` | `/api/interactions/videos/{vid}/stat` | 开放 | 获取单视频的公开互动计数字段 |
 | | `POST` | `/api/interactions/videos/stats` | 开放/内部 | 批量查询多个视频的公开计数（供视频列表装配） |
-| | `POST` | `/api/interactions/videos/{vid}/share` | 登录/匿名 | 记录视频分享并自增 share_count |
+| | `POST` | `/api/interactions/videos/{vid}/share` | 需登录 | 记录视频分享并自增 share_count；未登录返回 `401`，不增加计数 |
+
+> 此处描述 `interaction-service` 内部校验。网关匿名白名单暂未调整，游客能否经网关访问公开查询接口取决于运行时网关配置；本次不清理既有 `anonymous` 历史数据。
 
 ---
 

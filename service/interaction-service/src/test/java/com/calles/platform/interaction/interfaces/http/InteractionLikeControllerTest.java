@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.interfaces.http;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -8,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.calles.platform.common.web.context.UserInfo;
+import com.calles.platform.common.web.context.UserContext;
 import com.calles.platform.interaction.application.like.LikeApplicationService;
 import com.calles.platform.interaction.application.security.InteractionAccessPolicy;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +35,8 @@ class InteractionLikeControllerTest {
     @BeforeEach
     void setUp() {
         InteractionLikeController controller = new InteractionLikeController(likeService, accessPolicy);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new InteractionExceptionHandler()).build();
     }
 
     @Test
@@ -64,5 +67,22 @@ class InteractionLikeControllerTest {
                 .andExpect(jsonPath("$.data.vid").value("cv_100"))
                 .andExpect(jsonPath("$.data.action").value("UNLIKE"))
                 .andExpect(jsonPath("$.data.active").value(false));
+    }
+
+    /**
+     * 验证已有的点赞登录门禁也由受控异常映射为 401，而不是 500。
+     */
+    @Test
+    @DisplayName("游客点赞返回 401 且不写入点赞状态")
+    void anonymousLikeMustNotWrite() throws Exception {
+        UserContext.clear();
+        MockMvc anonymousMvc = MockMvcBuilders.standaloneSetup(
+                new InteractionLikeController(likeService, new InteractionAccessPolicy()))
+                .setControllerAdvice(new InteractionExceptionHandler()).build();
+
+        anonymousMvc.perform(post("/api/interactions/videos/cv_100/like"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(401));
+        verifyNoInteractions(likeService);
     }
 }
