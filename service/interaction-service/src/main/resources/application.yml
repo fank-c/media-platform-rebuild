@@ -45,6 +45,9 @@ interaction:
     flush-rate-ms: ${INTERACTION_COUNTER_FLUSH_RATE_MS:5000}
     # 视频计数在 Redis 中的缓存过期时间，默认 30 分钟 (30m)；访问命中与写操作会自动滑动续期
     cache-ttl: ${INTERACTION_COUNTER_CACHE_TTL:10m}
+  watch:
+    # 同一用户针对同一视频防重复累加播放量的冷却周期，默认 6 小时 (6h)
+    repeat-window: ${INTERACTION_WATCH_REPEAT_WINDOW:6h}
   outbox:
     # 是否启用发件箱事件持久化写入能力
     enabled: ${INTERACTION_OUTBOX_ENABLED:true}

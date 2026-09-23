@@ -32,6 +32,25 @@ public class InteractionWatchController {
     private final InteractionAccessPolicy accessPolicy;
 
     /**
+     * 用户点进视频发起起播（记录历史、判定防刷冷却累加播放量，并返回续播断点）。
+     *
+     * @param vid 视频业务公开短码
+     * @return 包含当前续播断点秒数的 WatchProgress 响应
+     */
+    @PostMapping("/videos/{vid}/play")
+    public ApiResponse<InteractionResponses.WatchProgress> play(@PathVariable String vid) {
+        UserInfo user = accessPolicy.requireUser();
+        WatchHistory history = watchService.startPlay(vid, user.userId());
+        return ApiResponse.ok(new InteractionResponses.WatchProgress(
+                history.getVid(),
+                history.getLastPosition(),
+                history.getWatchedDuration(),
+                history.getVideoDuration(),
+                history.isCompleted()
+        ));
+    }
+
+    /**
      * 仅接受已登录用户上报的视频播放心跳与断点，未登录时不写入历史或计数。
      *
      * @param vid 视频业务公开短码

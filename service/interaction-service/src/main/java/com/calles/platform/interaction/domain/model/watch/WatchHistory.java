@@ -46,17 +46,43 @@ public class WatchHistory {
     /** 首次观看时间。 */
     private LocalDateTime firstWatchAt;
 
-    /** 最近一次心跳上报活跃时间。 */
+    /** 最近一次活跃观看时间（起播或心跳上报时间）。 */
     private LocalDateTime lastWatchAt;
-
-    /** 上次计为有效播放并写入 Outbox 的时间戳 (持久化防重依据)。 */
-    private LocalDateTime lastValidPlayAt;
 
     /** 是否已逻辑删除：true=已删除, false=正常有效。 */
     private boolean deleted;
 
     /**
-     * 工厂方法：首次产生观看行为时新建历史记录。
+     * 工厂方法：用户首次点进视频起播时初始化历史记录。
+     *
+     * @param userId 用户 ID
+     * @param vid 视频编码
+     * @return 初始化的观看实体
+     */
+    public static WatchHistory createForPlay(String userId, String vid) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("用户账号ID不能为空");
+        }
+        if (vid == null || vid.isBlank()) {
+            throw new IllegalArgumentException("视频业务短码不能为空");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        return WatchHistory.builder()
+                .id(UUID.randomUUID().toString().replace("-", ""))
+                .userId(userId.trim())
+                .vid(vid.trim())
+                .lastPosition(0)
+                .watchedDuration(0)
+                .videoDuration(0)
+                .completed(false)
+                .firstWatchAt(now)
+                .lastWatchAt(now)
+                .deleted(false)
+                .build();
+    }
+
+    /**
+     * 工厂方法：心跳保底新建历史记录。
      *
      * @param userId 用户 ID
      * @param vid 视频编码
@@ -91,11 +117,12 @@ public class WatchHistory {
                 .completed(isCompleted)
                 .firstWatchAt(now)
                 .lastWatchAt(now)
+                .deleted(false)
                 .build();
     }
 
     /**
-     * 接收心跳更新播放头位置与累计时长。
+     * 接收播放心跳：更新播放头断点位置、累计时长与完播标记。
      *
      * @param position 当前播放头所在秒数
      * @param deltaDuration 距上次心跳增量秒数
@@ -117,26 +144,27 @@ public class WatchHistory {
     }
 
     /**
-     * 判断当前是否满足窗口期内的首次有效播放持久化条件。
+     * 判断用户再次点进视频起播时，是否应当累加播放量（距离上次活跃观看是否已超过防刷周期）。
      *
      * @param now 当前时间戳
-     * @param window 防刷时间窗口
-     * @return true 若为新窗口首次有效播放
+     * @param repeatWindow 防重复刷量冷却周期 (如 6 小时)
+     * @return true 若已超出冷却周期，应算作新一次播放；false 若处于冷却期内，不加播放量
      */
-    public boolean shouldCountValidPlay(LocalDateTime now, java.time.Duration window) {
-        if (this.lastValidPlayAt == null) {
+    public boolean shouldIncrementViewOnPlay(LocalDateTime now, java.time.Duration repeatWindow) {
+        if (this.lastWatchAt == null) {
             return true;
         }
-        return this.lastValidPlayAt.plus(window).isBefore(now);
+        return this.lastWatchAt.plus(repeatWindow).isBefore(now);
     }
 
     /**
-     * 标记本次达成有效播放并更新持久化时间戳。
+     * 用户再次起播时刷新活跃时间，并自愈复活已逻辑删除的记录。
      *
      * @param now 当前时间戳
      */
-    public void markValidPlay(LocalDateTime now) {
-        this.lastValidPlayAt = now;
+    public void recordPlayStart(LocalDateTime now) {
+        this.lastWatchAt = now;
+        this.deleted = false;
     }
 
     /**
@@ -147,7 +175,7 @@ public class WatchHistory {
     }
 
     /**
-     * 再次播放时自愈复活已逻辑删除的记录，重置断点并继续累计，但严格保留原 lastValidPlayAt 防重时间戳。
+     * 再次播放时自愈复活已逻辑删除的记录。
      *
      * @param position 当前播放头所在秒数
      * @param deltaDuration 增量时长 (秒)

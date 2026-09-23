@@ -587,7 +587,6 @@ CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
     `completed` TINYINT NOT NULL DEFAULT 0 COMMENT '是否完播: 1=是, 0=否',
     `first_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '首次观看时间',
     `last_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最近一次心跳活跃时间',
-    `last_valid_play_at` DATETIME(3) NULL COMMENT '上次计为有效播放并写入 Outbox 的时间戳',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_watch_user_vid` (`user_id`, `vid`),

@@ -57,10 +57,6 @@ public class WatchHistoryPO {
     @TableField("last_watch_at")
     private LocalDateTime lastWatchAt;
 
-    /** 上次计为有效播放并写入 Outbox 的时间戳。 */
-    @TableField("last_valid_play_at")
-    private LocalDateTime lastValidPlayAt;
-
     /** 逻辑删除标记：0=正常, 1=已删除。 */
     @TableLogic
     @TableField("deleted")
@@ -77,7 +73,6 @@ public class WatchHistoryPO {
                 .completed(this.completed != null && this.completed == 1)
                 .firstWatchAt(this.firstWatchAt)
                 .lastWatchAt(this.lastWatchAt)
-                .lastValidPlayAt(this.lastValidPlayAt)
                 .deleted(this.deleted != null && this.deleted == 1)
                 .build();
     }
@@ -96,7 +91,6 @@ public class WatchHistoryPO {
                 .completed(domain.isCompleted() ? 1 : 0)
                 .firstWatchAt(domain.getFirstWatchAt())
                 .lastWatchAt(domain.getLastWatchAt())
-                .lastValidPlayAt(domain.getLastValidPlayAt())
                 .deleted(domain.isDeleted() ? 1 : 0)
                 .build();
     }

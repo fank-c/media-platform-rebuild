@@ -9,7 +9,8 @@ import static org.mockito.Mockito.when;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import com.calles.platform.interaction.domain.repository.WatchHistoryRepository;
-import com.calles.platform.interaction.infrastructure.redis.HeartbeatDedupService;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -28,118 +29,112 @@ class WatchHeartbeatApplicationServiceTest {
     private VideoCounterRepository counterRepository;
 
     @Mock
-    private HeartbeatDedupService dedupService;
-
-    @Mock
     private com.calles.platform.interaction.application.event.InteractionEventPublisher eventPublisher;
 
     private WatchHeartbeatApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new WatchHeartbeatApplicationService(historyRepository, counterRepository, dedupService, eventPublisher);
+        service = new WatchHeartbeatApplicationService(
+                historyRepository,
+                counterRepository,
+                eventPublisher,
+                Duration.ofHours(6)
+        );
     }
 
     @Test
-    @DisplayName("首次心跳时长未达阈值暂不累加播放量且不发布事件")
-    void shouldNotIncrementViewCountWhenDurationBelowThreshold() {
+    @DisplayName("用户首次点进视频起播：建立历史记录、累加播放量并发布起播事件")
+    void shouldIncrementViewCountOnFirstPlayStart() {
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.empty());
 
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 2, 2, 100);
+        WatchHistory history = service.startPlay("vid_100", "user_01");
 
-        assertThat(history.getLastPosition()).isEqualTo(2);
-        assertThat(history.getWatchedDuration()).isEqualTo(2);
-        assertThat(history.isCompleted()).isFalse();
+        assertThat(history.getVid()).isEqualTo("vid_100");
+        assertThat(history.getUserId()).isEqualTo("user_01");
+        assertThat(history.getLastPosition()).isEqualTo(0);
         verify(historyRepository).save(any(WatchHistory.class));
+        verify(counterRepository).incrementViewCount("vid_100", 1L);
+        verify(eventPublisher).publishVideoAction(any());
+    }
+
+    @Test
+    @DisplayName("用户在6小时防刷冷却期内再次点进视频：仅刷新活跃时间，不重复累加播放量与事件")
+    void shouldNotIncrementViewCountWhenPlayStartWithinRepeatWindow() {
+        WatchHistory existing = WatchHistory.createForPlay("user_01", "vid_100");
+        // 模拟 1 小时前的观看
+        existing.recordPlayStart(LocalDateTime.now().minusHours(1));
+        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
+
+        WatchHistory history = service.startPlay("vid_100", "user_01");
+
+        assertThat(history.getVid()).isEqualTo("vid_100");
+        verify(historyRepository).update(existing);
         verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
     @Test
-    @DisplayName("心跳累计达标且未有持久化记录时自增播放量并写入Outbox")
-    void shouldIncrementViewCountWhenThresholdMetAndNotDeduped() {
-        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 3, 3, 100);
+    @DisplayName("用户超出6小时防刷冷却期后再次点进视频：算作新一轮播放并累加播放量")
+    void shouldIncrementViewCountWhenPlayStartAfterRepeatWindow() {
+        WatchHistory existing = WatchHistory.createForPlay("user_01", "vid_100");
+        // 模拟 7 小时前的观看（已超出 6 小时窗口）
+        existing.recordPlayStart(LocalDateTime.now().minusHours(7));
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
 
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 6, 3, 100);
+        WatchHistory history = service.startPlay("vid_100", "user_01");
 
-        assertThat(history.getWatchedDuration()).isEqualTo(6);
-        assertThat(history.getLastValidPlayAt()).isNotNull();
+        assertThat(history.getVid()).isEqualTo("vid_100");
         verify(historyRepository).update(existing);
         verify(counterRepository).incrementViewCount("vid_100", 1L);
         verify(eventPublisher).publishVideoAction(any());
     }
 
     @Test
-    @DisplayName("持久化防刷窗口期内重复心跳不再次累加播放量或发布事件")
-    void shouldNotIncrementViewCountAgainWithinDedupWindow() {
-        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 6, 6, 100);
-        existing.markValidPlay(java.time.LocalDateTime.now().minusMinutes(10)); // 10分钟前记录过有效播放
+    @DisplayName("用户伪删除历史记录后在冷却期内重播：自愈复活但严格防刷，不重复增加播放量")
+    void shouldReviveSoftDeletedRecordAndPreserveRepeatWindow() {
+        WatchHistory existing = WatchHistory.createForPlay("user_01", "vid_100");
+        existing.recordPlayStart(LocalDateTime.now().minusHours(1));
+        existing.markDeleted();
+        assertThat(existing.isDeleted()).isTrue();
+
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
 
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 11, 5, 100);
+        WatchHistory history = service.startPlay("vid_100", "user_01");
 
-        assertThat(history.getLastPosition()).isEqualTo(11);
+        assertThat(history.isDeleted()).isFalse();
+        verify(historyRepository).revive(existing);
         verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
     @Test
-    @DisplayName("超过30分钟持久化窗口后重新计为有效播放并写入Outbox")
-    void shouldIncrementViewCountWhenWindowExpired() {
-        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 6, 6, 100);
-        existing.markValidPlay(java.time.LocalDateTime.now().minusMinutes(35)); // 35分钟前记录过有效播放，已过窗口
+    @DisplayName("心跳上报仅更新播放断点与完播状态，绝不累加播放量")
+    void shouldUpdateProgressAndNotIncrementViewCountOnHeartbeat() {
+        WatchHistory existing = WatchHistory.createForPlay("user_01", "vid_100");
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
 
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 11, 5, 100);
+        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 95, 10, 100);
 
-        assertThat(history.getLastPosition()).isEqualTo(11);
-        verify(counterRepository).incrementViewCount("vid_100", 1L);
-        verify(eventPublisher).publishVideoAction(any());
+        assertThat(history.getLastPosition()).isEqualTo(95);
+        assertThat(history.getWatchedDuration()).isEqualTo(10);
+        assertThat(history.isCompleted()).isTrue();
+        verify(historyRepository).update(existing);
+        // 心跳绝对不碰播放量加减
+        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(eventPublisher, never()).publishVideoAction(any());
     }
 
     @Test
-    @DisplayName("用户伪删除历史记录后在30分钟内重播，自愈复活但严格防刷，不重复自增播放量或发事件")
-    void shouldReviveSoftDeletedRecordAndPreserveDedupWindow() {
-        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 6, 6, 100);
-        existing.markValidPlay(java.time.LocalDateTime.now().minusMinutes(10)); // 10分钟前有效播放
-        existing.markDeleted(); // 用户执行了伪删除
-        assertThat(existing.isDeleted()).isTrue();
-
-        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
-
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 10, 5, 100);
-
-        assertThat(history.isDeleted()).isFalse(); // 自愈复活
-        verify(historyRepository).revive(existing); // 调用复活接口
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class)); // 严格防重，不刷播放量
-        verify(eventPublisher, never()).publishVideoAction(any()); // 不发重复事件
-    }
-
-    @Test
-    @DisplayName("用户伪删除历史记录后超过30分钟重播，自愈复活并成功产生新一轮有效播放")
-    void shouldReviveSoftDeletedRecordAndCountNewPlayWhenWindowExpired() {
-        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 6, 6, 100);
-        existing.markValidPlay(java.time.LocalDateTime.now().minusMinutes(40)); // 40分钟前有效播放
-        existing.markDeleted(); // 用户执行了伪删除
-
-        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
-
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 10, 6, 100);
-
-        assertThat(history.isDeleted()).isFalse();
-        verify(historyRepository).revive(existing);
-        verify(counterRepository).incrementViewCount("vid_100", 1L);
-        verify(eventPublisher).publishVideoAction(any());
-    }
-
-    @Test
-    @DisplayName("播放进度超过90%自动标记完播")
-    void shouldMarkAsCompletedWhenOver90Percent() {
+    @DisplayName("客户端未显式调用起播直接发送心跳时的安全保底处理")
+    void shouldFallbackAndCreateHistoryIfHeartbeatReceivedDirectly() {
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.empty());
 
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 95, 95, 100);
+        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 5, 5, 100);
 
-        assertThat(history.isCompleted()).isTrue();
+        assertThat(history.getLastPosition()).isEqualTo(5);
+        verify(historyRepository).save(any(WatchHistory.class));
+        verify(counterRepository).incrementViewCount("vid_100", 1L);
+        verify(eventPublisher).publishVideoAction(any());
     }
 }

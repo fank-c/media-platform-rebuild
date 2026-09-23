@@ -5,95 +5,126 @@ import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import com.calles.platform.interaction.domain.repository.WatchHistoryRepository;
-import com.calles.platform.interaction.infrastructure.redis.HeartbeatDedupService;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 视频播放心跳上报与观看历史应用服务。
+ * 视频播放与观看历史应用服务。
  *
- * <p>由播放端定时心跳（Heartbeat）驱动，维护断点续播位置、累计有效时长，并配合持久化防重窗口原子累加播放量与生成领域事件。</p>
+ * <p>核心职责：
+ * <ul>
+ *   <li>起播处理（startPlay）：在用户点进视频那一刻查历史，根据防重复窗口（默认 6 小时）决定是否递增播放计数，并返回续播断点；</li>
+ *   <li>心跳上报（processHeartbeat）：播放过程中轻量更新播放断点位置（lastPosition）与完播状态判定，绝不介入播放计数增减；</li>
+ *   <li>历史查询与清理：提供断点查询、历史分页与删除。</li>
+ * </ul>
+ * </p>
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class WatchHeartbeatApplicationService {
-
-    /** 判定为单次有效播放的观看时长门槛 (秒)。 */
-    private static final int VALID_WATCH_DURATION_THRESHOLD_SECONDS = 5;
-
-    /** 判定单次有效播放的去重时间窗口：30 分钟。 */
-    private static final Duration PLAY_DEDUP_WINDOW = Duration.ofMinutes(30);
 
     private final WatchHistoryRepository historyRepository;
     private final VideoCounterRepository counterRepository;
-    private final HeartbeatDedupService dedupService;
     private final InteractionEventPublisher eventPublisher;
+    private final Duration repeatWindow;
+
+    public WatchHeartbeatApplicationService(
+            WatchHistoryRepository historyRepository,
+            VideoCounterRepository counterRepository,
+            InteractionEventPublisher eventPublisher,
+            @Value("${interaction.watch.repeat-window:6h}") Duration repeatWindow) {
+        this.historyRepository = historyRepository;
+        this.counterRepository = counterRepository;
+        this.eventPublisher = eventPublisher;
+        this.repeatWindow = repeatWindow != null ? repeatWindow : Duration.ofHours(6);
+    }
 
     /**
-     * 处理播放端心跳上报。
+     * 用户点进视频发起起播。
+     *
+     * <p>检查用户针对该视频的历史记录：若无历史或距离上次活跃观看已超过防刷周期（默认 6 小时），
+     * 则累加播放量并发布起播事件；若仍在冷却期内则仅更新活跃时间，不重复累加播放量。</p>
      *
      * @param vid 视频业务公开短码
-     * @param userId 已通过入口鉴权的登录用户 ID
+     * @param userId 已鉴权登录用户 ID
+     * @return 包含上次断点秒数（lastPosition）的观看历史实体
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public WatchHistory startPlay(String vid, String userId) {
+        LocalDateTime now = LocalDateTime.now();
+        Optional<WatchHistory> opt = historyRepository.findPhysicalByUserAndVid(userId, vid);
+        WatchHistory history;
+
+        if (opt.isEmpty()) {
+            // 首次观看该视频：新建记录并增加播放量
+            history = WatchHistory.createForPlay(userId, vid);
+            historyRepository.save(history);
+            counterRepository.incrementViewCount(vid, 1L);
+            eventPublisher.publishVideoAction(VideoActionPayload.play(userId, vid));
+            log.info("用户 [{}] 首次点进视频 [{}] 起播，累加播放量", userId, vid);
+        } else {
+            history = opt.get();
+            boolean wasDeleted = history.isDeleted();
+            // 已有记录：检查是否超出防刷冷却周期
+            if (history.shouldIncrementViewOnPlay(now, repeatWindow)) {
+                counterRepository.incrementViewCount(vid, 1L);
+                eventPublisher.publishVideoAction(VideoActionPayload.play(userId, vid));
+                log.info("用户 [{}] 再次点进视频 [{}]（已过冷却期），累加播放量", userId, vid);
+            } else {
+                log.debug("用户 [{}] 在防刷冷却期内再次点进视频 [{}]，跳过播放量累加", userId, vid);
+            }
+            history.recordPlayStart(now);
+            if (wasDeleted) {
+                historyRepository.revive(history);
+            } else {
+                historyRepository.update(history);
+            }
+        }
+
+        return history;
+    }
+
+    /**
+     * 处理播放端周期心跳上报（纯粹维护播放进度与完播状态）。
+     *
+     * <p>心跳绝不介入播放计数的递增，彻底消除多端（手机+电脑）并发心跳下的事件重复与防重锁负担。</p>
+     *
+     * @param vid 视频业务公开短码
+     * @param userId 已鉴权登录用户 ID
      * @param position 当前播放头秒数位置
-     * @param deltaDuration 距上次心跳新增播放秒数
+     * @param deltaDuration 距上次心跳增量秒数
      * @param videoDuration 视频总秒数
      * @return 更新后的观看历史实体
      */
     @Transactional(rollbackFor = Exception.class)
     public WatchHistory processHeartbeat(String vid, String userId, int position,
                                          int deltaDuration, int videoDuration) {
-        // 步骤 1: 物理检索或初始化该用户在该视频的观看历史（含已逻辑删除记录，防范删记录刷播放量）
         Optional<WatchHistory> opt = historyRepository.findPhysicalByUserAndVid(userId, vid);
         WatchHistory history;
-        boolean wasRevived = false;
 
         if (opt.isEmpty()) {
+            // 客户端未显式调用起播直接发送心跳时的安全保底
             history = WatchHistory.create(userId, vid, position, deltaDuration, videoDuration);
             historyRepository.save(history);
-        } else {
-            history = opt.get();
-            if (history.isDeleted()) {
-                // 步骤 1.1: 针对已伪删除的记录进行自愈复活，重置播放头但严格保留原有 last_valid_play_at
-                history.revive(position, deltaDuration, videoDuration);
-                wasRevived = true;
-            } else {
-                history.recordHeartbeat(position, deltaDuration, videoDuration);
-            }
-        }
-
-        // 步骤 2: 有效播放量持久化防重判定与原子累加
-        // 规则：累计观看达到 5 秒门槛，且数据库持久化时间戳满足 30 分钟去重窗口（复活记录继承原时间戳，删记录无法重置防刷窗口）
-        LocalDateTime now = LocalDateTime.now();
-        if (history.getWatchedDuration() >= VALID_WATCH_DURATION_THRESHOLD_SECONDS
-                && history.shouldCountValidPlay(now, PLAY_DEDUP_WINDOW)) {
-            // 步骤 2.1: 标记并持久化本次有效播放时间戳
-            history.markValidPlay(now);
-            if (wasRevived) {
-                historyRepository.revive(history);
-            } else {
-                historyRepository.update(history);
-            }
-
-            // 步骤 2.2: 自增播放计数并写入 Outbox 领域事件
             counterRepository.incrementViewCount(vid, 1L);
             eventPublisher.publishVideoAction(VideoActionPayload.play(userId, vid));
+            log.info("用户 [{}] 针对视频 [{}] 直接发送首个心跳，保底建立历史并累加播放量", userId, vid);
+            return history;
+        }
 
-            // 步骤 2.3: 刷新 Redis 窗口缓存辅助轻量降噪
-            dedupService.tryAcquireFirstPlay(userId, vid);
-            log.info("用户 [{}] 针对视频 [{}] 达成有效播放持久化条件，自增播放量计数并写入 Outbox", userId, vid);
+        history = opt.get();
+        if (history.isDeleted()) {
+            history.revive(position, deltaDuration, videoDuration);
+            historyRepository.revive(history);
         } else {
-            if (wasRevived) {
-                historyRepository.revive(history);
-            } else {
-                historyRepository.update(history);
-            }
+            history.recordHeartbeat(position, deltaDuration, videoDuration);
+            historyRepository.update(history);
         }
 
         return history;

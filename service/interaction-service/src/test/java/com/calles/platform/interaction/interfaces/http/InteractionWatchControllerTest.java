@@ -73,6 +73,22 @@ class InteractionWatchControllerTest {
                 .andExpect(jsonPath("$.data.lastPosition").value(30));
     }
 
+    @Test
+    @DisplayName("POST /api/interactions/videos/{vid}/play 点进起播成功返回 200 并携带断点")
+    void playSuccessfully() throws Exception {
+        UserInfo sampleUser = new UserInfo("user_001", "USER", "user", "session_001");
+        when(accessPolicy.requireUser()).thenReturn(sampleUser);
+
+        WatchHistory history = WatchHistory.create("user_001", "cv_100", 25, 25, 120);
+        when(watchService.startPlay("cv_100", "user_001")).thenReturn(history);
+
+        mockMvc.perform(post("/api/interactions/videos/cv_100/play"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.vid").value("cv_100"))
+                .andExpect(jsonPath("$.data.lastPosition").value(25));
+    }
+
     /**
      * 游客上报心跳必须被拒绝，且不得进入观看历史或播放计数的写入服务。
      */

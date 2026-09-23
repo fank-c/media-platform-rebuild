@@ -36,7 +36,6 @@ public interface WatchHistoryMapper extends BaseMapper<WatchHistoryPO> {
                 video_duration = #{po.videoDuration},
                 completed = #{po.completed},
                 last_watch_at = #{po.lastWatchAt},
-                last_valid_play_at = #{po.lastValidPlayAt},
                 deleted = 0
             WHERE id = #{po.id}
             """)
