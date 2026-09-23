@@ -37,6 +37,9 @@ public class StarFolder {
     /** 状态：1=正常可用, 0=已删除。 */
     private int status;
 
+    /** 是否已逻辑删除：true=已删除, false=正常有效。 */
+    private boolean deleted;
+
     /** 收藏夹创建时间。 */
     private LocalDateTime createdAt;
 
@@ -60,6 +63,7 @@ public class StarFolder {
                 .title(DEFAULT_FOLDER_TITLE)
                 .isDefault(true)
                 .status(1)
+                .deleted(false)
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -86,6 +90,7 @@ public class StarFolder {
                 .title(title.trim())
                 .isDefault(false)
                 .status(1)
+                .deleted(false)
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
@@ -115,6 +120,7 @@ public class StarFolder {
             throw new IllegalStateException("默认收藏夹不可删除");
         }
         this.status = 0;
+        this.deleted = true;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -124,6 +130,6 @@ public class StarFolder {
      * @return true 若可用
      */
     public boolean isActive() {
-        return this.status == 1;
+        return this.status == 1 && !this.deleted;
     }
 }

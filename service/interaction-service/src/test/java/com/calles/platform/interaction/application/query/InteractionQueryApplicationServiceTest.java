@@ -34,11 +34,24 @@ class InteractionQueryApplicationServiceTest {
     @Mock
     private VideoCounterRepository counterRepository;
 
+    @Mock
+    private com.calles.platform.interaction.domain.repository.InteractionShareRecordRepository shareRecordRepository;
+
+    @Mock
+    private com.calles.platform.interaction.application.event.InteractionEventPublisher eventPublisher;
+
     private InteractionQueryApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new InteractionQueryApplicationService(likeService, starService, watchService, counterRepository);
+        service = new InteractionQueryApplicationService(
+                likeService,
+                starService,
+                watchService,
+                counterRepository,
+                shareRecordRepository,
+                eventPublisher
+        );
     }
 
     @Test
@@ -80,5 +93,42 @@ class InteractionQueryApplicationServiceTest {
         assertThat(result).hasSize(2);
         assertThat(result.get("vid_1").getLikeCount()).isEqualTo(10);
         assertThat(result.get("vid_2").getLikeCount()).isZero();
+    }
+
+    @Test
+    @DisplayName("首次分享正常记录幂等条目、自增计数并写入Outbox")
+    void shouldRecordShareFirstTime() {
+        when(shareRecordRepository.findByIdempotencyKey("idem_key_1")).thenReturn(Optional.empty());
+
+        service.recordShare("vid_100", "user_01", "idem_key_1");
+
+        org.mockito.Mockito.verify(shareRecordRepository).save(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(counterRepository).incrementShareCount("vid_100", 1L);
+        org.mockito.Mockito.verify(eventPublisher).publishVideoAction(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("相同幂等键重试分享时不重复自增计数且不发布事件")
+    void shouldBeIdempotentOnDuplicateShareKey() {
+        com.calles.platform.interaction.domain.model.share.InteractionShareRecord existing =
+                com.calles.platform.interaction.domain.model.share.InteractionShareRecord.create("idem_key_1", "user_01", "vid_100");
+        when(shareRecordRepository.findByIdempotencyKey("idem_key_1")).thenReturn(Optional.of(existing));
+
+        service.recordShare("vid_100", "user_01", "idem_key_1");
+
+        org.mockito.Mockito.verify(shareRecordRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(counterRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
+        org.mockito.Mockito.verify(eventPublisher, org.mockito.Mockito.never()).publishVideoAction(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    @DisplayName("相同幂等键被不同用户串用时抛出异常")
+    void shouldThrowWhenShareKeyConflictWithDifferentUser() {
+        com.calles.platform.interaction.domain.model.share.InteractionShareRecord existing =
+                com.calles.platform.interaction.domain.model.share.InteractionShareRecord.create("idem_key_1", "user_02", "vid_100");
+        when(shareRecordRepository.findByIdempotencyKey("idem_key_1")).thenReturn(Optional.of(existing));
+
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () ->
+                service.recordShare("vid_100", "user_01", "idem_key_1"));
     }
 }

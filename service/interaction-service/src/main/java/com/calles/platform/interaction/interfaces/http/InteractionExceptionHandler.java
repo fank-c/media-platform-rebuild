@@ -55,6 +55,18 @@ public class InteractionExceptionHandler {
     }
 
     /**
+     * 捕获非法参数异常并返回 400 响应。
+     *
+     * @param exception 非法参数异常
+     * @return 400 错误响应
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException exception) {
+        log.warn("交互请求非法参数: message={}", exception.getMessage());
+        return ResponseEntity.badRequest().body(new ApiResponse<>(400, exception.getMessage(), null));
+    }
+
+    /**
      * 记录请求正文无法解析的异常类别，不记录可能包含敏感值的原始正文或解析器消息。
      *
      * @param exception HTTP 消息反序列化异常

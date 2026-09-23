@@ -64,15 +64,37 @@ class InteractionStatControllerTest {
     /**
      * 登录用户分享仍通过真实用户 ID 写入，与此前成功响应保持一致。
      */
+    /**
+     * 登录用户分享仍通过真实用户 ID 写入，与此前成功响应保持一致。
+     */
     @Test
     @DisplayName("已登录用户分享成功且只以真实用户 ID 记账")
     void authenticatedShareRecordsUser() throws Exception {
         UserContext.set(new UserInfo("user_001", "USER", "user", "session_001"));
         try {
-            mockMvc.perform(post("/api/interactions/videos/cv_100/share"))
+            mockMvc.perform(post("/api/interactions/videos/cv_100/share")
+                            .header("Idempotency-Key", "idem_test_key_1"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.action").value("SHARE"));
-            verify(queryService).recordShare("cv_100", "user_001");
+            verify(queryService).recordShare("cv_100", "user_001", "idem_test_key_1");
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    /**
+     * 未携带 Idempotency-Key Header 的分享请求返回 400。
+     */
+    @Test
+    @DisplayName("未携带 Idempotency-Key 抛出 400 参数异常")
+    void shareWithoutIdempotencyKeyReturnsBadRequest() throws Exception {
+        UserContext.set(new UserInfo("user_001", "USER", "user", "session_001"));
+        try {
+            mockMvc.perform(post("/api/interactions/videos/cv_100/share"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value(400))
+                    .andExpect(jsonPath("$.message").value("分享请求必须在 Header 中携带有效的 Idempotency-Key"));
+            verifyNoInteractions(queryService);
         } finally {
             UserContext.clear();
         }
@@ -89,9 +111,10 @@ class InteractionStatControllerTest {
         UserContext.set(new UserInfo("user_001", "USER", "user", "session_001"));
         try {
             doThrow(new IllegalStateException("测试用写入失败原因"))
-                    .when(queryService).recordShare("cv_100", "user_001");
+                    .when(queryService).recordShare("cv_100", "user_001", "idem_test_key_1");
 
-            mockMvc.perform(post("/api/interactions/videos/cv_100/share"))
+            mockMvc.perform(post("/api/interactions/videos/cv_100/share")
+                            .header("Idempotency-Key", "idem_test_key_1"))
                     .andExpect(status().isInternalServerError())
                     .andExpect(jsonPath("$.code").value(500))
                     .andExpect(jsonPath("$.message").value("服务器内部错误"));

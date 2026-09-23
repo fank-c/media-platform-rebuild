@@ -2,6 +2,7 @@ package com.calles.platform.interaction.infrastructure.persistence.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.calles.platform.interaction.domain.model.star.StarItem;
 import java.time.LocalDateTime;
@@ -36,6 +37,11 @@ public class StarItemPO {
     @TableField("user_id")
     private String userId;
 
+    /** 逻辑删除标记：0=正常, 1=已删除。 */
+    @TableLogic
+    @TableField("deleted")
+    private Integer deleted;
+
     /** 收藏创建时间。 */
     @TableField("created_at")
     private LocalDateTime createdAt;
@@ -47,6 +53,7 @@ public class StarItemPO {
                 .vid(this.vid)
                 .userId(this.userId)
                 .createdAt(this.createdAt)
+                .deleted(this.deleted != null && this.deleted == 1)
                 .build();
     }
 
@@ -60,6 +67,7 @@ public class StarItemPO {
                 .vid(domain.getVid())
                 .userId(domain.getUserId())
                 .createdAt(domain.getCreatedAt())
+                .deleted(domain.isDeleted() ? 1 : 0)
                 .build();
     }
 }

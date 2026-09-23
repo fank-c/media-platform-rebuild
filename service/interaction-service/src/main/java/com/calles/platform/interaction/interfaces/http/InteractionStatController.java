@@ -96,17 +96,24 @@ public class InteractionStatController {
     }
 
     /**
-     * 仅为已登录用户记录分享并自增视频分享计数；游客不产生分享计数。
+     * 仅为已登录用户记录分享并自增视频分享计数；要求必须携带 Idempotency-Key 幂等防重键。
      *
      * @param vid 视频编码
+     * @param idempotencyKey 客户端请求幂等键
      * @return 动作响应
      */
     @PostMapping("/videos/{vid}/share")
-    public ApiResponse<InteractionResponses.ActionResult> share(@PathVariable String vid) {
+    public ApiResponse<InteractionResponses.ActionResult> share(
+            @PathVariable String vid,
+            @org.springframework.web.bind.annotation.RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         // 步骤 1：先拒绝未登录请求，避免游客触发不可防重的分享计数。
         UserInfo user = accessPolicy.requireUser();
-        // 步骤 2：向计数用例传递登录用户 ID；现阶段只维护公开分享总数。
-        queryService.recordShare(vid, user.userId());
+        // 步骤 2：校验是否携带幂等键
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new IllegalArgumentException("分享请求必须在 Header 中携带有效的 Idempotency-Key");
+        }
+        // 步骤 3：向业务用例传递登录用户 ID 与幂等键进行防重持久化与计数自增
+        queryService.recordShare(vid, user.userId(), idempotencyKey.trim());
         return ApiResponse.ok(new InteractionResponses.ActionResult(vid, "SHARE", true));
     }
 }

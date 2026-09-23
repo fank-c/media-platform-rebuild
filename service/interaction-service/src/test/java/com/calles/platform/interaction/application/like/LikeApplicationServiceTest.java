@@ -28,11 +28,14 @@ class LikeApplicationServiceTest {
     @Mock
     private VideoCounterRepository counterRepository;
 
+    @Mock
+    private com.calles.platform.interaction.application.event.InteractionEventPublisher eventPublisher;
+
     private LikeApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new LikeApplicationService(likeRepository, counterRepository);
+        service = new LikeApplicationService(likeRepository, counterRepository, eventPublisher);
     }
 
     @Test
@@ -45,10 +48,11 @@ class LikeApplicationServiceTest {
         assertThat(result).isTrue();
         verify(likeRepository).save(any(VideoLike.class));
         verify(counterRepository).adjustLikeCount("vid_100", 1L);
+        verify(eventPublisher).publishVideoAction(any());
     }
 
     @Test
-    @DisplayName("重复点赞幂等且不重复自增计数")
+    @DisplayName("重复点赞幂等且不重复自增计数与发布事件")
     void shouldBeIdempotentWhenAlreadyLiked() {
         VideoLike existing = VideoLike.create("vid_100", "user_01");
         when(likeRepository.findByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
@@ -59,10 +63,11 @@ class LikeApplicationServiceTest {
         verify(likeRepository, never()).save(any());
         verify(likeRepository, never()).update(any());
         verify(counterRepository, never()).adjustLikeCount(any(), eq(1L));
+        verify(eventPublisher, never()).publishVideoAction(any());
     }
 
     @Test
-    @DisplayName("已取消点赞后重新激活并递增计数")
+    @DisplayName("已取消点赞后重新激活并递增计数与发布事件")
     void shouldReactivateLikeWhenPreviouslyCancelled() {
         VideoLike existing = VideoLike.create("vid_100", "user_01");
         existing.cancel();
@@ -74,10 +79,11 @@ class LikeApplicationServiceTest {
         assertThat(existing.getStatus()).isEqualTo(LikeStatus.ACTIVE);
         verify(likeRepository).update(existing);
         verify(counterRepository).adjustLikeCount("vid_100", 1L);
+        verify(eventPublisher).publishVideoAction(any());
     }
 
     @Test
-    @DisplayName("取消点赞成功并扣减计数")
+    @DisplayName("取消点赞成功并扣减计数与发布事件")
     void shouldUnlikeVideoSuccessfully() {
         VideoLike existing = VideoLike.create("vid_100", "user_01");
         when(likeRepository.findByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
@@ -88,10 +94,11 @@ class LikeApplicationServiceTest {
         assertThat(existing.getStatus()).isEqualTo(LikeStatus.CANCELLED);
         verify(likeRepository).update(existing);
         verify(counterRepository).adjustLikeCount("vid_100", -1L);
+        verify(eventPublisher).publishVideoAction(any());
     }
 
     @Test
-    @DisplayName("重复取消点赞幂等且不重复扣减计数")
+    @DisplayName("重复取消点赞幂等且不重复扣减计数与发布事件")
     void shouldBeIdempotentWhenAlreadyCancelled() {
         VideoLike existing = VideoLike.create("vid_100", "user_01");
         existing.cancel();
@@ -101,5 +108,6 @@ class LikeApplicationServiceTest {
 
         assertThat(result).isFalse();
         verify(counterRepository, never()).adjustLikeCount(any(), eq(-1L));
+        verify(eventPublisher, never()).publishVideoAction(any());
     }
 }

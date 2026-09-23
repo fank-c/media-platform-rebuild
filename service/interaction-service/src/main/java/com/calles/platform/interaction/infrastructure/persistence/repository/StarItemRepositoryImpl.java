@@ -32,6 +32,15 @@ public class StarItemRepositoryImpl implements StarItemRepository {
     }
 
     @Override
+    public Optional<StarItem> findPhysicalByFolderAndVid(String folderId, String vid) {
+        if (folderId == null || vid == null) {
+            return Optional.empty();
+        }
+        StarItemPO po = mapper.selectPhysicalByFolderAndVid(folderId, vid);
+        return Optional.ofNullable(po).map(StarItemPO::toDomain);
+    }
+
+    @Override
     public boolean isStarredByUser(String userId, String vid) {
         if (userId == null || vid == null) {
             return false;
@@ -77,6 +86,14 @@ public class StarItemRepositoryImpl implements StarItemRepository {
     }
 
     @Override
+    public void revive(String id) {
+        if (id == null || id.isBlank()) {
+            return;
+        }
+        mapper.reviveById(id.trim());
+    }
+
+    @Override
     public int deleteByFolderAndVid(String folderId, String vid) {
         if (folderId == null || vid == null) {
             return 0;
@@ -84,6 +101,18 @@ public class StarItemRepositoryImpl implements StarItemRepository {
         LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
                 .eq(StarItemPO::getFolderId, folderId)
                 .eq(StarItemPO::getVid, vid);
+        return mapper.delete(wrapper);
+    }
+
+    @Override
+    public int deleteByFolderAndVidAndUser(String folderId, String vid, String userId) {
+        if (folderId == null || vid == null || userId == null) {
+            return 0;
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .eq(StarItemPO::getFolderId, folderId)
+                .eq(StarItemPO::getVid, vid)
+                .eq(StarItemPO::getUserId, userId);
         return mapper.delete(wrapper);
     }
 

@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>为播放页提供聚合操作快照，为推荐与视频列表提供公开计数与批量统计装配。</p>
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class InteractionQueryApplicationService {
@@ -31,6 +33,8 @@ public class InteractionQueryApplicationService {
     private final StarApplicationService starService;
     private final WatchHeartbeatApplicationService watchService;
     private final VideoCounterRepository counterRepository;
+    private final com.calles.platform.interaction.domain.repository.InteractionShareRecordRepository shareRecordRepository;
+    private final com.calles.platform.interaction.application.event.InteractionEventPublisher eventPublisher;
 
     /**
      * 用户在指定视频上的互动状态快照（播放页一站式聚合响应）。
@@ -114,13 +118,36 @@ public class InteractionQueryApplicationService {
     }
 
     /**
-     * 记录并自增视频分享计数。
+     * 记录并自增视频分享计数（基于请求幂等键持久化防重）。
      *
      * @param vid 视频业务公开短码
      * @param userId 操作用户 ID
+     * @param idempotencyKey 客户端请求幂等键
      */
     @Transactional(rollbackFor = Exception.class)
-    public void recordShare(String vid, String userId) {
+    public void recordShare(String vid, String userId, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new IllegalArgumentException("分享请求必须携带有效的 Idempotency-Key");
+        }
+
+        // 步骤 1: 检索既有幂等记录
+        Optional<com.calles.platform.interaction.domain.model.share.InteractionShareRecord> existing =
+                shareRecordRepository.findByIdempotencyKey(idempotencyKey.trim());
+        if (existing.isPresent()) {
+            com.calles.platform.interaction.domain.model.share.InteractionShareRecord record = existing.get();
+            if (!record.getUserId().equals(userId) || !record.getVid().equals(vid)) {
+                throw new IllegalStateException("幂等键已被不同的分享请求使用");
+            }
+            log.info("检测到重复的分享请求 (幂等命中): idempotencyKey={}, userId={}, vid={}", idempotencyKey, userId, vid);
+            return;
+        }
+
+        // 步骤 2: 首次请求，持久化幂等记录、自增计数，并在同一事务内写入 Outbox
+        com.calles.platform.interaction.domain.model.share.InteractionShareRecord newRecord =
+                com.calles.platform.interaction.domain.model.share.InteractionShareRecord.create(idempotencyKey.trim(), userId, vid);
+        shareRecordRepository.save(newRecord);
         counterRepository.incrementShareCount(vid, 1L);
+        eventPublisher.publishVideoAction(com.calles.platform.interaction.domain.model.event.VideoActionPayload.share(userId, vid));
+        log.info("用户 [{}] 成功分享视频 [{}]，幂等键 [{}]，写入 Outbox", userId, vid, idempotencyKey);
     }
 }

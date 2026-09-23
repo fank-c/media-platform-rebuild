@@ -2,6 +2,7 @@ package com.calles.platform.interaction.infrastructure.persistence.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.calles.platform.interaction.domain.model.like.LikeStatus;
 import com.calles.platform.interaction.domain.model.like.VideoLike;
@@ -37,6 +38,11 @@ public class VideoLikePO {
     @TableField("status")
     private Integer status;
 
+    /** 逻辑删除标记：0=正常, 1=已删除。 */
+    @TableLogic
+    @TableField("deleted")
+    private Integer deleted;
+
     /** 创建时间。 */
     @TableField("created_at")
     private LocalDateTime createdAt;
@@ -51,6 +57,7 @@ public class VideoLikePO {
                 .vid(this.vid)
                 .userId(this.userId)
                 .status(this.status != null ? LikeStatus.fromValue(this.status) : LikeStatus.CANCELLED)
+                .deleted(this.deleted != null && this.deleted == 1)
                 .createdAt(this.createdAt)
                 .updatedAt(this.updatedAt)
                 .build();
@@ -65,6 +72,7 @@ public class VideoLikePO {
                 .vid(domain.getVid())
                 .userId(domain.getUserId())
                 .status(domain.getStatus() != null ? domain.getStatus().getValue() : LikeStatus.CANCELLED.getValue())
+                .deleted(domain.isDeleted() ? 1 : 0)
                 .createdAt(domain.getCreatedAt())
                 .updatedAt(domain.getUpdatedAt())
                 .build();

@@ -10,13 +10,22 @@ import java.util.Optional;
 public interface WatchHistoryRepository {
 
     /**
-     * 查询指定用户针对特定视频的观看历史与进度。
+     * 查询指定用户针对特定视频的有效观看历史与进度（排除已逻辑删除记录）。
      *
      * @param userId 用户 ID
      * @param vid 视频编码
      * @return 观看历史实体
      */
     Optional<WatchHistory> findByUserAndVid(String userId, String vid);
+
+    /**
+     * 物理查询指定用户针对特定视频的观看历史（包含逻辑删除记录，用于心跳防重与断点自愈）。
+     *
+     * @param userId 用户 ID
+     * @param vid 视频编码
+     * @return 观看历史实体 (包含 deleted 状态)
+     */
+    Optional<WatchHistory> findPhysicalByUserAndVid(String userId, String vid);
 
     /**
      * 分页查询用户的观看历史列表（按最后活跃时间倒序）。
@@ -49,6 +58,13 @@ public interface WatchHistoryRepository {
      * @param history 观看实体
      */
     void update(WatchHistory history);
+
+    /**
+     * 自愈复活已逻辑删除的观看历史记录，更新心跳与断点并置位有效状态。
+     *
+     * @param history 待复活的观看实体
+     */
+    void revive(WatchHistory history);
 
     /**
      * 删除单条视频观看历史。

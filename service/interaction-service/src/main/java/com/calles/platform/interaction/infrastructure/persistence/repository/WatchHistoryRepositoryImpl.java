@@ -32,6 +32,15 @@ public class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
     }
 
     @Override
+    public Optional<WatchHistory> findPhysicalByUserAndVid(String userId, String vid) {
+        if (userId == null || vid == null) {
+            return Optional.empty();
+        }
+        WatchHistoryPO po = mapper.selectPhysicalByUserAndVid(userId, vid);
+        return Optional.ofNullable(po).map(WatchHistoryPO::toDomain);
+    }
+
+    @Override
     public List<WatchHistory> findByUserId(String userId, int offset, int limit) {
         if (userId == null || userId.isBlank()) {
             return List.of();
@@ -71,6 +80,14 @@ public class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
             return;
         }
         mapper.updateById(WatchHistoryPO.fromDomain(history));
+    }
+
+    @Override
+    public void revive(WatchHistory history) {
+        if (history == null) {
+            return;
+        }
+        mapper.reviveAndHeartbeat(WatchHistoryPO.fromDomain(history));
     }
 
     @Override

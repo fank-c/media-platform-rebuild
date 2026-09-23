@@ -31,6 +31,9 @@ public class VideoLike {
     /** 点赞状态 (1=ACTIVE, 0=CANCELLED)。 */
     private LikeStatus status;
 
+    /** 是否已逻辑删除：true=已删除, false=正常有效。 */
+    private boolean deleted;
+
     /** 首次点赞时间。 */
     private LocalDateTime createdAt;
 
@@ -58,9 +61,18 @@ public class VideoLike {
                 .vid(vid.trim())
                 .userId(userId.trim())
                 .status(LikeStatus.ACTIVE)
+                .deleted(false)
                 .createdAt(now)
                 .updatedAt(now)
                 .build();
+    }
+
+    /**
+     * 逻辑删除点赞事实。
+     */
+    public void markDeleted() {
+        this.deleted = true;
+        this.updatedAt = LocalDateTime.now();
     }
 
     /**
@@ -87,6 +99,7 @@ public class VideoLike {
             return false;
         }
         this.status = LikeStatus.ACTIVE;
+        this.deleted = false;
         this.updatedAt = LocalDateTime.now();
         return true;
     }
@@ -97,6 +110,6 @@ public class VideoLike {
      * @return true 若当前状态为 ACTIVE
      */
     public boolean isActive() {
-        return this.status == LikeStatus.ACTIVE;
+        return this.status == LikeStatus.ACTIVE && !this.deleted;
     }
 }

@@ -1,5 +1,7 @@
 package com.calles.platform.interaction.application.star;
 
+import com.calles.platform.interaction.application.event.InteractionEventPublisher;
+import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.star.StarFolder;
 import com.calles.platform.interaction.domain.model.star.StarItem;
 import com.calles.platform.interaction.domain.repository.StarFolderRepository;
@@ -23,6 +25,7 @@ public class StarApplicationService {
     private final StarFolderRepository folderRepository;
     private final StarItemRepository itemRepository;
     private final VideoCounterRepository counterRepository;
+    private final InteractionEventPublisher eventPublisher;
 
     /**
      * 收藏视频到指定收藏夹或默认收藏夹（幂等）。
@@ -34,14 +37,26 @@ public class StarApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public String starVideo(String vid, String userId, String targetFolderId) {
-        // 步骤 1: 确定归属收藏夹（若未指定或默认不存在则自愈创建默认收藏夹）
+        // 步骤 1: 确定归属收藏夹（若未指定或默认不存在则自愈创建默认收藏夹，同时校验所有权）
         StarFolder folder = resolveFolder(userId, targetFolderId);
 
-        // 步骤 2: 校验该收藏夹内是否已收录该视频
-        Optional<StarItem> existingItem = itemRepository.findByFolderAndVid(folder.getId(), vid);
-        if (existingItem.isPresent()) {
-            log.debug("用户 [{}] 在收藏夹 [{}] 已收藏过视频 [{}]，幂等跳过", userId, folder.getId(), vid);
-            return existingItem.get().getId();
+        // 步骤 2: 校验该收藏夹内是否已收录该视频（物理检索，兼容伪删除自愈并规避 uk_folder_vid 冲突）
+        Optional<StarItem> physicalItem = itemRepository.findPhysicalByFolderAndVid(folder.getId(), vid);
+        if (physicalItem.isPresent()) {
+            StarItem item = physicalItem.get();
+            if (!item.isDeleted()) {
+                log.debug("用户 [{}] 在收藏夹 [{}] 已收藏过视频 [{}]，幂等跳过", userId, folder.getId(), vid);
+                return item.getId();
+            }
+            // 步骤 2.1: 若该条目此前已被伪删除，则执行复活；若用户此时全局未收藏此视频，则自增计数并写 Outbox
+            boolean alreadyStarred = itemRepository.isStarredByUser(userId, vid);
+            itemRepository.revive(item.getId());
+            if (!alreadyStarred) {
+                counterRepository.adjustStarCount(vid, 1L);
+                eventPublisher.publishVideoAction(VideoActionPayload.star(userId, vid));
+                log.info("用户 [{}] 首次收藏视频 [{}] (复活原有明细)，自增收藏计数并写入 Outbox", userId, vid);
+            }
+            return item.getId();
         }
 
         // 步骤 3: 检查此操作前用户是否已在任何收藏夹收藏过该视频
@@ -51,10 +66,11 @@ public class StarApplicationService {
         StarItem newItem = StarItem.create(folder.getId(), vid, userId);
         itemRepository.save(newItem);
 
-        // 步骤 5: 若为该用户对该视频的首度收藏，递增视频总收藏数
+        // 步骤 5: 若为该用户对该视频的首度收藏，递增视频总收藏数并同事务写 Outbox
         if (!alreadyStarred) {
             counterRepository.adjustStarCount(vid, 1L);
-            log.info("用户 [{}] 首次收藏视频 [{}]，自增收藏计数", userId, vid);
+            eventPublisher.publishVideoAction(VideoActionPayload.star(userId, vid));
+            log.info("用户 [{}] 首次收藏视频 [{}]，自增收藏计数并写入 Outbox", userId, vid);
         }
         return newItem.getId();
     }
@@ -69,19 +85,21 @@ public class StarApplicationService {
     @Transactional(rollbackFor = Exception.class)
     public void unstarVideo(String vid, String userId, String folderId) {
         int deleted;
-        // 步骤 1: 根据是否指定特定收藏夹执行明细删除
+        // 步骤 1: 根据是否指定特定收藏夹执行明细删除（先校验用户归属，防止越权）
         if (folderId != null && !folderId.isBlank()) {
-            deleted = itemRepository.deleteByFolderAndVid(folderId.trim(), vid);
+            resolveFolder(userId, folderId); // 校验收藏夹是否存在且属于当前用户
+            deleted = itemRepository.deleteByFolderAndVidAndUser(folderId.trim(), vid, userId);
         } else {
             deleted = itemRepository.deleteByUserAndVid(userId, vid);
         }
 
-        // 步骤 2: 若实际删除了记录，且用户在其它收藏夹中已无此视频，扣减收藏总计数
+        // 步骤 2: 若实际删除了记录，且用户在其它收藏夹中已完全无此视频，扣减收藏总计数并同事务写 Outbox
         if (deleted > 0) {
             boolean stillStarred = itemRepository.isStarredByUser(userId, vid);
             if (!stillStarred) {
                 counterRepository.adjustStarCount(vid, -1L);
-                log.info("用户 [{}] 完全取消收藏视频 [{}]，扣减收藏计数", userId, vid);
+                eventPublisher.publishVideoAction(VideoActionPayload.unstar(userId, vid));
+                log.info("用户 [{}] 完全取消收藏视频 [{}]，扣减收藏计数并写入 Outbox", userId, vid);
             }
         }
     }

@@ -32,6 +32,9 @@ public class StarItem {
     /** 收藏时间。 */
     private LocalDateTime createdAt;
 
+    /** 是否已逻辑删除：true=已删除, false=正常有效。 */
+    private boolean deleted;
+
     /**
      * 工厂方法：新建视频收藏明细条目。
      *
@@ -57,6 +60,22 @@ public class StarItem {
                 .vid(vid.trim())
                 .userId(userId.trim())
                 .createdAt(LocalDateTime.now())
+                .deleted(false)
                 .build();
+    }
+
+    /**
+     * 逻辑删除收藏条目。
+     */
+    public void markDeleted() {
+        this.deleted = true;
+    }
+
+    /**
+     * 自愈复活已逻辑删除的收藏条目。
+     */
+    public void revive() {
+        this.deleted = false;
+        this.createdAt = LocalDateTime.now();
     }
 }

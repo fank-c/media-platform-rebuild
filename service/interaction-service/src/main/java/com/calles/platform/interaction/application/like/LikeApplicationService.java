@@ -1,5 +1,7 @@
 package com.calles.platform.interaction.application.like;
 
+import com.calles.platform.interaction.application.event.InteractionEventPublisher;
+import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.like.VideoLike;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import com.calles.platform.interaction.domain.repository.VideoLikeRepository;
@@ -12,7 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 视频点赞业务应用服务。
  *
- * <p>维护点赞状态反转与计数器原子调整，高并发场景下完全闭环在交互模块内部。</p>
+ * <p>维护点赞状态反转与计数器原子调整，并在真实点赞状态变化时同事务写入 Outbox 领域事件。</p>
  */
 @Slf4j
 @Service
@@ -21,6 +23,7 @@ public class LikeApplicationService {
 
     private final VideoLikeRepository likeRepository;
     private final VideoCounterRepository counterRepository;
+    private final InteractionEventPublisher eventPublisher;
 
     /**
      * 点赞视频（严格幂等）。
@@ -35,22 +38,25 @@ public class LikeApplicationService {
         Optional<VideoLike> opt = likeRepository.findByUserAndVid(userId, vid);
 
         if (opt.isEmpty()) {
-            // 步骤 2: 首次点赞，持久化新记录并递增计数
+            // 步骤 2: 首次点赞，持久化新记录并递增计数，同事务写 Outbox
             VideoLike newLike = VideoLike.create(vid, userId);
             likeRepository.save(newLike);
             counterRepository.adjustLikeCount(vid, 1L);
-            log.info("用户 [{}] 首次点赞视频 [{}]", userId, vid);
+            eventPublisher.publishVideoAction(VideoActionPayload.like(userId, vid));
+            log.info("用户 [{}] 首次点赞视频 [{}]，写入 Outbox", userId, vid);
             return true;
         }
 
         VideoLike existing = opt.get();
         if (existing.reactivate()) {
-            // 步骤 3: 从已取消状态重新激活点赞
+            // 步骤 3: 从已取消状态重新激活点赞，递增计数，同事务写 Outbox
             likeRepository.update(existing);
             counterRepository.adjustLikeCount(vid, 1L);
-            log.info("用户 [{}] 重新点赞视频 [{}]", userId, vid);
+            eventPublisher.publishVideoAction(VideoActionPayload.like(userId, vid));
+            log.info("用户 [{}] 重新点赞视频 [{}]，写入 Outbox", userId, vid);
         } else {
-            log.debug("用户 [{}] 重复点赞视频 [{}]，幂等忽略", userId, vid);
+            // 步骤 4: 重复点赞幂等忽略，不写 Outbox
+            log.debug("用户 [{}] 重复点赞视频 [{}]，幂等忽略，不写 Outbox", userId, vid);
         }
         return true;
     }
@@ -70,10 +76,11 @@ public class LikeApplicationService {
         if (opt.isPresent()) {
             VideoLike existing = opt.get();
             if (existing.cancel()) {
-                // 步骤 2: 状态由有效反转为取消，扣减计数
+                // 步骤 2: 状态由有效反转为取消，扣减计数，同事务写 Outbox
                 likeRepository.update(existing);
                 counterRepository.adjustLikeCount(vid, -1L);
-                log.info("用户 [{}] 取消点赞视频 [{}]", userId, vid);
+                eventPublisher.publishVideoAction(VideoActionPayload.unlike(userId, vid));
+                log.info("用户 [{}] 取消点赞视频 [{}]，写入 Outbox", userId, vid);
             }
         }
         return false;
