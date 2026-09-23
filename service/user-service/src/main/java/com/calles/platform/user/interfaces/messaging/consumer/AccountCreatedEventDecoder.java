@@ -1,7 +1,7 @@
 package com.calles.platform.user.interfaces.messaging.consumer;
 
 import com.calles.platform.common.core.event.EventEnvelope;
-import com.calles.platform.user.interfaces.messaging.event.AccountCreatedPayloadV1;
+import com.calles.platform.user.application.profile.AccountCreatedPayloadV1;
 import com.calles.platform.user.exception.InvalidAccountCreatedEventException;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;

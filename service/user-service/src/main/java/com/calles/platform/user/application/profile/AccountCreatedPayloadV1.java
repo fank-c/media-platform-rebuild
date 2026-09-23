@@ -1,4 +1,4 @@
-package com.calles.platform.user.interfaces.messaging.event;
+package com.calles.platform.user.application.profile;
 
 /**
  * {@code auth.account.created.v1} 在 user-service 内部使用的事件载荷。

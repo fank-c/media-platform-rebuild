@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.calles.platform.common.core.event.EventEnvelope;
-import com.calles.platform.user.interfaces.messaging.event.AccountCreatedPayloadV1;
+import com.calles.platform.user.application.profile.AccountCreatedPayloadV1;
 import com.calles.platform.user.exception.InvalidAccountCreatedEventException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;

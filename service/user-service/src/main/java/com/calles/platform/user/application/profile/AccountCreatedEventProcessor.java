@@ -1,7 +1,6 @@
 package com.calles.platform.user.application.profile;
 import com.calles.platform.common.core.event.EventEnvelope;
 import com.calles.platform.user.infrastructure.persistence.mapper.profile.UserConsumedEventMapper;
-import com.calles.platform.user.interfaces.messaging.event.AccountCreatedPayloadV1;
 import java.util.Objects;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

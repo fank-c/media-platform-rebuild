@@ -9,7 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.calles.platform.common.core.event.EventEnvelope;
-import com.calles.platform.user.interfaces.messaging.event.AccountCreatedPayloadV1;
+import com.calles.platform.user.application.profile.AccountCreatedPayloadV1;
 import com.calles.platform.user.application.profile.AccountCreatedEventProcessor;
 import com.calles.platform.user.exception.InvalidAccountCreatedEventException;
 import com.calles.platform.user.infrastructure.observability.UserOperationalMetrics;

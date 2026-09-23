@@ -101,7 +101,6 @@ sequenceDiagram
     participant Svc as UserFollowApplicationService
     participant DB as MySQL (user_follow / user_counter)
     participant MQ as RabbitMQ (media.platform.events)
-    participant Rec as 推荐服务 (recommend-service)
 
     Client->>GW: POST /api/users/{targetUserId}/follow
     GW->>Ctrl: 路由转发 (校验 Token 并透传 X-User-Id)
@@ -132,8 +131,8 @@ sequenceDiagram
     Svc->>DB: INSERT INTO user_outbox (interaction.author-action)
 
     Note over Svc,MQ: 步骤 5：事务提交后 (afterCommit) 快速派发 + 定时扫描兜底
-    Svc->>MQ: 发布 interaction.author-action.v1
-    MQ-->>Rec: 异步消费，实时刷新创作者偏好与推荐画像
+    Svc->>MQ: 尝试发布 interaction.author-action.v1
+    Note right of MQ: 推荐消费端尚未接入，当前无该路由键的队列绑定
 
     Svc-->>Ctrl: 返回 FollowResponses.Action
     Ctrl-->>Client: 200 OK { targetUserId, followStatus: 1, mutual: true/false }
@@ -227,6 +226,7 @@ sequenceDiagram
 ## 5. 第二套件：MQ 消息链路（事件发布与消费）
 
 ### 5.1 发布的领域事件：`interaction.author-action` (关注与取关)
+- **当前阶段**：仅 `user-service` Outbox 写入与发布端已实现；推荐服务尚未绑定 `interaction.author-action.v1` 或实现消费。无匹配队列时发布端按不可路由处理并重试。
 - **交换机与路由键**：
   - Exchange：`media.platform.events`
   - RoutingKey：`interaction.author-action.v1`

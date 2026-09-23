@@ -8,7 +8,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.calles.platform.user.infrastructure.persistence.mapper.profile.UserConsumedEventMapper;
-import com.calles.platform.user.interfaces.messaging.event.AccountCreatedPayloadV1;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
