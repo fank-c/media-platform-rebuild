@@ -65,28 +65,4 @@ public interface VideoContentMapper extends BaseMapper<VideoContentPO> {
             """)
     int updateWithOptimisticLock(@Param("po") VideoContentPO po);
 
-    /**
-     * 异步更新视频互动快照指标（不递增业务领域版本号 revision）。
-     *
-     * @param id 目标视频主键 ID
-     * @param viewCount 播放量
-     * @param likeCount 点赞量
-     * @param commentCount 评论量
-     * @param starCount 收藏量
-     * @param shareCount 分享量
-     * @return 影响行数
-     */
-    @Update("""
-            UPDATE video_content SET
-                view_count = #{viewCount},
-                like_count = #{likeCount},
-                comment_count = #{commentCount},
-                star_count = #{starCount},
-                share_count = #{shareCount},
-                updated_at = CURRENT_TIMESTAMP(3)
-            WHERE id = #{id} AND deleted = 0
-            """)
-    int updateMetricsSnapshot(@Param("id") String id, @Param("viewCount") long viewCount,
-                              @Param("likeCount") long likeCount, @Param("commentCount") long commentCount,
-                              @Param("starCount") long starCount, @Param("shareCount") long shareCount);
 }

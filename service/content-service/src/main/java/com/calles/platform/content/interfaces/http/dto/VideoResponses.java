@@ -39,11 +39,6 @@ public final class VideoResponses {
      * @param status 平台治理状态 (ACTIVE=正常, DISABLED=违规封禁)
      * @param publishStatus 发布流转生命周期 (PUBLISHED 等)
      * @param visibility 可见范围 (PUBLIC, PRIVATE, UNLISTED)
-     * @param viewCount 播放量快照
-     * @param likeCount 点赞量快照
-     * @param commentCount 评论量快照
-     * @param starCount 收藏量快照
-     * @param shareCount 分享量快照
      * @param publishedAt 正式公开时间
      * @param createdAt 记录创建时间
      */
@@ -60,11 +55,6 @@ public final class VideoResponses {
             String status,
             String publishStatus,
             String visibility,
-            long viewCount,
-            long likeCount,
-            long commentCount,
-            long starCount,
-            long shareCount,
             LocalDateTime publishedAt,
             LocalDateTime createdAt
     ) { }

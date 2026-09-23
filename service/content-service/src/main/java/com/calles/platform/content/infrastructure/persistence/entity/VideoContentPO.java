@@ -81,26 +81,6 @@ public class VideoContentPO {
     @TableField("visibility")
     private String visibility;
 
-    /** 播放量计数快照。 */
-    @TableField("view_count")
-    private Long viewCount;
-
-    /** 点赞量计数快照。 */
-    @TableField("like_count")
-    private Long likeCount;
-
-    /** 评论量计数快照。 */
-    @TableField("comment_count")
-    private Long commentCount;
-
-    /** 收藏量计数快照。 */
-    @TableField("star_count")
-    private Long starCount;
-
-    /** 分享量计数快照。 */
-    @TableField("share_count")
-    private Long shareCount;
-
     /** 正式公开/发布时间。 */
     @TableField("published_at")
     private LocalDateTime publishedAt;
@@ -142,11 +122,6 @@ public class VideoContentPO {
                 .publishStatus(this.publishStatus != null ? PublishStatus.valueOf(this.publishStatus) : PublishStatus.DRAFT)
                 .rejectReason(this.rejectReason)
                 .visibility(this.visibility != null ? ContentVisibility.valueOf(this.visibility) : ContentVisibility.PUBLIC)
-                .viewCount(this.viewCount != null ? this.viewCount : 0L)
-                .likeCount(this.likeCount != null ? this.likeCount : 0L)
-                .commentCount(this.commentCount != null ? this.commentCount : 0L)
-                .starCount(this.starCount != null ? this.starCount : 0L)
-                .shareCount(this.shareCount != null ? this.shareCount : 0L)
                 .publishedAt(this.publishedAt)
                 .deleted(this.deleted != null ? this.deleted : 0)
                 .revision(this.revision != null ? this.revision : 0L)
@@ -179,11 +154,6 @@ public class VideoContentPO {
                 .publishStatus(domain.getPublishStatus() != null ? domain.getPublishStatus().getValue() : PublishStatus.DRAFT.getValue())
                 .rejectReason(domain.getRejectReason())
                 .visibility(domain.getVisibility() != null ? domain.getVisibility().getValue() : ContentVisibility.PUBLIC.getValue())
-                .viewCount(domain.getViewCount())
-                .likeCount(domain.getLikeCount())
-                .commentCount(domain.getCommentCount())
-                .starCount(domain.getStarCount())
-                .shareCount(domain.getShareCount())
                 .publishedAt(domain.getPublishedAt())
                 .deleted(domain.getDeleted() != null ? domain.getDeleted() : 0)
                 .revision(domain.getRevision() != null ? domain.getRevision() : 0L)

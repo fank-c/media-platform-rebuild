@@ -82,7 +82,6 @@ class PortalVideoControllerTest {
                 "ACTIVE",
                 "PUBLISHED",
                 "PUBLIC",
-                1000L, 50L, 10L, 20L, 5L,
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );

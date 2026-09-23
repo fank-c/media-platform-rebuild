@@ -20,6 +20,23 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+  datasource:
+    url: ${INTERACTION_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
+    username: ${INTERACTION_DB_USERNAME:media}
+    password: ${INTERACTION_DB_PASSWORD:media}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+# 互动统计计数相关配置
+interaction:
+  counter:
+    # 脏计数批量异步刷盘的执行间隔周期 (毫秒)，默认 5000ms (5秒)，防止对数据库造成瞬时过高写并发
+    flush-rate-ms: ${INTERACTION_COUNTER_FLUSH_RATE_MS:5000}
+    # 视频计数在 Redis 中的缓存过期时间，默认 30 分钟 (30m)；访问命中与写操作会自动滑动续期
+    cache-ttl: ${INTERACTION_COUNTER_CACHE_TTL:10m}
+
 management:
   endpoints:
     web:
