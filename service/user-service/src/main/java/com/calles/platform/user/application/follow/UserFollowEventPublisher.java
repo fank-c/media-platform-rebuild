@@ -1,127 +1,116 @@
 package com.calles.platform.user.application.follow;
 
-import com.calles.platform.common.core.event.EventEnvelope;
-import com.calles.platform.user.domain.follow.event.UserFollowedPayload;
-import com.calles.platform.user.domain.follow.event.UserUnfollowedPayload;
+import com.calles.platform.user.application.outbox.UserOutboxDispatchNotifier;
+import com.calles.platform.user.domain.follow.event.AuthorActionPayload;
+import com.calles.platform.user.domain.follow.event.InteractionEventEnvelope;
+import com.calles.platform.user.infrastructure.outbox.model.UserOutboxRecord;
+import com.calles.platform.user.infrastructure.outbox.persistence.UserOutboxRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-
-import java.time.Instant;
-import java.util.UUID;
 
 /**
- * 关注领域事件发布器，负责将关注/取关行为组装为平台标准 {@link EventEnvelope} 投递至 RabbitMQ。
- * 具备事务感知能力，确保本地数据库事务成功提交（afterCommit）后才触发外部广播。
+ * 关注领域事件发布器，统一采用 Transactional Outbox 事务发件箱模式。
+ *
+ * <p>核心机制：
+ * <ul>
+ *   <li><b>本地事务一致性</b>：在业务事务内将事件序列化并写入 {@code user_outbox} 表，与拓扑变更强一致；</li>
+ *   <li><b>契约统一</b>：输出符合推荐互动流标准模板的 {@code interaction.author-action} 规范载荷；</li>
+ *   <li><b>双轨派发</b>：事务提交后触发毫秒级快速内存通知，结合后台定时扫描兜底保证 100% 不丢事件。</li>
+ * </ul>
+ * </p>
  */
 @Component
 public class UserFollowEventPublisher {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(UserFollowEventPublisher.class);
 
-    /** 平台统一事件 Topic 交换机。 */
-    private static final String PLATFORM_EXCHANGE = "media.platform.events";
+    public static final String EVENT_TYPE_AUTHOR_ACTION = "interaction.author-action";
 
-    /** 关注建立领域事件 RoutingKey。 */
-    public static final String ROUTING_KEY_FOLLOWED = "user.relation.followed.v1";
+    private final UserOutboxRepository outboxRepository;
+    private final UserOutboxDispatchNotifier dispatchNotifier;
+    private final ObjectMapper objectMapper;
+    private final Clock clock;
 
-    /** 关注取消领域事件 RoutingKey。 */
-    public static final String ROUTING_KEY_UNFOLLOWED = "user.relation.unfollowed.v1";
-
-    private final RabbitTemplate rabbitTemplate;
-
-    public UserFollowEventPublisher(RabbitTemplate rabbitTemplate) {
-        this.rabbitTemplate = rabbitTemplate;
+    public UserFollowEventPublisher(UserOutboxRepository outboxRepository,
+                                    UserOutboxDispatchNotifier dispatchNotifier,
+                                    ObjectMapper objectMapper,
+                                    Clock clock) {
+        this.outboxRepository = outboxRepository;
+        this.dispatchNotifier = dispatchNotifier;
+        this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     /**
-     * 事务提交后异步发布关注事件。
+     * 记录并发布用户关注事件。
      *
-     * @param userId 发起关注用户ID
-     * @param targetUserId 被关注用户ID
+     * @param userId 关注发起人账号 ID
+     * @param targetUserId 被关注目标创作者账号 ID
      */
     public void publishFollowedEvent(String userId, String targetUserId) {
-        runAfterCommit(() -> {
-            String eventId = UUID.randomUUID().toString();
-            String traceId = resolveCurrentTraceId();
-            String now = Instant.now().toString();
-            UserFollowedPayload payload = new UserFollowedPayload(userId, targetUserId, now);
-
-            EventEnvelope<UserFollowedPayload> envelope = new EventEnvelope<>(
-                    eventId,
-                    "user.relation.followed",
-                    1,
-                    now,
-                    "user-service",
-                    userId,
-                    traceId,
-                    payload
-            );
-
-            try {
-                rabbitTemplate.convertAndSend(PLATFORM_EXCHANGE, ROUTING_KEY_FOLLOWED, envelope);
-                LOGGER.info("已发布用户关注事件: eventId={}, userId={}, targetUserId={}, traceId={}",
-                        eventId, userId, targetUserId, traceId);
-            } catch (Exception ex) {
-                LOGGER.error("发布用户关注事件失败: eventId={}, userId={}, targetUserId={}",
-                        eventId, userId, targetUserId, ex);
-            }
-        });
+        AuthorActionPayload payload = AuthorActionPayload.follow(userId, targetUserId);
+        recordOutboxAndNotify(userId, payload);
     }
 
     /**
-     * 事务提交后异步发布取关事件。
+     * 记录并发布用户取消关注事件。
      *
-     * @param userId 发起取消关注用户ID
-     * @param targetUserId 被取消关注用户ID
+     * @param userId 取消关注发起人账号 ID
+     * @param targetUserId 被取消关注目标创作者账号 ID
      */
     public void publishUnfollowedEvent(String userId, String targetUserId) {
-        runAfterCommit(() -> {
-            String eventId = UUID.randomUUID().toString();
-            String traceId = resolveCurrentTraceId();
-            String now = Instant.now().toString();
-            UserUnfollowedPayload payload = new UserUnfollowedPayload(userId, targetUserId, now);
-
-            EventEnvelope<UserUnfollowedPayload> envelope = new EventEnvelope<>(
-                    eventId,
-                    "user.relation.unfollowed",
-                    1,
-                    now,
-                    "user-service",
-                    userId,
-                    traceId,
-                    payload
-            );
-
-            try {
-                rabbitTemplate.convertAndSend(PLATFORM_EXCHANGE, ROUTING_KEY_UNFOLLOWED, envelope);
-                LOGGER.info("已发布用户取关事件: eventId={}, userId={}, targetUserId={}, traceId={}",
-                        eventId, userId, targetUserId, traceId);
-            } catch (Exception ex) {
-                LOGGER.error("发布用户取关事件失败: eventId={}, userId={}, targetUserId={}",
-                        eventId, userId, targetUserId, ex);
-            }
-        });
+        AuthorActionPayload payload = AuthorActionPayload.unfollow(userId, targetUserId);
+        recordOutboxAndNotify(userId, payload);
     }
 
     /**
-     * 在当前事务提交后执行，若无事务则直接同步触发。
+     * 组装统一推荐交互模板信封，写入 Outbox 并注册事务后快速派发。
      */
-    private void runAfterCommit(Runnable action) {
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    action.run();
-                }
-            });
-        } else {
-            action.run();
+    private void recordOutboxAndNotify(String userId, AuthorActionPayload payload) {
+        String eventId = UUID.randomUUID().toString().replace("-", "");
+        String traceId = resolveCurrentTraceId();
+        Instant now = clock.instant();
+        String occurredAtStr = DateTimeFormatter.ISO_INSTANT.format(now);
+
+        InteractionEventEnvelope<AuthorActionPayload> envelope = new InteractionEventEnvelope<>(
+                eventId,
+                EVENT_TYPE_AUTHOR_ACTION,
+                1,
+                traceId,
+                occurredAtStr,
+                payload
+        );
+
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(envelope);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("关注互动事件 JSON 序列化失败: eventId=" + eventId, e);
         }
+
+        UserOutboxRecord record = new UserOutboxRecord(
+                eventId,
+                userId,
+                EVENT_TYPE_AUTHOR_ACTION,
+                1,
+                json,
+                traceId,
+                now
+        );
+
+        outboxRepository.insert(record);
+        dispatchNotifier.notifyDispatch(eventId);
+
+        LOGGER.info("已记录关注互动事件至 Outbox: eventId={}, userId={}, authorId={}, action={}, state={}",
+                eventId, userId, payload.authorId(), payload.action(), payload.state());
     }
 
     private String resolveCurrentTraceId() {

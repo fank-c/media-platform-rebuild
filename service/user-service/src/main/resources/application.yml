@@ -26,6 +26,10 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USERNAME:media}
     password: ${RABBITMQ_PASSWORD:}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
     listener:
       simple:
         acknowledge-mode: auto
@@ -38,6 +42,15 @@ spring:
           multiplier: 2
           max-interval: 2s
 user:
+  outbox:
+    enabled: ${USER_OUTBOX_ENABLED:true}
+    fast-dispatch-enabled: ${USER_OUTBOX_FAST_DISPATCH_ENABLED:true}
+    batch-size: ${USER_OUTBOX_BATCH_SIZE:100}
+    max-attempts: ${USER_OUTBOX_MAX_ATTEMPTS:20}
+    confirm-timeout: ${USER_OUTBOX_CONFIRM_TIMEOUT:5s}
+    lease: ${USER_OUTBOX_LEASE:30s}
+    poll-interval: ${USER_OUTBOX_POLL_INTERVAL:5s}
+    shutdown-await: ${USER_OUTBOX_SHUTDOWN_AWAIT:10s}
   profile:
     # UserProfileProperties 绑定此参数；未建立文件引用契约前默认隐藏历史头像。
     avatar-allowed-prefix: ${USER_AVATAR_ALLOWED_PREFIX:}

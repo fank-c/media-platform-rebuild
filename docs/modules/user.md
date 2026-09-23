@@ -128,9 +128,12 @@ sequenceDiagram
     Svc->>DB: SELECT follow_status FROM user_follow WHERE user_id=target AND follow_id=user
     DB-->>Svc: 返回互关状态 (mutual)
 
-    Note over Svc,MQ: 步骤 4：事务提交后 (afterCommit) 广播事件
-    Svc->>MQ: 发布 user.relation.followed.v1
-    MQ-->>Rec: 异步消费，更新作者与偏好推荐权重
+    Note over Svc,DB: 步骤 4：本地事务内原子写入 Outbox 发件箱
+    Svc->>DB: INSERT INTO user_outbox (interaction.author-action)
+
+    Note over Svc,MQ: 步骤 5：事务提交后 (afterCommit) 快速派发 + 定时扫描兜底
+    Svc->>MQ: 发布 interaction.author-action.v1
+    MQ-->>Rec: 异步消费，实时刷新创作者偏好与推荐画像
 
     Svc-->>Ctrl: 返回 FollowResponses.Action
     Ctrl-->>Client: 200 OK { targetUserId, followStatus: 1, mutual: true/false }
@@ -219,9 +222,35 @@ sequenceDiagram
 
 ---
 
+---
+
 ## 5. 第二套件：MQ 消息链路（事件发布与消费）
 
-### 5.1 消费的领域事件：`auth.account.created`
+### 5.1 发布的领域事件：`interaction.author-action` (关注与取关)
+- **交换机与路由键**：
+  - Exchange：`media.platform.events`
+  - RoutingKey：`interaction.author-action.v1`
+- **发布实现与模式**：
+  - 发布入口：[`UserFollowEventPublisher.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/follow/UserFollowEventPublisher.java)
+  - 投递模式：**Transactional Outbox（事务发件箱）模式**。在业务本地事务中原子写入 `user_outbox` 表，通过 `AfterCommitUserOutboxDispatchNotifier` 在事务成功提交后由虚拟线程毫秒级唤醒派发；后台由 `UserOutboxScanJob` 轮询自愈补偿。
+- **推荐统一交互模板载荷**：
+  ```json
+  {
+    "eventId": "e9b2c3d411114a5b8c9d000000000001",
+    "eventType": "interaction.author-action",
+    "eventVersion": 1,
+    "traceId": "trace-uuid-12345",
+    "occurredAt": "2026-09-22T10:00:00Z",
+    "payload": {
+      "userId": "u001",
+      "authorId": "u002",
+      "action": "FOLLOW",
+      "state": "ACTIVE"  // 关注为 ACTIVE，取消关注为 INACTIVE
+    }
+  }
+  ```
+
+### 5.2 消费的领域事件：`auth.account.created`
 
 - **队列绑定配置**：
   - Queue：`user.account-created.v1`
@@ -235,7 +264,7 @@ sequenceDiagram
      - 插入初始用户档案 `user_profile`（以 `account_id` 作为主键 `id`，初始昵称默认为 `User_` + 后 6 位截断，初始状态为 `ACTIVE`，初始版本号 `revision = 0`）；
   3. 即使极端异常下外部发送了相同 `accountId` 但不同 `eventId` 的脏消息，`user_profile` 主键约束亦可完成终极兜底，绝不重置用户已有资料。
 
-### 5.2 死信分流与重试机制
+### 5.3 死信分流与重试机制
 - 消费出现数据库瞬时抖动异常时，利用 RabbitMQ 指数退避重试（最大重试 3 次）；
 - 重试耗尽或捕获不可恢复的契约反序列化异常时，路由转移至死信交换机进入 `user.account-created.dlq`，不阻断主队列正常消费。
 
@@ -243,10 +272,16 @@ sequenceDiagram
 
 ## 6. 第三套件：定时任务与容灾补偿调度链路
 
-- **定位说明**：`user-service` 不设本地周期性定时调度任务（`@Scheduled`）。
-- **容灾与并发补偿机制**：
-  1. **乐观锁冲突处理**：当前端提交更新遇到 `409 CONFLICT` 时，提示用户当前资料已被修改，前端重新拉取最新资料与新 `revision` 供用户确认覆盖；
-  2. **外部头像防盗链策略 (`AvatarDisplayPolicy`)**：仅放行配置白名单域名内的图片 URL。针对外部不可信图床，系统自动替换为默认静态占位图，防范 XSS 注入与外链失效风险。
+### 6.1 发件箱补偿与自愈扫描调度器 (`UserOutboxScanJob`)
+- **执行频率**：默认每 5 秒（`${user.outbox.poll-interval:5s}`）轮询执行；
+- **自愈机制**：
+  - 定向扫描 `user_outbox` 表中处于 `PENDING` 状态到达允许重试时间、或 `PROCESSING` 状态租约超期的记录；
+  - 基于 CAS 原子租约抢占防多实例并发重试风暴，指数退避重试上限 20 次；
+  - 保证社交关注与取关领域事件 **At-least-once 绝对不丢**。
+
+### 6.2 容灾与并发补偿机制
+1. **乐观锁冲突处理**：当前端提交更新遇到 `409 CONFLICT` 时，提示用户当前资料已被修改，前端重新拉取最新资料与新 `revision` 供用户确认覆盖；
+2. **外部头像防盗链策略 (`AvatarDisplayPolicy`)**：仅放行配置白名单域名内的图片 URL。针对外部不可信图床，系统自动替换为默认静态占位图，防范 XSS 注入与外链失效风险。
 
 ---
 
@@ -312,6 +347,37 @@ CREATE TABLE IF NOT EXISTS `user_counter` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户互动与关系计数表';
 ```
 
+### 7.5 用户事务发件箱表 (`user_outbox`)
+
+- **空库初始化**：执行 `db/init/schema.sql`，其中包含与下方一致的建表定义。
+- **已有库补建**：确认 `user_outbox` 尚不存在后，单独执行 `service/user-service/db/schema/user-outbox.sql`。已有 MySQL 数据卷不会重新运行 `docker-compose` 的初始化脚本。
+- **执行边界**：独立脚本只建表、不回填数据；若同名表已存在，`IF NOT EXISTS` 不会校验或更新其结构。
+
+```sql
+CREATE TABLE IF NOT EXISTS `user_outbox` (
+    `event_id` CHAR(36) NOT NULL COMMENT '稳定事件 UUID，重试和重放必须复用',
+    `aggregate_id` CHAR(32) NOT NULL COMMENT '关联发起用户 ID (userId)',
+    `event_type` VARCHAR(128) NOT NULL COMMENT '事件类型标识 (如 interaction.author-action)',
+    `event_version` INT NOT NULL COMMENT '契约版本号',
+    `payload` JSON NOT NULL COMMENT '符合推荐交互模板的事件载荷 JSON',
+    `trace_id` VARCHAR(64) NULL COMMENT '链路追踪 ID',
+    `occurred_at` DATETIME(3) NOT NULL COMMENT '事件发生时间',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING, PROCESSING, PUBLISHED, FAILED',
+    `attempts` INT NOT NULL DEFAULT 0 COMMENT '投递尝试次数',
+    `next_attempt_at` DATETIME(3) NOT NULL COMMENT '下次重试时间',
+    `lease_owner` VARCHAR(64) NULL COMMENT '当前租约所有者',
+    `lease_until` DATETIME(3) NULL COMMENT '当前租约截止时间',
+    `claim_token` CHAR(36) NULL COMMENT '认领令牌',
+    `published_at` DATETIME(3) NULL COMMENT '成功发布时间',
+    `last_error_code` VARCHAR(64) NULL COMMENT '最后错误分类',
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`event_id`),
+    KEY `idx_user_outbox_dispatch` (`status`, `next_attempt_at`, `lease_until`),
+    KEY `idx_user_outbox_aggregate` (`aggregate_id`),
+    CONSTRAINT `ck_user_outbox_status` CHECK (`status` IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='user-service 领域事件 Outbox 发件箱表';
+```
+
 ---
 
 ## 8. 核心源码入口索引
@@ -324,13 +390,20 @@ CREATE TABLE IF NOT EXISTS `user_counter` (
   - 关注与粉丝控制器：[`UserFollowController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/follow/UserFollowController.java)
   - 关注内部协同端点：[`UserFollowInternalController.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/http/follow/UserFollowInternalController.java)
   - 关注核心编排服务：[`UserFollowApplicationService.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/follow/UserFollowApplicationService.java)
-- **事件驱动与消息投递**：
-  - 账号建档消费者：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/consumer/AccountCreatedConsumer.java)
+- **事件驱动与事务发件箱**：
   - 关注领域事件发布器：[`UserFollowEventPublisher.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/follow/UserFollowEventPublisher.java)
+  - 发件箱持久化仓储：[`UserOutboxRepository.java`](../../service/user-service/src/main/java/com/calles/platform/user/infrastructure/outbox/persistence/UserOutboxRepository.java)
+  - 统一任务分发调度器：[`UserOutboxDispatcher.java`](../../service/user-service/src/main/java/com/calles/platform/user/infrastructure/outbox/dispatch/UserOutboxDispatcher.java)
+  - RabbitMQ 消息发布器：[`UserOutboxPublisher.java`](../../service/user-service/src/main/java/com/calles/platform/user/infrastructure/outbox/dispatch/UserOutboxPublisher.java)
+  - 提交后快速派发通知器：[`AfterCommitUserOutboxDispatchNotifier.java`](../../service/user-service/src/main/java/com/calles/platform/user/infrastructure/outbox/notify/AfterCommitUserOutboxDispatchNotifier.java)
+  - 发件箱定时补偿自愈任务：[`UserOutboxScanJob.java`](../../service/user-service/src/main/java/com/calles/platform/user/infrastructure/scheduling/UserOutboxScanJob.java)
+  - 账号建档消费者：[`AccountCreatedConsumer.java`](../../service/user-service/src/main/java/com/calles/platform/user/interfaces/messaging/consumer/AccountCreatedConsumer.java)
 - **安全与防盗链策略**：
   - 头像域名合规校验：[`AvatarDisplayPolicy.java`](../../service/user-service/src/main/java/com/calles/platform/user/application/profile/AvatarDisplayPolicy.java)
 - **自动化测试规范**：
   - 关注核心用例测试：`UserFollowApplicationServiceTest.java`
+  - 关注事件发布与模板序列化测试：`UserFollowEventPublisherTest.java`
+  - 发件箱调度与重试测试：`UserOutboxRepositoryTest.java`, `UserOutboxDispatcherTest.java`, `UserOutboxPublisherTest.java`
   - 关注 HTTP 契约测试：`UserFollowControllerTest.java`
   - 资料生命周期与并发测试：`UserProfileApplicationServiceTest.java`
   - 消费幂等建档测试：`AccountCreatedConsumerTest.java`

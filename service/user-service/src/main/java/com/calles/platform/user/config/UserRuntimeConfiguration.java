@@ -15,15 +15,20 @@ public class UserRuntimeConfiguration {
     private final UserMessagingProperties messagingProperties;
     /** 用户资料展示运行参数。 */
     private final UserProfileProperties profileProperties;
+    /** 用户 Outbox 发件箱运行参数。 */
+    private final UserOutboxProperties outboxProperties;
 
     /**
      * @param messagingProperties 账号创建事件消费运行参数
      * @param profileProperties 用户资料展示运行参数
+     * @param outboxProperties 用户 Outbox 发件箱运行参数
      */
     public UserRuntimeConfiguration(UserMessagingProperties messagingProperties,
-            UserProfileProperties profileProperties) {
+            UserProfileProperties profileProperties,
+            UserOutboxProperties outboxProperties) {
         this.messagingProperties = messagingProperties;
         this.profileProperties = profileProperties;
+        this.outboxProperties = outboxProperties;
     }
 
     /** 启动期校验消息与资料配置，禁止监听器以无效并发或重试次数运行。 */
@@ -31,5 +36,6 @@ public class UserRuntimeConfiguration {
     public void validateProperties() {
         messagingProperties.validate();
         profileProperties.validate();
+        outboxProperties.validate();
     }
 }
