@@ -536,12 +536,14 @@ CREATE TABLE IF NOT EXISTS `interaction_like` (
     `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
     `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '点赞状态: 1=已赞, 0=已取消',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_like_user_vid` (`user_id`, `vid`),
     KEY `idx_like_vid_status` (`vid`, `status`),
-    KEY `idx_like_user_list` (`user_id`, `status`, `created_at` DESC)
+    KEY `idx_like_user_list` (`user_id`, `status`, `created_at` DESC),
+    CONSTRAINT `ck_interaction_like_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频点赞记录表';
 
 -- interaction-service: 用户收藏夹表
@@ -551,10 +553,12 @@ CREATE TABLE IF NOT EXISTS `interaction_star_folder` (
     `title` VARCHAR(64) NOT NULL COMMENT '收藏夹标题',
     `is_default` TINYINT NOT NULL DEFAULT 0 COMMENT '是否默认收藏夹: 1=是, 0=否',
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1=正常, 0=已删除',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
-    KEY `idx_folder_user` (`user_id`, `status`)
+    KEY `idx_folder_user` (`user_id`, `status`),
+    CONSTRAINT `ck_star_folder_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏夹表';
 
 -- interaction-service: 收藏视频明细表
@@ -563,11 +567,13 @@ CREATE TABLE IF NOT EXISTS `interaction_star_item` (
     `folder_id` CHAR(32) NOT NULL COMMENT '所属收藏夹ID',
     `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
     `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID (反查冗余)',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_folder_vid` (`folder_id`, `vid`),
     KEY `idx_item_user_vid` (`user_id`, `vid`),
-    KEY `idx_item_folder_time` (`folder_id`, `created_at` DESC)
+    KEY `idx_item_folder_time` (`folder_id`, `created_at` DESC),
+    CONSTRAINT `ck_star_item_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏明细表';
 
 -- interaction-service: 用户视频观看历史与心跳断点表
@@ -581,7 +587,49 @@ CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
     `completed` TINYINT NOT NULL DEFAULT 0 COMMENT '是否完播: 1=是, 0=否',
     `first_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '首次观看时间',
     `last_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最近一次心跳活跃时间',
+    `last_valid_play_at` DATETIME(3) NULL COMMENT '上次计为有效播放并写入 Outbox 的时间戳',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_watch_user_vid` (`user_id`, `vid`),
-    KEY `idx_watch_user_recent` (`user_id`, `last_watch_at` DESC)
+    KEY `idx_watch_user_recent` (`user_id`, `last_watch_at` DESC),
+    CONSTRAINT `ck_watch_history_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户视频观看历史与进度表';
+
+-- interaction-service: 视频分享请求幂等防重记录表
+CREATE TABLE IF NOT EXISTS `interaction_share_record` (
+    `id` CHAR(32) NOT NULL COMMENT '主键 UUID',
+    `idempotency_key` VARCHAR(64) NOT NULL COMMENT '客户端提供的请求幂等键',
+    `user_id` CHAR(32) NOT NULL COMMENT '操作用户账号ID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_share_idempotency` (`idempotency_key`),
+    KEY `idx_share_user_vid` (`user_id`, `vid`),
+    CONSTRAINT `ck_share_record_deleted` CHECK (`deleted` IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频分享请求幂等防重记录表';
+
+-- interaction-service: 领域事件 Outbox 发件箱表
+CREATE TABLE IF NOT EXISTS `interaction_outbox` (
+    `event_id` CHAR(36) NOT NULL COMMENT '稳定事件 UUID，重试和重放必须复用',
+    `aggregate_id` VARCHAR(64) NOT NULL COMMENT '关联业务聚合根 ID (如 vid 或 userId:vid)',
+    `event_type` VARCHAR(128) NOT NULL COMMENT '事件类型标识 (固定为 interaction.video-action)',
+    `event_version` INT NOT NULL COMMENT '契约版本号 (固定为 1)',
+    `payload` JSON NOT NULL COMMENT '符合统一信封与载荷规范的事件 JSON',
+    `trace_id` VARCHAR(64) NULL COMMENT '链路追踪 ID',
+    `occurred_at` DATETIME(3) NOT NULL COMMENT '事件发生时间',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING, PROCESSING, PUBLISHED, FAILED',
+    `attempts` INT NOT NULL DEFAULT 0 COMMENT '投递尝试次数',
+    `next_attempt_at` DATETIME(3) NOT NULL COMMENT '下次允许重试时间',
+    `lease_owner` VARCHAR(64) NULL COMMENT '当前租约所有者实例标识',
+    `lease_until` DATETIME(3) NULL COMMENT '当前租约截止时间',
+    `claim_token` CHAR(36) NULL COMMENT '本次抢占认领令牌',
+    `published_at` DATETIME(3) NULL COMMENT '成功发布时间',
+    `last_error_code` VARCHAR(64) NULL COMMENT '最后一次投递失败错误分类',
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`event_id`),
+    KEY `idx_interaction_outbox_dispatch` (`status`, `next_attempt_at`, `lease_until`),
+    KEY `idx_interaction_outbox_aggregate` (`aggregate_id`),
+    CONSTRAINT `ck_interaction_outbox_status` CHECK (`status` IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='interaction-service 领域事件 Outbox 发件箱表';
+

@@ -115,12 +115,14 @@ CREATE TABLE IF NOT EXISTS `interaction_like` (
     `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
     `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '点赞状态: 1=已赞, 0=已取消',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_like_user_vid` (`user_id`, `vid`),
     KEY `idx_like_vid_status` (`vid`, `status`),
-    KEY `idx_like_user_list` (`user_id`, `status`, `created_at` DESC)
+    KEY `idx_like_user_list` (`user_id`, `status`, `created_at` DESC),
+    CONSTRAINT `ck_interaction_like_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频点赞记录表';
 
 -- 3. 用户收藏夹表
@@ -130,10 +132,12 @@ CREATE TABLE IF NOT EXISTS `interaction_star_folder` (
     `title` VARCHAR(64) NOT NULL COMMENT '收藏夹标题',
     `is_default` TINYINT NOT NULL DEFAULT 0 COMMENT '是否默认收藏夹: 1=是, 0=否',
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1=正常, 0=已删除',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
-    KEY `idx_folder_user` (`user_id`, `status`)
+    KEY `idx_folder_user` (`user_id`, `status`),
+    CONSTRAINT `ck_star_folder_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏夹表';
 
 -- 4. 收藏视频明细表
@@ -142,11 +146,13 @@ CREATE TABLE IF NOT EXISTS `interaction_star_item` (
     `folder_id` CHAR(32) NOT NULL COMMENT '所属收藏夹ID',
     `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
     `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID (反查冗余)',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_folder_vid` (`folder_id`, `vid`),
     KEY `idx_item_user_vid` (`user_id`, `vid`),
-    KEY `idx_item_folder_time` (`folder_id`, `created_at` DESC)
+    KEY `idx_item_folder_time` (`folder_id`, `created_at` DESC),
+    CONSTRAINT `ck_star_item_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏明细表';
 
 -- 5. 用户视频观看历史与心跳断点表
@@ -160,10 +166,51 @@ CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
     `completed` TINYINT NOT NULL DEFAULT 0 COMMENT '是否完播: 1=是, 0=否',
     `first_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '首次观看时间',
     `last_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最近一次心跳活跃时间',
+    `last_valid_play_at` DATETIME(3) NULL COMMENT '上次计为有效播放并写入 Outbox 的时间戳 (持久化防重依据)',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_watch_user_vid` (`user_id`, `vid`),
-    KEY `idx_watch_user_recent` (`user_id`, `last_watch_at` DESC)
+    KEY `idx_watch_user_recent` (`user_id`, `last_watch_at` DESC),
+    CONSTRAINT `ck_watch_history_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户视频观看历史与进度表';
+
+-- 6. 视频分享请求幂等防重记录表
+CREATE TABLE IF NOT EXISTS `interaction_share_record` (
+    `id` CHAR(32) NOT NULL COMMENT '主键 UUID',
+    `idempotency_key` VARCHAR(64) NOT NULL COMMENT '客户端提供的请求幂等键',
+    `user_id` CHAR(32) NOT NULL COMMENT '操作用户账号ID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_share_idempotency` (`idempotency_key`),
+    KEY `idx_share_user_vid` (`user_id`, `vid`),
+    CONSTRAINT `ck_share_record_deleted` CHECK (`deleted` IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频分享请求幂等防重记录表';
+
+-- 7. 领域事件 Outbox 发件箱表
+CREATE TABLE IF NOT EXISTS `interaction_outbox` (
+    `event_id` CHAR(36) NOT NULL COMMENT '稳定事件 UUID，重试和重放必须复用',
+    `aggregate_id` VARCHAR(64) NOT NULL COMMENT '关联业务聚合根 ID (如 vid 或 userId:vid)',
+    `event_type` VARCHAR(128) NOT NULL COMMENT '事件类型标识 (固定为 interaction.video-action)',
+    `event_version` INT NOT NULL COMMENT '契约版本号 (固定为 1)',
+    `payload` JSON NOT NULL COMMENT '符合统一信封与载荷规范的事件 JSON',
+    `trace_id` VARCHAR(64) NULL COMMENT '链路追踪 ID',
+    `occurred_at` DATETIME(3) NOT NULL COMMENT '事件发生时间',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING, PROCESSING, PUBLISHED, FAILED',
+    `attempts` INT NOT NULL DEFAULT 0 COMMENT '投递尝试次数',
+    `next_attempt_at` DATETIME(3) NOT NULL COMMENT '下次允许重试时间',
+    `lease_owner` VARCHAR(64) NULL COMMENT '当前租约所有者实例标识',
+    `lease_until` DATETIME(3) NULL COMMENT '当前租约截止时间',
+    `claim_token` CHAR(36) NULL COMMENT '本次抢占认领令牌',
+    `published_at` DATETIME(3) NULL COMMENT '成功发布时间',
+    `last_error_code` VARCHAR(64) NULL COMMENT '最后一次投递失败错误分类',
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (`event_id`),
+    KEY `idx_interaction_outbox_dispatch` (`status`, `next_attempt_at`, `lease_until`),
+    KEY `idx_interaction_outbox_aggregate` (`aggregate_id`),
+    CONSTRAINT `ck_interaction_outbox_status` CHECK (`status` IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='interaction-service 领域事件 Outbox 发件箱表';
 ```
 
 ---
@@ -172,27 +219,72 @@ CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
 
 | 业务分类 | 方法 | 路径 | 鉴权要求 | 说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| **点赞** | `POST` | `/api/interactions/videos/{vid}/like` | 需登录 | 点赞视频，原子累加 like_count |
-| | `DELETE` | `/api/interactions/videos/{vid}/like` | 需登录 | 取消点赞，原子扣减 like_count |
-| **收藏** | `POST` | `/api/interactions/videos/{vid}/star` | 需登录 | 收藏视频（可选 folderId，默认为默认收藏夹） |
-| | `DELETE` | `/api/interactions/videos/{vid}/star` | 需登录 | 取消收藏（可选 folderId） |
+| **点赞** | `POST` | `/api/interactions/videos/{vid}/like` | 需登录 | 点赞视频，原子累加 like_count 并写 Outbox |
+| | `DELETE` | `/api/interactions/videos/{vid}/like` | 需登录 | 取消点赞，原子扣减 like_count 并写 Outbox |
+| **收藏** | `POST` | `/api/interactions/videos/{vid}/star` | 需登录 | 收藏视频（可选 folderId，默认为默认收藏夹），首藏写 Outbox |
+| | `DELETE` | `/api/interactions/videos/{vid}/star` | 需登录 | 取消收藏（可选 folderId，带属主校验），完全清空时写 Outbox |
 | | `GET` | `/api/interactions/star/folders` | 需登录 | 获取当前用户所有收藏夹 |
 | | `POST` | `/api/interactions/star/folders` | 需登录 | 创建自定义收藏夹 |
 | | `GET` | `/api/interactions/star/items` | 需登录 | 分页查询指定收藏夹内的视频 |
-| **观看心跳** | `POST` | `/api/interactions/videos/{vid}/heartbeat` | 需登录 | 上报心跳（position, deltaDuration, videoDuration）；未登录返回 `401`，不记录历史与播放量 |
+| **观看心跳** | `POST` | `/api/interactions/videos/{vid}/heartbeat` | 需登录 | 上报心跳（position, deltaDuration, videoDuration）；满5秒且超30分钟窗口持久化计为有效播放并写 Outbox |
 | | `GET` | `/api/interactions/videos/{vid}/watch-progress` | 登录/匿名 | 登录用户获取断点；游客返回零进度，不读取匿名历史 |
 | | `GET` | `/api/interactions/watch/history` | 需登录 | 分页查询我的观看历史列表 |
 | | `DELETE` | `/api/interactions/watch/history` | 需登录 | 删除单条（带 vid 参数）或清空历史 |
 | **播放页快照** | `GET` | `/api/interactions/videos/{vid}/my-state` | 登录/匿名 | 一站式返回点赞、收藏状态与断点秒数 |
 | **公开统计** | `GET` | `/api/interactions/videos/{vid}/stat` | 开放 | 获取单视频的公开互动计数字段 |
 | | `POST` | `/api/interactions/videos/stats` | 开放/内部 | 批量查询多个视频的公开计数（供视频列表装配） |
-| | `POST` | `/api/interactions/videos/{vid}/share` | 需登录 | 记录视频分享并自增 share_count；未登录返回 `401`，不增加计数 |
+| | `POST` | `/api/interactions/videos/{vid}/share` | 需登录 | 记录视频分享；**必须携带 `Idempotency-Key` Header** 进行持久化防重，自增 share_count 并写 Outbox |
 
 > 此处描述 `interaction-service` 内部校验。网关匿名白名单暂未调整，游客能否经网关访问公开查询接口取决于运行时网关配置；本次不清理既有 `anonymous` 历史数据。
 
 ---
 
-## 5. 核心源码入口索引
+## 5. 领域事件与 Transactional Outbox 发件箱架构
+
+### 5.1 统一事件信封与路由契约
+- **Exchange**：`media.platform.events`（Topic 类型，持久化）
+- **Routing Key**：`interaction.video-action.v1`
+- **信封格式**：
+  ```json
+  {
+    "eventId": "c71a3962d3a9482f9d554a93f77bd660",
+    "eventType": "interaction.video-action",
+    "eventVersion": 1,
+    "traceId": "9fa80540-357d-419b-a0ea-45a7d36d2eb1",
+    "occurredAt": "2026-09-23T07:42:12.123Z",
+    "payload": {
+      "userId": "usr_01J8F3C7E3J4A5B6C7D8E9F0G1",
+      "vid": "cv05hG9Kq2RtLw7XbPmZv4Ya",
+      "action": "LIKE",
+      "state": "ACTIVE"
+    }
+  }
+  ```
+- **动作规范**：
+  - `LIKE`：`ACTIVE`（点赞）/ `INACTIVE`（取消点赞）；
+  - `STAR`：`ACTIVE`（首次收藏生效）/ `INACTIVE`（从所有收藏夹彻底移除）；
+  - `PLAY`：`ACTIVE`（达成单次有效播放门槛）；
+  - `SHARE`：`ACTIVE`（达成单次分享）。
+
+### 5.2 真实动作与防重判定原则
+1. **只记录真实动作变化**：重复点赞、重复收藏、重复取消以及窗口期内重复心跳绝对不生成新事件。
+2. **持久化防重**：播放依赖 `interaction_watch_history.last_valid_play_at` 30分钟窗口持久化判定；分享依赖 `interaction_share_record.idempotency_key` 保证网络重试不重复计数或建事件。
+3. **受控派发与一致性边界**：
+   - 推荐模块尚未就绪时，配置 `interaction.outbox.dispatch-enabled` 默认设为 `false`，确保事件安全落库存储而不引发无路由丢弃或重试耗尽；
+   - 公开计数采用 Redis 缓存与后台异步定时刷盘，**业务事实、发件箱事件与公开计数三者之间为最终一致，不宣称强原子一致**。
+
+### 5.3 全体实体伪删除与防重防刷机制
+1. **全体伪删除（`deleted` 机制）**：
+   - 互动中心全部实体表（`interaction_like`、`interaction_star_folder`、`interaction_star_item`、`interaction_watch_history`、`interaction_share_record`）统一补充 `deleted TINYINT NOT NULL DEFAULT 0` 字段与 `@TableLogic` 标记。
+2. **阻断“通过删除历史重置防重判定”漏洞**：
+   - 用户删除观看历史（单条或清空）时，底层仅将 `deleted` 置为 1，**严格保留 `last_valid_play_at` 历史防刷时间戳**；
+   - 用户再次观看该视频触发心跳时，仓储物理检索发现已伪删除记录并自愈复活（`revive`），将 `deleted` 置回 0，但原 `last_valid_play_at` 依旧生效。若距上次有效播放未达 30 分钟去重窗口，坚决不累加播放量、不发布新 `PLAY` 事件，彻底杜绝“删了重看不停刷播放量”的作弊行为。
+3. **收藏明细唯一索引兼容**：
+   - 收藏明细物理表具有 `UNIQUE KEY uk_folder_vid (folder_id, vid)`。用户取消收藏后再重新收藏时，通过仓储物理检测自愈复活已有记录并刷新 `created_at`，规避了软删除记录在 MySQL 唯一索引下的键冲突问题。
+
+---
+
+## 6. 核心源码入口索引
 
 - **服务启动类**：[`InteractionApplication.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/InteractionApplication.java)
 - **配置文件**：[`application.yml`](../../service/interaction-service/src/main/resources/application.yml)
@@ -200,4 +292,11 @@ CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
 - **心跳服务**：[`WatchHeartbeatApplicationService.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/application/watch/WatchHeartbeatApplicationService.java)
 - **点赞服务**：[`LikeApplicationService.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/application/like/LikeApplicationService.java)
 - **收藏服务**：[`StarApplicationService.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/application/star/StarApplicationService.java)
+- **查询与分享服务**：[`InteractionQueryApplicationService.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/application/query/InteractionQueryApplicationService.java)
+- **事件发布器**：[`InteractionEventPublisher.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/application/event/InteractionEventPublisher.java)
+- **Outbox 基础设施**：
+  - 调度与派发：[`InteractionOutboxDispatcher.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/infrastructure/outbox/dispatch/InteractionOutboxDispatcher.java)、[`InteractionOutboxPublisher.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/infrastructure/outbox/dispatch/InteractionOutboxPublisher.java)
+  - 仓储与 Mapper：[`InteractionOutboxRepository.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/infrastructure/outbox/persistence/InteractionOutboxRepository.java)、[`InteractionOutboxMapper.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/infrastructure/outbox/persistence/InteractionOutboxMapper.java)
+  - 后台补偿扫描：[`InteractionOutboxScanJob.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/infrastructure/scheduling/InteractionOutboxScanJob.java)
 - **聚合控制器**：[`InteractionStatController.java`](../../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionStatController.java)
+
