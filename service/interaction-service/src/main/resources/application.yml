@@ -24,18 +24,46 @@ spring:
     url: ${INTERACTION_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${INTERACTION_DB_USERNAME:media}
     password: ${INTERACTION_DB_PASSWORD:media}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:media}
+    password: ${RABBITMQ_PASSWORD:}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
 
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
 
-# 互动统计计数相关配置
+# 互动统计计数与 Outbox 事件发件箱相关配置
 interaction:
   counter:
     # 脏计数批量异步刷盘的执行间隔周期 (毫秒)，默认 5000ms (5秒)，防止对数据库造成瞬时过高写并发
     flush-rate-ms: ${INTERACTION_COUNTER_FLUSH_RATE_MS:5000}
     # 视频计数在 Redis 中的缓存过期时间，默认 30 分钟 (30m)；访问命中与写操作会自动滑动续期
     cache-ttl: ${INTERACTION_COUNTER_CACHE_TTL:10m}
+  outbox:
+    # 是否启用发件箱事件持久化写入能力
+    enabled: ${INTERACTION_OUTBOX_ENABLED:true}
+    # 是否开启向 RabbitMQ 的正式自动派发 (默认关闭，当下游推荐模块队列就绪后再开放)
+    dispatch-enabled: ${INTERACTION_OUTBOX_DISPATCH_ENABLED:false}
+    # 事务提交后是否毫秒级快速唤醒派发线程
+    fast-dispatch-enabled: ${INTERACTION_OUTBOX_FAST_DISPATCH_ENABLED:false}
+    # 单次批处理扫描与拉取的事件记录上限
+    batch-size: ${INTERACTION_OUTBOX_BATCH_SIZE:100}
+    # 最大允许重试次数，超限则标记为 FAILED 并进入告警出口
+    max-attempts: ${INTERACTION_OUTBOX_MAX_ATTEMPTS:20}
+    # 等待 RabbitMQ Broker Confirm 回执的有界超时时间
+    confirm-timeout: ${INTERACTION_OUTBOX_CONFIRM_TIMEOUT:5s}
+    # 分布式单实例抢占租约锁定时长
+    lease: ${INTERACTION_OUTBOX_LEASE:30s}
+    # 后台定时扫描兜底间隔
+    poll-interval: ${INTERACTION_OUTBOX_POLL_INTERVAL:5s}
+    # 停机等待派发任务优雅终止的最大等待时间
+    shutdown-await: ${INTERACTION_OUTBOX_SHUTDOWN_AWAIT:10s}
 
 management:
   endpoints:
