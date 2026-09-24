@@ -1,5 +1,7 @@
 # 文件模块 · file-service 架构设计与实现文档
 
+> **现行选择：V2 新上传入口已标记为过期，不再作为接入或迁移目标。** V2 暂存直传与当前采用的存储策略不兼容：当前阿里云 OSS 适配器未实现 V2 所需的 checksum PUT 签名。`POST /api/files/direct-upload/v2` 代码仍在，开关默认关闭；标记过期不等于移除路由或修改运行配置。新调用方不要启用该开关，现阶段按 [接口契约](../api.md) 使用现有 V1 直传或普通上传。已有 V2 记录的确认、恢复及暂存对象清理能力继续保留，不得因停止新建而中断存量处理。本页下方 V2 图示和示例仅用于解释历史实现，不代表当前推荐接入方案。
+
 文件模块（`file-service`）是平台底层多媒体资产管理与对象存储（阿里云 OSS）中继协调的核心微服务。负责多模式文件接入（普通表单上传、海量音视频 V1/V2 暂存直传、内部微服务切片自动托管）、存储物理隔离与原子归档（`staging/` ➔ `permanent/`）、防盗链时效流媒体代理（HMAC 签名与 HTTP 304 协商缓存）以及僵死孤儿文件后台自愈清理。
 
 ---
@@ -30,7 +32,7 @@
 - **严禁对外暴露内部接口**：`/api/files/internal/**` 必须在 API 网关层实施严格阻断，仅限微服务间通过 RPC / 内网直接调用。
 
 ### 1.3 参与的全局业务主线导航
-- 核心牵头 [主线 02：大文件/媒体资产 V2 两阶段直传、存储隔离与确认归档](../flows/02-大文件直传与存储归档.md)
+- 历史设计参考：[主线 02：大文件/媒体资产 V2 两阶段直传、存储隔离与确认归档](../flows/02-大文件直传与存储归档.md)（V2 新入口已过期）
 - 支撑服务 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-视频创作提审与分级门禁.md)（转码切片自动托管与提审强探活）
 - 支撑服务 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-前台视频播放分发与网关防刷.md)（防盗链代理拉流）
 
@@ -56,7 +58,7 @@ graph TD
         FileService -->|返回 fileId 201| Client
     end
 
-    subgraph Mode2 ["模式 2: V2 暂存直传大文件 (推荐)"]
+    subgraph Mode2 ["模式 2: V2 暂存直传大文件 (新入口已过期；仅存量兼容)"]
         Client -->|1. POST direct-upload/v2 申请| FileService
         FileService -->|生成带 Checksum 预签名 PUT URL| Client
         Client -->|2. 流式 PUT 直传对象存储| MinIOStaging
@@ -78,7 +80,7 @@ graph TD
 
 ---
 
-## 3. V2 两阶段直传核心执行时序
+## 3. V2 两阶段直传核心执行时序（历史实现，非新接入指引）
 
 ```mermaid
 sequenceDiagram
@@ -125,7 +127,7 @@ sequenceDiagram
 | HTTP 方法 | URI 路径 | 鉴权要求 | 核心处理流与调用链 | 关键响应状态 |
 | :--- | :--- | :--- | :--- | :--- |
 | `POST` | `/api/files` | `requireUser` | 普通小文件表单上传 ➔ 流式计算 SHA-256 ➔ 直写 MinIO 正式区 ➔ 插入 `file_asset` 状态直接置为 `COMPLETED` | `201` 创建成功<br/>`413` 大小超过 20MB 上限 |
-| `POST` | `/api/files/direct-upload/v2` | `requireUser` | 大文件直传 V2 申请 ➔ 绑定声明 SHA-256 ➔ 签发 `staging/` 目录短期 PUT URL（5 分钟有效） ➔ 插入 `PENDING` 资产记录 | `201` 签发成功<br/>`400` MIME 或后缀不合法 |
+| `POST` | `/api/files/direct-upload/v2` | `requireUser`；默认关闭 | **新入口已过期，不再推荐启用**；历史实现：绑定声明 SHA-256，签发 `staging/` 短期 PUT URL，插入 `PENDING` 记录 | 默认关闭返回 `404`；仅启用且存储适配支持时才可能返回 `201` |
 | `POST` | `/api/files/{id}/confirm/v2` | `requireUser` | 客户端直传确认 ➔ CAS 置为 `VERIFYING` ➔ HEAD 探测暂存对象 ➔ MinIO 内部 `CopyObject` ➔ 物理清除 staging ➔ 更新为 `COMPLETED` | `200` 归档成功<br/>`400` 大小/哈希核验失败<br/>`404` 资产不存在 |
 | `GET` | `/api/files/{id}` | `requireUser` | 查询本人文件元数据（大小、MIME、上传状态、SHA-256、归档路径） | `200` 获取成功<br/>`403` 越权查看他人文件<br/>`404` 资产不存在 |
 | `GET` | `/api/files/{id}/download-url` | `requireUser` | 申请私有文件的短期预签名 GET 下载链接（响应头注入 `Cache-Control: no-store`） | `200` 成功返回 downloadUrl |
@@ -137,7 +139,7 @@ sequenceDiagram
 
 ### 4.1 核心请求与响应报文规范
 
-#### 1. 申请 V2 直传通行证 (`POST /api/files/direct-upload/v2`)
+#### 1. 申请 V2 直传通行证（历史示例；新接入请勿使用 `POST /api/files/direct-upload/v2`）
 ```json
 // 请求体
 {

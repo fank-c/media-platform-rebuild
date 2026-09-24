@@ -75,7 +75,7 @@ Authorization: Bearer <accessToken>
 | GET | `/api/users/internal/{accountId}/following-ids` | 内部微服务 | 内部提取关注博主ID列表 |
 | POST | `/api/files` | 普通用户 | 普通上传 |
 | POST | `/api/files/direct-upload` | 普通用户 | V1 直传初始化 |
-| POST | `/api/files/direct-upload/v2` | 普通用户；默认关闭 | V2 直传初始化 |
+| POST | `/api/files/direct-upload/v2` | 普通用户；默认关闭 | V2 直传初始化（新入口已过期，不推荐启用；保留历史路由） |
 | POST | `/api/files/{id}/confirm` | 普通用户 | V1 兼容确认 |
 | POST | `/api/files/{id}/confirm/v2` | 普通用户 | V2 确认 |
 | GET | `/api/files/{id}` | 普通用户 | 本人文件元数据 |
@@ -435,7 +435,7 @@ V1 最小示例：
 {"originName":"example.txt","size":5,"mime":"text/plain"}
 ```
 
-V2 在相同请求中增加真实 `sha256`。不要用任意占位摘要发起实际上传。V2 新初始化默认关闭，只有 `file.direct-upload-v2.enabled=true` 才开放；启动校验还要求 `file.cleanup.enabled=true`。本次未变更这些配置。
+V2 在相同请求中增加真实 `sha256`。**V2 新初始化已标记过期，不再作为新调用方的接入或迁移目标。** 当前阿里云 OSS 适配器未实现 V2 所需的 checksum PUT 签名，与现行存储策略不兼容；请使用现有 V1 直传或普通上传。代码中 V2 路由仍保留，默认关闭；只有 `file.direct-upload-v2.enabled=true` 才开放路由，启动校验还要求 `file.cleanup.enabled=true`，但仅开启开关并不能解决存储适配问题。不要用任意占位摘要发起实际上传。本文仅记录现有接口行为，未修改配置。
 
 成功 HTTP `201`，返回：
 
@@ -454,7 +454,7 @@ PUT 成功后调用相应确认接口。无效参数 `400`；超限 `413`；V2 �
 
 ### 确认：POST /api/files/{id}/confirm 与 POST /api/files/{id}/confirm/v2
 
-无请求正文。通常按初始化版本选择对应接口；兼容 `/confirm` 也会将未完成的 V2 记录转交 V2 确认。V2 专用确认收到非 V2 记录返回 `409`。关闭 V2 新初始化不代表已有 V2 记录不能确认。
+无请求正文。存量记录按初始化版本选择对应接口；兼容 `/confirm` 也会将未完成的 V2 记录转交 V2 确认。V2 专用确认收到非 V2 记录返回 `409`。V2 新初始化标记过期且默认关闭，不代表已有 V2 记录不能确认；恢复与清理仍需保留。
 
 | HTTP 状态 | `data` | 调用方动作 |
 | --- | --- | --- |

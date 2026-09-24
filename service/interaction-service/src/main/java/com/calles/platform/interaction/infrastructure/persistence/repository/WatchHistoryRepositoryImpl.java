@@ -79,7 +79,7 @@ public class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
         if (history == null) {
             return;
         }
-        mapper.updateById(WatchHistoryPO.fromDomain(history));
+        mapper.updateHeartbeat(WatchHistoryPO.fromDomain(history));
     }
 
     @Override
@@ -109,5 +109,13 @@ public class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
         LambdaQueryWrapper<WatchHistoryPO> wrapper = new LambdaQueryWrapper<WatchHistoryPO>()
                 .eq(WatchHistoryPO::getUserId, userId);
         return mapper.delete(wrapper);
+    }
+
+    @Override
+    public int markCompletedIfUncompleted(String id) {
+        if (id == null || id.isBlank()) {
+            return 0;
+        }
+        return mapper.markCompletedIfUncompleted(id);
     }
 }

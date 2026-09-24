@@ -18,6 +18,8 @@ public record VideoActionPayload(
     public static final String ACTION_LIKE = "LIKE";
     public static final String ACTION_STAR = "STAR";
     public static final String ACTION_PLAY = "PLAY";
+    public static final String ACTION_PLAY_START = "PLAY_START";
+    public static final String ACTION_PLAY_COMPLETE = "PLAY_COMPLETE";
     public static final String ACTION_SHARE = "SHARE";
 
     public static final String STATE_ACTIVE = "ACTIVE";
@@ -68,14 +70,32 @@ public record VideoActionPayload(
     }
 
     /**
-     * 构造有效播放达成载荷。
+     * 构造起播行为生效载荷（首次观看或超出 6 小时冷却期后重新访问）。
      *
      * @param userId 播放用户 ID
      * @param vid 视频编码
-     * @return 有效播放载荷
+     * @return 起播载荷
+     */
+    public static VideoActionPayload playStart(String userId, String vid) {
+        return new VideoActionPayload(userId, vid, ACTION_PLAY_START, STATE_ACTIVE);
+    }
+
+    /**
+     * 构造完播达成载荷（播放进度达到 90%）。
+     *
+     * @param userId 完播用户 ID
+     * @param vid 视频编码
+     * @return 完播载荷
+     */
+    public static VideoActionPayload playComplete(String userId, String vid) {
+        return new VideoActionPayload(userId, vid, ACTION_PLAY_COMPLETE, STATE_ACTIVE);
+    }
+
+    /**
+     * 兼容旧版调用，指向起播载荷。
      */
     public static VideoActionPayload play(String userId, String vid) {
-        return new VideoActionPayload(userId, vid, ACTION_PLAY, STATE_ACTIVE);
+        return playStart(userId, vid);
     }
 
     /**

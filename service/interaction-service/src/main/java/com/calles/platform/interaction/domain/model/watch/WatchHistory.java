@@ -105,8 +105,6 @@ public class WatchHistory {
         int safeDelta = Math.max(0, deltaDuration);
         int safeTotal = Math.max(0, videoDuration);
 
-        boolean isCompleted = safeTotal > 0 && safePos >= (int) (safeTotal * COMPLETION_THRESHOLD_RATIO);
-
         return WatchHistory.builder()
                 .id(UUID.randomUUID().toString().replace("-", ""))
                 .userId(userId.trim())
@@ -114,7 +112,7 @@ public class WatchHistory {
                 .lastPosition(safePos)
                 .watchedDuration(safeDelta)
                 .videoDuration(safeTotal)
-                .completed(isCompleted)
+                .completed(false)
                 .firstWatchAt(now)
                 .lastWatchAt(now)
                 .deleted(false)
@@ -122,7 +120,7 @@ public class WatchHistory {
     }
 
     /**
-     * 接收播放心跳：更新播放头断点位置、累计时长与完播标记。
+     * 接收播放心跳：更新播放头断点位置与累计时长（完播状态由外部 CAS 原子保障驱动）。
      *
      * @param position 当前播放头所在秒数
      * @param deltaDuration 距上次心跳增量秒数
@@ -136,25 +134,35 @@ public class WatchHistory {
         if (videoDuration > 0) {
             this.videoDuration = videoDuration;
         }
-        if (!this.completed && this.videoDuration > 0
-                && this.lastPosition >= (int) (this.videoDuration * COMPLETION_THRESHOLD_RATIO)) {
-            this.completed = true;
-        }
         this.lastWatchAt = LocalDateTime.now();
     }
 
     /**
-     * 判断用户再次点进视频起播时，是否应当累加播放量（距离上次活跃观看是否已超过防刷周期）。
+     * 判断当前心跳是否开启了新一轮观看会话（即离开视频已超过防刷冷却周期，如 6 小时）。
      *
      * @param now 当前时间戳
-     * @param repeatWindow 防重复刷量冷却周期 (如 6 小时)
-     * @return true 若已超出冷却周期，应算作新一次播放；false 若处于冷却期内，不加播放量
+     * @param repeatWindow 离开无活动防重周期 (如 6 小时)
+     * @return true 若已超出离开冷却周期，应算作新一次播放；false 若仍在原会话期内
      */
-    public boolean shouldIncrementViewOnPlay(LocalDateTime now, java.time.Duration repeatWindow) {
+    public boolean isNewWatchSession(LocalDateTime now, java.time.Duration repeatWindow) {
         if (this.lastWatchAt == null) {
             return true;
         }
         return this.lastWatchAt.plus(repeatWindow).isBefore(now);
+    }
+
+    /**
+     * 兼容别名方法：判断是否应在新起播/新心跳时累加播放量。
+     */
+    public boolean shouldIncrementViewOnPlay(LocalDateTime now, java.time.Duration repeatWindow) {
+        return isNewWatchSession(now, repeatWindow);
+    }
+
+    /**
+     * 标记当前记录为完播状态。
+     */
+    public void markCompleted() {
+        this.completed = true;
     }
 
     /**
@@ -188,7 +196,7 @@ public class WatchHistory {
         if (videoDuration > 0) {
             this.videoDuration = videoDuration;
         }
-        this.completed = this.videoDuration > 0 && this.lastPosition >= (int) (this.videoDuration * COMPLETION_THRESHOLD_RATIO);
+        this.completed = false;
         this.lastWatchAt = LocalDateTime.now();
     }
 }

@@ -82,4 +82,12 @@ public interface WatchHistoryRepository {
      * @return 影响行数
      */
     int deleteAllByUserId(String userId);
+
+    /**
+     * 原子 CAS 更新完播状态，防止并发心跳重复发布完播事件。
+     *
+     * @param id 主键 ID
+     * @return 实际影响行数（1=成功从未完播转为完播，0=原本已是完播）
+     */
+    int markCompletedIfUncompleted(String id);
 }

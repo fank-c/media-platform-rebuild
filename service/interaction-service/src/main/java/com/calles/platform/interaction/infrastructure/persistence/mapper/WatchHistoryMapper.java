@@ -24,7 +24,23 @@ public interface WatchHistoryMapper extends BaseMapper<WatchHistoryPO> {
     WatchHistoryPO selectPhysicalByUserAndVid(@Param("userId") String userId, @Param("vid") String vid);
 
     /**
-     * 自愈复活已逻辑删除的记录，重置断点、心跳时间并置位 deleted = 0，同时严格保留或更新 last_valid_play_at。
+     * 更新心跳断点与累计时长，严格隔离 completed 字段（完播状态唯一由 markCompletedIfUncompleted 原子维护）。
+     *
+     * @param po 观看历史 PO
+     * @return 影响行数
+     */
+    @Update("""
+            UPDATE interaction_watch_history SET
+                last_position = #{po.lastPosition},
+                watched_duration = #{po.watchedDuration},
+                video_duration = #{po.videoDuration},
+                last_watch_at = #{po.lastWatchAt}
+            WHERE id = #{po.id}
+            """)
+    int updateHeartbeat(@Param("po") WatchHistoryPO po);
+
+    /**
+     * 自愈复活已逻辑删除的记录，重置断点、心跳时间并置位 deleted = 0。
      *
      * @param po 观看历史 PO
      * @return 影响行数
@@ -40,4 +56,13 @@ public interface WatchHistoryMapper extends BaseMapper<WatchHistoryPO> {
             WHERE id = #{po.id}
             """)
     int reviveAndHeartbeat(@Param("po") WatchHistoryPO po);
+
+    /**
+     * 原子 CAS 将完播状态从未完播 (0) 更新为完播 (1)，防止多端并发心跳导致完播事件双发。
+     *
+     * @param id 观看历史记录主键 ID
+     * @return 实际影响行数（仅在从 0 改为 1 时返回 1，若已完播则返回 0）
+     */
+    @Update("UPDATE interaction_watch_history SET completed = 1 WHERE id = #{id} AND completed = 0")
+    int markCompletedIfUncompleted(@Param("id") String id);
 }
