@@ -2,6 +2,7 @@ package com.calles.platform.interaction.infrastructure.persistence.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.calles.platform.interaction.infrastructure.persistence.entity.WatchHistoryPO;
+import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -65,4 +66,27 @@ public interface WatchHistoryMapper extends BaseMapper<WatchHistoryPO> {
      */
     @Update("UPDATE interaction_watch_history SET completed = 1 WHERE id = #{id} AND completed = 0")
     int markCompletedIfUncompleted(@Param("id") String id);
+
+    /**
+     * 原子抢占当前冷却周期的有效播放资格并更新 last_valid_play_at 时间戳。
+     *
+     * <p>仅当从未计入有效播放（last_valid_play_at IS NULL）或距离上次有效播放已超过冷却周期（last_valid_play_at &lt;= cooldownBoundary）时更新成功。</p>
+     *
+     * @param id 观看历史记录主键 ID
+     * @param now 当前时间戳
+     * @param cooldownBoundary 冷却时间边界 (now - repeatWindow)
+     * @return 实际影响行数（1=成功抢占资格，0=仍在冷却期内或已被其他并发请求抢先处理）
+     */
+    @Update("""
+            UPDATE interaction_watch_history
+            SET last_valid_play_at = #{now}
+            WHERE id = #{id}
+              AND (
+                  last_valid_play_at IS NULL
+                  OR last_valid_play_at <= #{cooldownBoundary}
+              )
+            """)
+    int claimValidPlay(@Param("id") String id,
+                       @Param("now") LocalDateTime now,
+                       @Param("cooldownBoundary") LocalDateTime cooldownBoundary);
 }

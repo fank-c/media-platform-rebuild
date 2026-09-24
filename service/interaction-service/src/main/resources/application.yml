@@ -48,6 +48,8 @@ interaction:
   watch:
     # 同一用户针对同一视频防重复累加播放量的冷却周期，默认 6 小时 (6h)
     repeat-window: ${INTERACTION_WATCH_REPEAT_WINDOW:6h}
+    # 判定为单次有效播放的观看时长门槛，默认 5 秒 (5s)
+    valid-play-threshold: ${INTERACTION_WATCH_VALID_PLAY_THRESHOLD:5s}
   outbox:
     # 是否启用发件箱事件持久化写入能力
     enabled: ${INTERACTION_OUTBOX_ENABLED:true}

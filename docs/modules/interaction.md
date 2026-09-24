@@ -226,7 +226,7 @@ CREATE TABLE IF NOT EXISTS `interaction_outbox` (
 | | `GET` | `/api/interactions/star/folders` | 需登录 | 获取当前用户所有收藏夹 |
 | | `POST` | `/api/interactions/star/folders` | 需登录 | 创建自定义收藏夹 |
 | | `GET` | `/api/interactions/star/items` | 需登录 | 分页查询指定收藏夹内的视频 |
-| **观看心跳** | `POST` | `/api/interactions/videos/{vid}/heartbeat` | 需登录 | 上报心跳（position, deltaDuration, videoDuration）；满5秒且超30分钟窗口持久化计为有效播放并写 Outbox |
+| **观看心跳** | `POST` | `/api/interactions/videos/{vid}/heartbeat` | 需登录 | 上报心跳（position, deltaDuration, videoDuration）；累计满5秒且突破冷却周期（默认 6 小时）通过数据库 CAS 抢占计为有效播放并写 Outbox |
 | | `GET` | `/api/interactions/videos/{vid}/watch-progress` | 登录/匿名 | 登录用户获取断点；游客返回零进度，不读取匿名历史 |
 | | `GET` | `/api/interactions/watch/history` | 需登录 | 分页查询我的观看历史列表 |
 | | `DELETE` | `/api/interactions/watch/history` | 需登录 | 删除单条（带 vid 参数）或清空历史 |
@@ -268,7 +268,7 @@ CREATE TABLE IF NOT EXISTS `interaction_outbox` (
 
 ### 5.2 真实动作与防重判定原则
 1. **只记录真实动作变化**：重复点赞、重复收藏、重复取消以及窗口期内重复心跳绝对不生成新事件。
-2. **持久化防重**：播放依赖 `interaction_watch_history.last_valid_play_at` 30分钟窗口持久化判定；分享依赖 `interaction_share_record.idempotency_key` 保证网络重试不重复计数或建事件。
+2. **持久化防重与可重复播放**：播放依赖 `interaction_watch_history.last_valid_play_at` 冷却周期（默认 6 小时）与数据库行级 CAS 原子抢占（`last_valid_play_at IS NULL OR last_valid_play_at <= (now - 6h)`）；分享依赖 `interaction_share_record.idempotency_key` 保证网络重试不重复计数或建事件。
 3. **受控派发与一致性边界**：
    - 推荐模块尚未就绪时，配置 `interaction.outbox.dispatch-enabled` 默认设为 `false`，确保事件安全落库存储而不引发无路由丢弃或重试耗尽；
    - 公开计数采用 Redis 缓存与后台异步定时刷盘，**业务事实、发件箱事件与公开计数三者之间为最终一致，不宣称强原子一致**。
@@ -278,7 +278,7 @@ CREATE TABLE IF NOT EXISTS `interaction_outbox` (
    - 互动中心全部实体表（`interaction_like`、`interaction_star_folder`、`interaction_star_item`、`interaction_watch_history`、`interaction_share_record`）统一补充 `deleted TINYINT NOT NULL DEFAULT 0` 字段与 `@TableLogic` 标记。
 2. **阻断“通过删除历史重置防重判定”漏洞**：
    - 用户删除观看历史（单条或清空）时，底层仅将 `deleted` 置为 1，**严格保留 `last_valid_play_at` 历史防刷时间戳**；
-   - 用户再次观看该视频触发心跳时，仓储物理检索发现已伪删除记录并自愈复活（`revive`），将 `deleted` 置回 0，但原 `last_valid_play_at` 依旧生效。若距上次有效播放未达 30 分钟去重窗口，坚决不累加播放量、不发布新 `PLAY` 事件，彻底杜绝“删了重看不停刷播放量”的作弊行为。
+   - 用户再次观看该视频触发心跳时，仓储物理检索发现已伪删除记录并自愈复活（`revive`），将 `deleted` 置回 0，但原 `last_valid_play_at` 依旧生效。若距上次有效播放未达 6 小时冷却周期，CAS 抢占返回 0，坚决不累加播放量、不发布新 `PLAY` 事件，彻底杜绝“删了重看不停刷播放量”的作弊行为。超出 6 小时后则可再次抢占成功并产生新的有效播放事件。
 3. **收藏明细唯一索引兼容**：
    - 收藏明细物理表具有 `UNIQUE KEY uk_folder_vid (folder_id, vid)`。用户取消收藏后再重新收藏时，通过仓储物理检测自愈复活已有记录并刷新 `created_at`，规避了软删除记录在 MySQL 唯一索引下的键冲突问题。
 

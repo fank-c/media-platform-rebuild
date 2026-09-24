@@ -92,10 +92,14 @@ public record VideoActionPayload(
     }
 
     /**
-     * 兼容旧版调用，指向起播载荷。
+     * 构造有效播放达成载荷（满足5秒有效观看门槛且突破冷却窗口的有效播放）。
+     *
+     * @param userId 播放用户 ID
+     * @param vid 视频编码
+     * @return 有效播放载荷
      */
     public static VideoActionPayload play(String userId, String vid) {
-        return playStart(userId, vid);
+        return new VideoActionPayload(userId, vid, ACTION_PLAY, STATE_ACTIVE);
     }
 
     /**

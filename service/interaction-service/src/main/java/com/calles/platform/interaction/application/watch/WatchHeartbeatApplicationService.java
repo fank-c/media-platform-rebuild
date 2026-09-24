@@ -20,8 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>核心职责：
  * <ul>
- *   <li>统一心跳驱动：前端全程仅需周期调用心跳接口；初次访问自动建立历史并累加播放量，离开超过防刷周期（默认 6 小时）再次访问自动计入新播放；</li>
- *   <li>进度与完播维护：持续更新播放头断点位置；进度达到 90% 时通过数据库 CAS 原子置位，严格单次触发完播事件；</li>
+ *   <li>观看事实维护：持续更新播放头断点位置（last_position）、累计有效时长（watched_duration）与心跳时间（last_watch_at）；</li>
+ *   <li>可重复有效播放判定：累计有效观看时长达标（默认 5 秒）后，通过数据库行级 CAS 原子抢占本冷却周期（默认 6 小时）的播放资格，杜绝并发与重复刷量；</li>
+ *   <li>完播原子置位：进度达到 90% 时通过数据库 CAS 原子置位，严格单次触发完播事件；</li>
  *   <li>历史查询与清理：提供断点查询、历史分页与删除。</li>
  * </ul>
  * </p>
@@ -34,26 +35,29 @@ public class WatchHeartbeatApplicationService {
     private final VideoCounterRepository counterRepository;
     private final InteractionEventPublisher eventPublisher;
     private final Duration repeatWindow;
+    private final Duration validPlayThreshold;
 
     public WatchHeartbeatApplicationService(
             WatchHistoryRepository historyRepository,
             VideoCounterRepository counterRepository,
             InteractionEventPublisher eventPublisher,
-            @Value("${interaction.watch.repeat-window:6h}") Duration repeatWindow) {
+            @Value("${interaction.watch.repeat-window:6h}") Duration repeatWindow,
+            @Value("${interaction.watch.valid-play-threshold:5s}") Duration validPlayThreshold) {
         this.historyRepository = historyRepository;
         this.counterRepository = counterRepository;
         this.eventPublisher = eventPublisher;
         this.repeatWindow = repeatWindow != null ? repeatWindow : Duration.ofHours(6);
+        this.validPlayThreshold = validPlayThreshold != null ? validPlayThreshold : Duration.ofSeconds(5);
     }
 
     /**
      * 处理播放端周期心跳上报（全生命周期统一入口）。
      *
-     * <p>处理逻辑：
-     * 1. 若无历史记录：新建历史，自增播放量，发布 PLAY_START 起播事件；
-     * 2. 若存在历史且离开超过冷却期（默认 6 小时）：自增播放量，发布 PLAY_START 起播事件；
-     * 3. 正常更新断点进度（last_position）与活跃时间（last_watch_at）；
-     * 4. 进度达 90% 时执行 CAS 原子置位，确保 PLAY_COMPLETE 完播事件多端并发下仅发一次。
+     * <p>处理流程：
+     * 1. 查询 user_id + vid 的物理观看历史（含已伪删除记录）；
+     * 2. 若不存在：新建记录，达标直接记录时间戳并处理首次有效播放；若并发冲突则捕获 DuplicateKeyException 转入已有记录流程；
+     * 3. 若存在：拆分为两步——步骤一更新观看事实；步骤二达标后执行数据库 CAS 抢占播放资格（成功则计数+1写Outbox，失败则不计数不写事件）；
+     * 4. 进度达 90% 完播时通过 CAS 原子置位触发单次完播事件。
      * </p>
      *
      * @param vid 视频业务公开短码
@@ -71,15 +75,24 @@ public class WatchHeartbeatApplicationService {
         WatchHistory history;
 
         if (opt.isEmpty()) {
-            // 首次观看该视频：建立记录，累加播放量，发布 PLAY_START 事件
+            // 步骤 1: 首次观看该视频，初始化观看历史实体
             history = WatchHistory.create(userId, vid, position, deltaDuration, videoDuration);
+            boolean initialMetThreshold = history.getWatchedDuration() >= validPlayThreshold.toSeconds();
+            if (initialMetThreshold) {
+                // 首次上报即达标时，直接记录首次有效播放防重时间戳
+                history.markValidPlay(now);
+            }
+
             try {
                 historyRepository.save(history);
-                counterRepository.incrementViewCount(vid, 1L);
-                eventPublisher.publishVideoAction(VideoActionPayload.playStart(userId, vid));
-                log.info("用户 [{}] 首次观看视频 [{}]（新建历史），播放量 +1 并发布起播事件", userId, vid);
+                if (initialMetThreshold) {
+                    // 步骤 1.1: 成功插入且首次达标，累加播放量并生成标准 PLAY Outbox 事件
+                    counterRepository.incrementViewCount(vid, 1L);
+                    eventPublisher.publishVideoAction(VideoActionPayload.play(userId, vid));
+                    log.info("用户 [{}] 首次观看视频 [{}]（新建历史且达标），播放量 +1 并发布 PLAY 事件", userId, vid);
+                }
             } catch (DuplicateKeyException e) {
-                // 多端（如手机电脑）同毫秒首次心跳并发插入时的冲突兜底：重新读取并进入已有历史分支
+                // 步骤 1.2: 多端同毫秒首次心跳并发插入时的冲突兜底：捕获唯一键异常，透明转入已有历史更新分支
                 log.debug("捕获到多端同毫秒首次心跳并发插入冲突，自动自愈转入更新分支: userId={}, vid={}", userId, vid);
                 history = historyRepository.findPhysicalByUserAndVid(userId, vid)
                         .orElseThrow(() -> e);
@@ -90,7 +103,7 @@ public class WatchHeartbeatApplicationService {
             updateExistingHistory(history, position, deltaDuration, videoDuration, now);
         }
 
-        // 完播判定：达到 90% 阈值且尚未标记完播时，采用数据库 CAS 原子防重置位
+        // 步骤 3: 完播判定：达到 90% 阈值且尚未标记完播时，采用数据库 CAS 原子防重置位
         if (videoDuration > 0 && position >= (int) (videoDuration * WatchHistory.COMPLETION_THRESHOLD_RATIO)) {
             if (!history.isCompleted()) {
                 int affected = historyRepository.markCompletedIfUncompleted(history.getId());
@@ -117,15 +130,12 @@ public class WatchHeartbeatApplicationService {
         return processHeartbeat(vid, userId, 0, 0, 0);
     }
 
+    /**
+     * 已有观看历史的处理逻辑：严格解耦“观看事实更新”与“播放资格 CAS 抢占”。
+     */
     private void updateExistingHistory(WatchHistory history, int position, int deltaDuration,
                                        int videoDuration, LocalDateTime now) {
-        // 检查离开该视频是否已超过防刷冷却期
-        if (history.isNewWatchSession(now, repeatWindow)) {
-            counterRepository.incrementViewCount(history.getVid(), 1L);
-            eventPublisher.publishVideoAction(VideoActionPayload.playStart(history.getUserId(), history.getVid()));
-            log.info("用户 [{}] 离开视频 [{}] 超过冷却期重新访问，播放量 +1 并发布起播事件", history.getUserId(), history.getVid());
-        }
-
+        // 步骤 1: 更新观看事实（断点位置、累计时长与活跃时间），严格不修改播放资格时间戳
         if (history.isDeleted()) {
             history.revive(position, deltaDuration, videoDuration);
             historyRepository.revive(history);
@@ -133,6 +143,45 @@ public class WatchHeartbeatApplicationService {
             history.recordHeartbeat(position, deltaDuration, videoDuration);
             historyRepository.update(history);
         }
+
+        // 步骤 2: 尝试抢占有效播放资格
+        // 为什么先判断有效观看阈值：必须确保用户实际观看时长达到业务门槛（默认 5 秒），避免用户刚点进即关闭造成虚假播放计费
+        long thresholdSeconds = validPlayThreshold.toSeconds();
+        if (history.getWatchedDuration() >= thresholdSeconds) {
+            // 为什么必须通过数据库条件更新：依赖数据库行级锁排他判断冷却边界，杜绝并发心跳造成重复双发
+            if (tryClaimValidPlay(history, now)) {
+                // CAS 成功：成功抢到本周期有效播放资格，推进实体状态、累加播放量并生成标准 PLAY 事件
+                history.markValidPlay(now);
+                counterRepository.incrementViewCount(history.getVid(), 1L);
+                eventPublisher.publishVideoAction(VideoActionPayload.play(history.getUserId(), history.getVid()));
+                log.info("用户 [{}] 针对视频 [{}] 达成有效播放 (CAS抢占成功)，播放量 +1 并发布 PLAY 事件",
+                        history.getUserId(), history.getVid());
+            } else {
+                // CAS 失败：仍在防刷冷却期或已被并发心跳抢占，静默跳过计数与事件，杜绝虚假刷量
+                log.debug("用户 [{}] 针对视频 [{}] 心跳已达有效阈值，但处于冷却期或被并发抢占，跳过重复计数",
+                        history.getUserId(), history.getVid());
+            }
+        }
+    }
+
+    /**
+     * 尝试原子抢占当前冷却周期的有效播放资格。
+     *
+     * <p>为什么必须通过数据库条件更新：
+     * 高并发心跳、多端同看或网络重试时，多个请求可能同时查询到过期或未标记的防重时间戳。
+     * 只有依赖数据库行级锁排他执行 {@code claimValidPlay}，才能确保同一个冷却周期内仅有单个请求抢占成功。
+     * 为什么 CAS 失败时不能增加计数或写事件：
+     * CAS 返回 0 说明当前仍处于防刷冷却期，或已被并发到达的其他线程先行抢占；此时强行计数将导致虚假刷量与下游事件风暴。
+     * </p>
+     *
+     * @param history 观看历史实体
+     * @param now 当前时间戳
+     * @return true 若成功抢到本周期有效播放资格，false 若在冷却期内或已被其他线程抢占
+     */
+    private boolean tryClaimValidPlay(WatchHistory history, LocalDateTime now) {
+        LocalDateTime cooldownBoundary = now.minus(this.repeatWindow);
+        int affected = historyRepository.claimValidPlay(history.getId(), now, cooldownBoundary);
+        return affected > 0;
     }
 
     /**

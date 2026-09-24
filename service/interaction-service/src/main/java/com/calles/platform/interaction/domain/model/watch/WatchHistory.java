@@ -49,6 +49,9 @@ public class WatchHistory {
     /** 最近一次活跃观看时间（起播或心跳上报时间）。 */
     private LocalDateTime lastWatchAt;
 
+    /** 最近一次计入有效播放并生成播放事件的时间戳。 */
+    private LocalDateTime lastValidPlayAt;
+
     /** 是否已逻辑删除：true=已删除, false=正常有效。 */
     private boolean deleted;
 
@@ -163,6 +166,15 @@ public class WatchHistory {
      */
     public void markCompleted() {
         this.completed = true;
+    }
+
+    /**
+     * 标记本次达成有效播放并更新持久化防重时间戳。
+     *
+     * @param now 当前时间戳
+     */
+    public void markValidPlay(LocalDateTime now) {
+        this.lastValidPlayAt = now;
     }
 
     /**

@@ -5,6 +5,7 @@ import com.calles.platform.interaction.domain.model.watch.WatchHistory;
 import com.calles.platform.interaction.domain.repository.WatchHistoryRepository;
 import com.calles.platform.interaction.infrastructure.persistence.entity.WatchHistoryPO;
 import com.calles.platform.interaction.infrastructure.persistence.mapper.WatchHistoryMapper;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -117,5 +118,13 @@ public class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
             return 0;
         }
         return mapper.markCompletedIfUncompleted(id);
+    }
+
+    @Override
+    public int claimValidPlay(String id, LocalDateTime now, LocalDateTime cooldownBoundary) {
+        if (id == null || id.isBlank() || now == null || cooldownBoundary == null) {
+            return 0;
+        }
+        return mapper.claimValidPlay(id, now, cooldownBoundary);
     }
 }
