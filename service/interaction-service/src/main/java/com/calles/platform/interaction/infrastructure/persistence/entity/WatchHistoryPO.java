@@ -41,6 +41,18 @@ public class WatchHistoryPO {
     @TableField("watched_duration")
     private Integer watchedDuration;
 
+    /** 当前观看会话累计有效观看时长 (秒)。 */
+    @TableField("session_watched_duration")
+    private Integer sessionWatchedDuration;
+
+    /** 当前会话是否已经发送播放事件：1=已发送, 0=未发送。 */
+    @TableField("session_play_emitted")
+    private Integer sessionPlayEmitted;
+
+    /** 上一会话达到 30% 门槛从而允许下一次会话触发播放事件：1=具备资格, 0=不具备。 */
+    @TableField("eligible_for_next_play")
+    private Integer eligibleForNextPlay;
+
     /** 视频总时长 (秒)。 */
     @TableField("video_duration")
     private Integer videoDuration;
@@ -73,6 +85,9 @@ public class WatchHistoryPO {
                 .vid(this.vid)
                 .lastPosition(this.lastPosition != null ? this.lastPosition : 0)
                 .watchedDuration(this.watchedDuration != null ? this.watchedDuration : 0)
+                .sessionWatchedDuration(this.sessionWatchedDuration != null ? this.sessionWatchedDuration : 0)
+                .sessionPlayEmitted(this.sessionPlayEmitted != null && this.sessionPlayEmitted == 1)
+                .eligibleForNextPlay(this.eligibleForNextPlay != null && this.eligibleForNextPlay == 1)
                 .videoDuration(this.videoDuration != null ? this.videoDuration : 0)
                 .completed(this.completed != null && this.completed == 1)
                 .firstWatchAt(this.firstWatchAt)
@@ -92,6 +107,9 @@ public class WatchHistoryPO {
                 .vid(domain.getVid())
                 .lastPosition(domain.getLastPosition())
                 .watchedDuration(domain.getWatchedDuration())
+                .sessionWatchedDuration(domain.getSessionWatchedDuration())
+                .sessionPlayEmitted(domain.isSessionPlayEmitted() ? 1 : 0)
+                .eligibleForNextPlay(domain.isEligibleForNextPlay() ? 1 : 0)
                 .videoDuration(domain.getVideoDuration())
                 .completed(domain.isCompleted() ? 1 : 0)
                 .firstWatchAt(domain.getFirstWatchAt())

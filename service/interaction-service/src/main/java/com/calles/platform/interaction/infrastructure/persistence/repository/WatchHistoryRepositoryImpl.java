@@ -121,6 +121,22 @@ public class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
     }
 
     @Override
+    public int claimInitialPlay(String id, LocalDateTime now, int validThreshold) {
+        if (id == null || id.isBlank() || now == null || validThreshold <= 0) {
+            return 0;
+        }
+        return mapper.claimInitialPlay(id, now, validThreshold);
+    }
+
+    @Override
+    public int claimRepeatPlay(String id, LocalDateTime now, LocalDateTime cooldownBoundary, int validThreshold) {
+        if (id == null || id.isBlank() || now == null || cooldownBoundary == null || validThreshold <= 0) {
+            return 0;
+        }
+        return mapper.claimRepeatPlay(id, now, cooldownBoundary, validThreshold);
+    }
+
+    @Override
     public int claimValidPlay(String id, LocalDateTime now, LocalDateTime cooldownBoundary) {
         if (id == null || id.isBlank() || now == null || cooldownBoundary == null) {
             return 0;

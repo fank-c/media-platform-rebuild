@@ -162,6 +162,9 @@ CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
     `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
     `last_position` INT NOT NULL DEFAULT 0 COMMENT '上次播放头进度 (秒)，用于断点续播',
     `watched_duration` INT NOT NULL DEFAULT 0 COMMENT '累计有效观看总时长 (秒)',
+    `session_watched_duration` INT NOT NULL DEFAULT 0 COMMENT '当前观看会话累计有效观看时长 (秒)',
+    `session_play_emitted` TINYINT NOT NULL DEFAULT 0 COMMENT '当前会话是否已经发送播放事件: 0=否, 1=是',
+    `eligible_for_next_play` TINYINT NOT NULL DEFAULT 0 COMMENT '上一会话达到30%门槛从而允许下一次会话触发播放事件: 0=否, 1=是',
     `video_duration` INT NOT NULL DEFAULT 0 COMMENT '视频总时长 (秒)',
     `completed` TINYINT NOT NULL DEFAULT 0 COMMENT '是否完播: 1=是, 0=否',
     `first_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '首次观看时间',
@@ -268,7 +271,13 @@ CREATE TABLE IF NOT EXISTS `interaction_outbox` (
 
 ### 5.2 真实动作与防重判定原则
 1. **只记录真实动作变化**：重复点赞、重复收藏、重复取消以及窗口期内重复心跳绝对不生成新事件。
-2. **持久化防重与可重复播放**：播放依赖 `interaction_watch_history.last_valid_play_at` 冷却周期（默认 6 小时）与数据库行级 CAS 原子抢占（`last_valid_play_at IS NULL OR last_valid_play_at <= (now - 6h)`）；分享依赖 `interaction_share_record.idempotency_key` 保证网络重试不重复计数或建事件。
+2. **持久化防重、多会话隔离与可重复播放机制**：
+   - **会话超时与隔离（`session-timeout`，默认 30 分钟）**：以 `last_watch_at` 为基准，无心跳超过 30 分钟判定为结束旧会话并开启新会话。新会话开始时独立重置会话时长 `session_watched_duration = 0` 与事件发送标记 `session_play_emitted = 0`，但全局累计 `watched_duration` 持续累加；
+   - **单会话最多发送一次 PLAY**：当前会话内有效观看累计达到 5 秒（`valid-play-threshold`）且 `session_play_emitted = 0` 时触发 PLAY 事件，随后 `session_play_emitted` 置为 1，同一会话内即使继续播放至 80% 也不再重复发送；
+   - **30% 消费门槛与再次播放资格（`eligible_for_next_play`）**：当前会话累计有效观看达到视频时长的 30% 时，将 `eligible_for_next_play` 标记为 1，为下一次新会话开启再次播放资格（达到 30% 本身不发送新的 PLAY）；
+   - **再次播放事件触发条件**：必须同时满足：① 上一观看会话达到 30%（`eligible_for_next_play = 1`）；② 当前已进入新会话（超时或重新打开）；③ 距离上次有效播放已超出冷却周期（`repeat-window`，默认 6 小时）；④ 新会话累计有效观看达到 5 秒；
+   - **双 CAS 语义防并发**：仓储层拆分为 `claimInitialPlay`（首次播放）与 `claimRepeatPlay`（再次播放）两条清晰 CAS 语句，结合行级锁原子防护，彻底避免用户每隔冷却周期只看 5 秒就持续重复刷量与污染推荐画像；
+   - **分享防重**：分享依赖 `interaction_share_record.idempotency_key` 保证网络重试不重复计数或建事件。
 3. **受控派发与一致性边界**：
    - 推荐模块尚未就绪时，配置 `interaction.outbox.dispatch-enabled` 默认设为 `false`，确保事件安全落库存储而不引发无路由丢弃或重试耗尽；
    - 公开计数采用 Redis 缓存与后台异步定时刷盘，**业务事实、发件箱事件与公开计数三者之间为最终一致，不宣称强原子一致**。

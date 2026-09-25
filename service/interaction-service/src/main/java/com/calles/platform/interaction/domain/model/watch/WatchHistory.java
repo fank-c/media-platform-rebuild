@@ -22,6 +22,9 @@ public class WatchHistory {
     /** 完播判定阈值比例：播放头达到总时长的 90% 视为完播。 */
     public static final double COMPLETION_THRESHOLD_RATIO = 0.90;
 
+    /** 下次播放事件资格判定门槛比例：会话有效观看达到总时长的 30% 视为具备资格。 */
+    public static final double QUALIFIED_THRESHOLD_RATIO = 0.30;
+
     /** 观看记录主键 ID (UUID)。 */
     private String id;
 
@@ -34,8 +37,17 @@ public class WatchHistory {
     /** 上次播放进度断点位置 (秒)，用于断点续播。 */
     private int lastPosition;
 
-    /** 累计有效观看时长 (秒)。 */
+    /** 历史累计有效观看总时长 (秒)。 */
     private int watchedDuration;
+
+    /** 当前观看会话累计有效观看时长 (秒)。 */
+    private int sessionWatchedDuration;
+
+    /** 当前会话是否已经发送播放事件：true=已发送, false=未发送。 */
+    private boolean sessionPlayEmitted;
+
+    /** 上一会话是否达到 30% 消费门槛，允许下一次会话在满足条件时触发播放事件。 */
+    private boolean eligibleForNextPlay;
 
     /** 视频总时长 (秒)。 */
     private int videoDuration;
@@ -76,6 +88,9 @@ public class WatchHistory {
                 .vid(vid.trim())
                 .lastPosition(0)
                 .watchedDuration(0)
+                .sessionWatchedDuration(0)
+                .sessionPlayEmitted(false)
+                .eligibleForNextPlay(false)
                 .videoDuration(0)
                 .completed(false)
                 .firstWatchAt(now)
@@ -114,6 +129,9 @@ public class WatchHistory {
                 .vid(vid.trim())
                 .lastPosition(safePos)
                 .watchedDuration(safeDelta)
+                .sessionWatchedDuration(safeDelta)
+                .sessionPlayEmitted(false)
+                .eligibleForNextPlay(false)
                 .videoDuration(safeTotal)
                 .completed(false)
                 .firstWatchAt(now)
@@ -133,6 +151,7 @@ public class WatchHistory {
         this.lastPosition = Math.max(0, position);
         if (deltaDuration > 0) {
             this.watchedDuration += deltaDuration;
+            this.sessionWatchedDuration += deltaDuration;
         }
         if (videoDuration > 0) {
             this.videoDuration = videoDuration;
@@ -141,24 +160,28 @@ public class WatchHistory {
     }
 
     /**
-     * 判断当前心跳是否开启了新一轮观看会话（即离开视频已超过防刷冷却周期，如 6 小时）。
+     * 判断当前心跳是否开启了新一轮观看会话（即离开视频无心跳已超过会话超时时间，如 30 分钟）。
      *
      * @param now 当前时间戳
-     * @param repeatWindow 离开无活动防重周期 (如 6 小时)
-     * @return true 若已超出离开冷却周期，应算作新一次播放；false 若仍在原会话期内
+     * @param sessionTimeout 会话超时时长 (如 30 分钟)
+     * @return true 若已超出离开超时时间，应算作新观看会话；false 若仍在原会话期内
      */
-    public boolean isNewWatchSession(LocalDateTime now, java.time.Duration repeatWindow) {
+    public boolean isNewWatchSession(LocalDateTime now, java.time.Duration sessionTimeout) {
         if (this.lastWatchAt == null) {
             return true;
         }
-        return this.lastWatchAt.plus(repeatWindow).isBefore(now);
+        return this.lastWatchAt.plus(sessionTimeout).isBefore(now);
     }
 
     /**
-     * 兼容别名方法：判断是否应在新起播/新心跳时累加播放量。
+     * 开启新观看会话：重置当前会话的累计时长与事件发送状态，并按上一会话判定继承下一次播放资格。
+     *
+     * @param previousSessionQualified 上一会话是否达到 30% 消费门槛赋予下一次播放资格
      */
-    public boolean shouldIncrementViewOnPlay(LocalDateTime now, java.time.Duration repeatWindow) {
-        return isNewWatchSession(now, repeatWindow);
+    public void startNewSession(boolean previousSessionQualified) {
+        this.eligibleForNextPlay = previousSessionQualified;
+        this.sessionWatchedDuration = 0;
+        this.sessionPlayEmitted = false;
     }
 
     /**
@@ -175,6 +198,29 @@ public class WatchHistory {
      */
     public void markValidPlay(LocalDateTime now) {
         this.lastValidPlayAt = now;
+    }
+
+    /**
+     * 标记当前会话已成功发送播放事件。
+     */
+    public void markSessionPlayEmitted() {
+        this.sessionPlayEmitted = true;
+    }
+
+    /**
+     * 标记当前会话达到 30% 消费门槛，允许下一次会话在满足条件时触发播放事件。
+     */
+    public void markEligibleForNextPlay() {
+        this.eligibleForNextPlay = true;
+    }
+
+    /**
+     * 显式设置下一次播放资格。
+     *
+     * @param eligible 是否具备资格
+     */
+    public void setEligibleForNextPlay(boolean eligible) {
+        this.eligibleForNextPlay = eligible;
     }
 
     /**
@@ -195,7 +241,7 @@ public class WatchHistory {
     }
 
     /**
-     * 再次播放时自愈复活已逻辑删除的记录。
+     * 再次播放时自愈复活已逻辑删除的记录：持续累计历史时长，并在新会话内记录当前心跳增量。
      *
      * @param position 当前播放头所在秒数
      * @param deltaDuration 增量时长 (秒)
@@ -204,7 +250,9 @@ public class WatchHistory {
     public void revive(int position, int deltaDuration, int videoDuration) {
         this.deleted = false;
         this.lastPosition = Math.max(0, position);
-        this.watchedDuration = Math.max(0, deltaDuration);
+        int safeDelta = Math.max(0, deltaDuration);
+        this.watchedDuration += safeDelta;
+        this.sessionWatchedDuration += safeDelta;
         if (videoDuration > 0) {
             this.videoDuration = videoDuration;
         }

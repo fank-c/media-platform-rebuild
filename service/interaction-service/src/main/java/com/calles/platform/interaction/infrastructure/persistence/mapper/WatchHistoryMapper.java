@@ -34,6 +34,9 @@ public interface WatchHistoryMapper extends BaseMapper<WatchHistoryPO> {
             UPDATE interaction_watch_history SET
                 last_position = #{po.lastPosition},
                 watched_duration = #{po.watchedDuration},
+                session_watched_duration = #{po.sessionWatchedDuration},
+                session_play_emitted = #{po.sessionPlayEmitted},
+                eligible_for_next_play = #{po.eligibleForNextPlay},
                 video_duration = #{po.videoDuration},
                 last_watch_at = #{po.lastWatchAt}
             WHERE id = #{po.id}
@@ -50,6 +53,9 @@ public interface WatchHistoryMapper extends BaseMapper<WatchHistoryPO> {
             UPDATE interaction_watch_history SET
                 last_position = #{po.lastPosition},
                 watched_duration = #{po.watchedDuration},
+                session_watched_duration = #{po.sessionWatchedDuration},
+                session_play_emitted = #{po.sessionPlayEmitted},
+                eligible_for_next_play = #{po.eligibleForNextPlay},
                 video_duration = #{po.videoDuration},
                 completed = #{po.completed},
                 last_watch_at = #{po.lastWatchAt},
@@ -68,18 +74,62 @@ public interface WatchHistoryMapper extends BaseMapper<WatchHistoryPO> {
     int markCompletedIfUncompleted(@Param("id") String id);
 
     /**
-     * 原子抢占当前冷却周期的有效播放资格并更新 last_valid_play_at 时间戳。
+     * 原子抢占首次有效播放资格并更新 last_valid_play_at 时间戳与 session_play_emitted 标记。
      *
-     * <p>仅当从未计入有效播放（last_valid_play_at IS NULL）或距离上次有效播放已超过冷却周期（last_valid_play_at &lt;= cooldownBoundary）时更新成功。</p>
+     * <p>仅当会话未发送过事件 (session_play_emitted=0)、会话观看时长达到门槛且此前从未计入有效播放 (last_valid_play_at IS NULL) 时更新成功。</p>
+     *
+     * @param id 观看历史记录主键 ID
+     * @param now 当前时间戳
+     * @param validThreshold 达成有效播放所需的当前会话最低有效观看秒数
+     * @return 实际影响行数（1=成功抢占，0=条件不符或已被抢占）
+     */
+    @Update("""
+            UPDATE interaction_watch_history
+            SET last_valid_play_at = #{now},
+                session_play_emitted = 1
+            WHERE id = #{id}
+              AND session_play_emitted = 0
+              AND session_watched_duration >= #{validThreshold}
+              AND last_valid_play_at IS NULL
+            """)
+    int claimInitialPlay(@Param("id") String id,
+                         @Param("now") LocalDateTime now,
+                         @Param("validThreshold") int validThreshold);
+
+    /**
+     * 原子抢占再次有效播放资格并更新 last_valid_play_at 时间戳与 session_play_emitted 标记。
+     *
+     * <p>仅当会话未发送过事件 (session_play_emitted=0)、会话时长达到门槛、上一会话达到 30% 具备资格 (eligible_for_next_play=1) 且距上次播放已超出冷却周期时更新成功。</p>
      *
      * @param id 观看历史记录主键 ID
      * @param now 当前时间戳
      * @param cooldownBoundary 冷却时间边界 (now - repeatWindow)
-     * @return 实际影响行数（1=成功抢占资格，0=仍在冷却期内或已被其他并发请求抢先处理）
+     * @param validThreshold 达成有效播放所需的当前会话最低有效观看秒数
+     * @return 实际影响行数（1=成功抢占，0=仍在冷却期、资格不符或已被抢占）
      */
     @Update("""
             UPDATE interaction_watch_history
-            SET last_valid_play_at = #{now}
+            SET last_valid_play_at = #{now},
+                session_play_emitted = 1
+            WHERE id = #{id}
+              AND session_play_emitted = 0
+              AND session_watched_duration >= #{validThreshold}
+              AND eligible_for_next_play = 1
+              AND last_valid_play_at IS NOT NULL
+              AND last_valid_play_at <= #{cooldownBoundary}
+            """)
+    int claimRepeatPlay(@Param("id") String id,
+                        @Param("now") LocalDateTime now,
+                        @Param("cooldownBoundary") LocalDateTime cooldownBoundary,
+                        @Param("validThreshold") int validThreshold);
+
+    /**
+     * 兼容旧版原子抢占当前冷却周期的有效播放资格接口。
+     */
+    @Update("""
+            UPDATE interaction_watch_history
+            SET last_valid_play_at = #{now},
+                session_play_emitted = 1
             WHERE id = #{id}
               AND (
                   last_valid_play_at IS NULL

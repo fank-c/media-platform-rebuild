@@ -93,6 +93,27 @@ public interface WatchHistoryRepository {
     int markCompletedIfUncompleted(String id);
 
     /**
+     * 原子抢占首次有效播放资格并更新 last_valid_play_at 时间戳与 session_play_emitted 标记。
+     *
+     * @param id 观看历史记录主键 ID
+     * @param now 当前时间戳
+     * @param validThreshold 达成有效播放所需的当前会话最低有效观看秒数
+     * @return 实际影响行数（1=成功抢占，0=条件不符或已被抢占）
+     */
+    int claimInitialPlay(String id, LocalDateTime now, int validThreshold);
+
+    /**
+     * 原子抢占再次有效播放资格并更新 last_valid_play_at 时间戳与 session_play_emitted 标记。
+     *
+     * @param id 观看历史记录主键 ID
+     * @param now 当前时间戳
+     * @param cooldownBoundary 冷却时间边界 (now - repeatWindow)
+     * @param validThreshold 达成有效播放所需的当前会话最低有效观看秒数
+     * @return 实际影响行数（1=成功抢占，0=仍在冷却期、资格不符或已被抢占）
+     */
+    int claimRepeatPlay(String id, LocalDateTime now, LocalDateTime cooldownBoundary, int validThreshold);
+
+    /**
      * 原子抢占当前冷却周期的有效播放资格并更新 last_valid_play_at 时间戳。
      *
      * @param id 观看历史记录主键 ID

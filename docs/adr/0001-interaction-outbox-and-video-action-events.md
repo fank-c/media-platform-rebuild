@@ -40,13 +40,18 @@
 - **动作枚举约束**：
   - `LIKE`：`ACTIVE`（点赞生效）/ `INACTIVE`（取消点赞生效）；
   - `STAR`：`ACTIVE`（全站首次收藏该视频）/ `INACTIVE`（从所有收藏夹彻底移出）；
-  - `PLAY`：`ACTIVE`（累计观看时长达到 5 秒有效门槛且突破冷却窗口（默认 6 小时）的有效播放；通过数据库行级 CAS 原子抢占）；
+  - `PLAY`：`ACTIVE`（单会话累计有效观看达到 5 秒有效门槛，且满足首次播放或满足“上一会话达 30% 消费门槛 + 超出 6 小时冷却期”的再次播放；同一会话内最多发送一次，通过数据库行级 CAS 原子抢占）；
   - `SHARE`：`ACTIVE`（通过请求级幂等校验的单次真实分享）。
 
 ### 3. 只记录真实动作变化与持久化防重依据
 - **点赞**：仅当状态从无到有或从取消重新激活（`ACTIVE`），或从激活变为取消（`INACTIVE`）时建事件；重复点赞幂等忽略。
 - **收藏**：先补齐按收藏夹删除时的 `userId` 归属校验，防止越权；以用户维度针对视频的“首度收藏”和“彻底清空”为准触发事件，用户跨收藏夹收录或在多个文件夹之间增删不产生虚假事件。
-- **播放**：在 `interaction_watch_history` 表增加 `last_valid_play_at` 字段作为持久化防重依据；累计有效时长达到 5 秒门槛且满足 `last_valid_play_at IS NULL OR last_valid_play_at <= (now - 6h)` 时，通过数据库行级 CAS 原子抢占有效播放资格。抢占成功方可递增播放计数并写入一条 `PLAY:ACTIVE` Outbox 事件，冷却期内重复心跳与并发请求 CAS 返回 0 自动忽略，彻底杜绝虚假刷量与多事件双发。
+- **播放**：在 `interaction_watch_history` 表增加 `session_watched_duration`、`session_play_emitted`、`eligible_for_next_play` 及 `last_valid_play_at` 字段；
+  - **会话划分**：以 30 分钟无心跳超时（`session-timeout`）界定新会话；
+  - **首次播放**：当前会话累计观看达 5 秒门槛且 `last_valid_play_at IS NULL`，CAS 抢占首次播放；
+  - **30% 消费门槛**：当前会话累计有效观看达视频时长 30% 时，置位 `eligible_for_next_play = 1` 为下次新会话赋予播放资格（自身不重复发 PLAY）；
+  - **再次播放**：必须为新会话、上一会话已达到 30%、距离上次有效播放超出冷却周期（默认 6 小时）、且新会话累计有效时长达 5 秒；CAS 抢占成功后方可递增播放计数并写入 `PLAY:ACTIVE` Outbox 事件；
+  - 同一会话无论播多久最多触发一次 PLAY，彻底杜绝短时重复刷量与恶意轮询刷推荐画像。
 - **分享**：接口强制要求客户端 Header 携带 `Idempotency-Key`，通过新增的 `interaction_share_record` 表进行持久化排他去重。超时重试请求幂等响应，不重复递增计数，不重复生成事件。
 
 ### 4. 先存储，后开放派发（受控演进策略）
