@@ -2,3 +2,7 @@
 .env
 .idea/
 *.iml
+.local/agent-work/
+
+# pi 代理运行时状态（目标、账本快照等），不纳入版本控制
+.pi/
