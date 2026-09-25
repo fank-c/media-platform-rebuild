@@ -116,8 +116,11 @@ Authorization: Bearer <accessToken>
 | GET | `/api/interactions/videos/{vid}/stat` | 已登录（服务内允许匿名） | 单视频公开计数 |
 | POST | `/api/interactions/videos/stats` | 已登录（服务内允许匿名） | 批量视频公开计数 |
 | POST | `/api/interactions/videos/{vid}/share` | 已登录，需 `Idempotency-Key` | 记录分享 |
+| GET | `/api/recommend/feed` | 已登录（服务内允许匿名） | 首页推荐流 |
+| POST | `/api/recommend/feedback` | 已登录（服务内允许匿名） | 上报曝光 / 播放 / 跳过 / 负反馈 |
+| GET / POST / DELETE | `/api/recommend/blocks` | 已登录 | 查询 / 新增 / 撤销推荐屏蔽 |
 
-推荐服务当前仅有预留路由，尚无业务接口。互动接口经网关时全部需要令牌（`/api/interactions/**` 不在白名单）；标注“服务内允许匿名”的接口仅在绕过网关直连时对游客返回默认值。各微服务内部回调与受控端点（挂载于 `/internal/**`）由网关统一拦截，仅限集群内网受信通信。网关另配置 `/actuator/health`、`/actuator/info` 白名单作为管理探针，不代表所有下游管理端点对外开放。
+推荐接口与互动接口一样，经网关时全部需要令牌（`/api/recommend/**` 不在白名单）。互动接口经网关时全部需要令牌（`/api/interactions/**` 不在白名单）；标注“服务内允许匿名”的接口仅在绕过网关直连时对游客返回默认值。各微服务内部回调与受控端点（挂载于 `/internal/**`）由网关统一拦截，仅限集群内网受信通信。网关另配置 `/actuator/health`、`/actuator/info` 白名单作为管理探针，不代表所有下游管理端点对外开放。
 
 ## 2. 认证接口
 
@@ -392,7 +395,7 @@ ID、状态及文本字段为字符串，`revision` 为非负整数，`gender` �
 
 ### 内部关注清单：GET /api/users/internal/{accountId}/following-ids
 
-仅供内部微服务协同（如推荐服务 `FollowingRecallChannel`）。返回目标用户关注的所有博主 ID 列表。
+仅供内部微服务协同，返回目标用户关注的所有博主 ID 列表。规划由推荐服务 `FollowingRecallChannel` 调用；**当前推荐侧尚未接入**，关注召回恒为空。
 
 ## 4. 文件接口
 
@@ -614,7 +617,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 }
 ```
 
-成功 HTTP `200`，`data=null`。本地事务流转状态为 `OFFLINE`，写入 `content.video.offline` Outbox 事件广播下游搜索引擎与推荐流立即下线索引。
+成功 HTTP `200`，`data=null`。本地事务流转状态为 `OFFLINE`，写入 `content.video.offline` Outbox 事件（以事件类型作为路由键）。注意：推荐服务当前绑定的是 `content.video.offlined`，**下架事件到达不了推荐队列**，见 [推荐模块 · 已知问题 REC-01](modules/recommend.md#102-已知问题)。
 
 关键错误：未登录 `401`；非本人 `403`；视频不存在 `404`；未上线视频 `409`。
 
@@ -1262,7 +1265,40 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 - 同一个键重复请求：幂等成功，不重复计数。同一个键被别的用户或别的视频用过：当前返回 `500`（已知问题，计划改为 `409`）。
 - 响应 `data`：`{ vid, action: "SHARE", active: true }`。
 
-## 9. 核对来源与验证边界
+## 9. 推荐模块接口
+
+推荐模块（`recommend-service`）挂载于 `/api/recommend/**`，只返回推荐决策（视频短码），详情由客户端向内容服务获取。实现细节与已知问题见 [推荐模块](modules/recommend.md)。
+
+- 经网关访问全部需要令牌；服务内“允许匿名”的分支只在直连服务时生效。
+- 参数非法（未知 `actionType` / `blockType`）或屏蔽接口缺少身份时抛出 `IllegalArgumentException`，服务无统一异常映射，**推断返回 `500`**（未实测）。
+
+### 首页推荐流：GET /api/recommend/feed
+
+- Query：`size`，默认 10，上限 50。
+- 登录用户优先从 Redis 待看队列弹出，队列为空时现场生成；重复调用即取下一批，**没有游标**。
+- 响应 `data`：`{ items: [{ vid, recallChannel, score, reason }], hasMore }`。
+- `recallChannel`：`PERSONALIZED` / `EXPLORE_SIMILAR` / `EXPLORE_RANDOM` / `TRENDING` / `COLD_START`（`FOLLOWING` 当前不会出现）。
+
+### 行为反馈：POST /api/recommend/feedback
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `vid` | string | 是 | 视频短码 |
+| `actionType` | string | 是 | `IMPRESSION` / `PLAY` / `SKIP` / `DISLIKE` |
+| `playDuration` | int | 否 | 实际播放秒数 |
+| `videoDuration` | int | 否 | 视频总秒数 |
+| `reason` | string | 否 | `DISLIKE_AUTHOR` 屏蔽作者，其余按屏蔽视频处理 |
+| `occurredAt` | datetime | 否 | 行为发生时间 |
+
+成功 `200`，`data=null`。游客只记流水，不更新画像。
+
+### 推荐屏蔽：/api/recommend/blocks
+
+- `POST`：请求体 `{ blockType: VIDEO|AUTHOR|TOPIC, targetId, reason? }`，返回屏蔽记录 `{ id, userId, blockType, targetId, reason, createdAt }`。
+- `DELETE`：Query `blockType`、`targetId`，成功 `data=null`。
+- `GET`：返回当前用户全部屏蔽记录列表。
+
+## 10. 核对来源与验证边界
 
 本文核对了当前各微服务控制器源码及关联契约组件：
 - **认证服务**：[AuthController](../service/auth-service/src/main/java/com/calles/platform/auth/interfaces/http/AuthController.java)
@@ -1285,6 +1321,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 - **转码服务**：
   - 任务调度与查询：[TranscodeTaskController](../service/transcode-service/src/main/java/com/calles/platform/transcode/interfaces/http/TranscodeTaskController.java)
 - **互动服务**：[InteractionLikeController](../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionLikeController.java)、[InteractionStarController](../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionStarController.java)、[InteractionWatchController](../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionWatchController.java)、[InteractionStatController](../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionStatController.java)
+- **推荐服务**：[RecommendFeedController](../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/web/RecommendFeedController.java)
 - **网关路由与安全配置**：[gateway-service/application.yml](../service/gateway-service/src/main/resources/application.yml) 与 [gateway-application.yml](back/gateway-application.yml)
 
 本文基于当前最新代码与接口层契约整理。具体用例、状态流转与时序图见各模块专用设计文档。

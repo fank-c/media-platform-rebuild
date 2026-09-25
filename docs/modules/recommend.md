@@ -1,279 +1,305 @@
 # 推荐模块 · recommend-service 架构设计与实现文档
 
-推荐模块（`recommend-service`）是平台智能流量分发、首页个性化瀑布流与内容分发的核心中枢（运行端口：8600）。负责支撑亿级视频的智能索引、多路并发召回、实时特征计算、冷启动流量扶持以及多样性重排打散。架构采用 **“多路召回（Recall）➔ 综合粗排与精排（Rank）➔ 业务规则与多样性重排（Re-Rank）”** 的经典推荐流水线，完全通过事件驱动机制实时感知全站内容发布与用户互动行为。
+推荐模块（`recommend-service`，端口 8600）负责视频向量化、推荐候选池维护、用户画像演进和首页推荐流下发。
+
+本文按**当前代码实际实现**描述；尚未实现的能力统一放在 [第 10 节 规划与已知缺口](#10-规划与已知缺口)，不与现状混写。
 
 ---
 
 ## 1. 模块定位与架构边界
 
 ### 1.1 核心业务职责
-- **个性化首页瀑布流（Personalized Feed）**：
-  - 基于用户画像与实时短期兴趣，为已登录用户提供千人千面的动态信息流；
-  - 为匿名或未登录用户提供基于热度衰减与优质标签的全局热门瀑布流。
-- **播放详情页相关推荐（Related Videos）**：
-  - 结合当前播放视频的标签矩阵、作者维度与向量嵌入（Vector Embedding），提供高契合度的“猜你喜欢”延伸播放列表。
-- **多路并发召回流水线（Multi-Channel Recall）**：
-  - **标签召回（Tag-based Recall）**：根据用户偏好标签倒排索引召回候选视频；
-  - **协同过滤召回（Collaborative Filtering）**：根据用户共同点赞/收藏矩阵召回相似受众喜好的视频；
-  - **语义向量召回（Vector Recall）**：基于 `content-service` 异步生成的文本/封面向量进行近邻搜索（KNN）；
-  - **新视频冷启动探索（Cold Start Exploration）**：强制给予新发布视频一定比例的曝光保底配额。
-- **多样性打散与频控重排（Re-Rank）**：
-  - **曝光去重**：借助 Redis Bloom Filter 或短期缓存集合，过滤用户 48 小时内已浏览过的历史视频；
-  - **多样性打散**：限制连续卡片出现同一作者或同一分类标签，避免信息茧房与审美疲劳。
+
+- **视频向量化与发布门禁**：消费 `content.video.submitted`，计算视频特征向量写入 Qdrant 与自属表，再回调 `content-service` 汇报 `VECTOR_EMBEDDING` 完成。
+- **候选池生命周期**：消费 `content.video.published` 入池（`ACTIVE`），消费 `content.video.offlined` / `content.video.banned` 出池（`OFFLINE` / `BANNED`）。
+- **首页推荐流**：四路召回（个性化、探索、热度、关注）→ 四道硬过滤 → 槽位交织 → 冷启动补齐 → 同作者打散。
+- **行为反馈与画像**：接收客户端上报的曝光、播放、跳过、负反馈，记入流水并驱动用户画像演进。
+- **用户屏蔽**：维护视频、作者、主题三个维度的黑名单，作为推荐硬过滤条件。
 
 ### 1.2 防腐与禁止承担的工作
-- **严禁直接返回完整视频实体与媒体流**：推荐服务只负责“推荐决策”，输出精简的视频业务短码 `vid` 列表；前端通过短码向前台 `content-service` 拉取图文详情与播放流；
-- **严禁管理创作者元数据与审核状态**：推荐池的入池与出池完全受上游领域事件驱动，绝不跨服务直接读取未审核或草稿状态的视频。
 
-### 1.3 参与的全局业务主线导航
-- 核心支撑 [主线 04：前台视频播放分发、短码寻址与网关防刷](../flows/04-前台视频播放分发与网关防刷.md)（首页瀑布流与猜你喜欢接口）
-- 关键消费 [主线 03：视频创作、提审探活、异步机审与分级门禁流水线](../flows/03-视频创作提审与分级门禁.md)（消费上线事件入池）
-- 关键消费 [主线 05：平台合规治理、违规封禁与全站事件广播下线](../flows/05-平台合规治理与全站广播下线.md)（秒级清退封禁视频）
+- **只输出推荐决策**：接口只返回视频短码 `vid` 列表，详情与播放流由客户端向 `content-service` 获取。
+- **不管理视频元数据与审核状态**：候选池出入完全由上游领域事件驱动，不跨服务读取草稿或未审核视频。
+- **不持有互动计数**：点赞、收藏、播放等计数归 `interaction-service` 所有，推荐侧只接收事件（当前尚未接入，见第 10 节）。
+
+### 1.3 参与的全局业务主线
+
+- [主线 03：视频创作提审与分级门禁](../flows/03-视频创作提审与分级门禁.md)：向量化任务回调门禁。
+- [主线 04：前台视频播放分发与网关防刷](../flows/04-前台视频播放分发与网关防刷.md)：首页推荐流。
+- [主线 05：平台合规治理与全站广播下线](../flows/05-平台合规治理与全站广播下线.md)：封禁/下架出池。
 
 ---
 
-## 2. 推荐流水线多路召回与重排时序图
+## 2. 首页推荐流时序图
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Client as 客户端 (Web / App)
+    participant Client as 客户端
     participant Gateway as API 网关
-    participant RS as RecommendService
-    participant Redis as Redis (推荐索引与热度池)
-    participant VectorDB as 向量特征库 (Milvus / ES)
-    participant Bloom as Redis Bloom (用户曝光历史)
+    participant Buffer as RecommendFeedBufferService
+    participant Redis as Redis (待看缓冲队列)
+    participant Feed as RecommendFeedApplicationService
+    participant Channels as 四路召回通道
+    participant DB as MySQL (候选池/画像/屏蔽)
 
-    Client->>Gateway: GET /api/recommend/feed (page=1, size=10)
-    Gateway->>RS: 路由转发 (透传 X-User-Id)
+    Client->>Gateway: GET /api/recommend/feed?size=10 (Bearer Token)
+    Gateway->>Buffer: 验签后转发，注入 X-User-Id
 
-    Note over RS,VectorDB: 阶段 1：多路并行召回 (并发异步编排)
-    par 标签与协同过滤召回
-        RS->>Redis: 读取用户近期偏好标签与热门视频池
-        Redis-->>RS: 返回 100 条候选候选短码
-    and 语义向量近邻召回
-        RS->>VectorDB: 基于用户兴趣向量检索相似视频
-        VectorDB-->>RS: 返回 50 条向量候选短码
-    and 新内容冷启动保底
-        RS->>Redis: 从新视频候选队列抽取 20 条新作品
-        Redis-->>RS: 返回 20 条冷启动短码
+    alt 缓冲开启且已登录
+        Buffer->>Redis: LPOP recommend:feed:buffer:{userId} (size 条)
+        alt 队列为空（冷启动）
+            Buffer->>Feed: 现场生成一大包（默认 30 条）
+            Buffer->>Redis: 首批返回，剩余 RPUSH 回队列
+        else 命中且剩余 <= 低水位（默认 15）
+            Buffer->>Redis: SETNX 补水锁
+            Buffer-->>Feed: 虚拟线程异步补水
+        end
+    else 缓冲关闭 / 游客 / Redis 异常
+        Buffer->>Feed: 直接实时计算
     end
 
-    Note over RS: 阶段 2：粗排与精排打分 (Rank)
-    RS->>RS: 候选集合并去重 (共约 150 条候选)
-    RS->>RS: 执行 CTR 预估与热度衰减评分模型
-
-    Note over RS,Bloom: 阶段 3：多样性打散与重排 (Re-Rank)
-    RS->>Bloom: 校验候选列表是否存在于用户历史曝光中
-    Bloom-->>RS: 过滤已曝光视频
-    RS->>RS: 执行窗口滑块打散 (同作者间隔 >= 3, 同标签间隔 >= 2)
-    RS->>RS: 截取 Top 10 作为最终推荐列表
-
-    Note over RS,Bloom: 阶段 4：记录本次曝光
-    RS->>Bloom: 异步将 Top 10 短码记录至用户曝光布隆过滤器
-    RS-->>Gateway: 200 OK (返回有序 vid 数组)
-    Gateway-->>Client: 呈现首页推荐瀑布流
+    Note over Feed,DB: 实时计算流水线
+    Feed->>DB: 读取用户画像与屏蔽列表
+    Feed->>Channels: 虚拟线程并发召回（全局超时 500ms）
+    Channels-->>Feed: 各通道候选（超时/异常通道降级为空）
+    Feed->>Feed: 四道硬过滤 → 槽位交织 → 冷启动补齐 → 同作者打散
+    Feed-->>Buffer: 推荐结果
+    Buffer-->>Client: 200 { items, hasMore }
 ```
 
 ---
 
-## 3. 实时特征驱动拓扑架构图
+## 3. 事件驱动拓扑
 
 ```mermaid
 graph TD
-    MQ[["RabbitMQ 事件总线 (media.platform.events)"]]
-    RS["推荐服务 recommend-service"]
-    CandidatePool[("Redis 实时候选池与热度榜")]
-    UserProfile[("Redis 用户画像与兴趣向量")]
+    MQ[["RabbitMQ 交换机 media.platform.events"]]
+    Content["content-service"]
+    RS["recommend-service"]
+    Qdrant[("Qdrant video_vectors")]
+    DB[("MySQL recommend_*")]
 
-    subgraph EventStream ["全站事件流输入"]
-        E1["content.video.published (视频门禁通过发布)"] --> MQ
-        E2["interaction.video.liked (用户点赞视频)"] --> MQ
-        E3["interaction.video.starred (用户收藏视频)"] --> MQ
-        E4["content.video.banned (视频违规封禁下线)"] --> MQ
-    end
+    Content -->|content.video.submitted| MQ
+    Content -->|content.video.published| MQ
+    Content -->|content.video.banned| MQ
+    Content -.->|"content.video.unbanned（推荐侧未消费，见 10.2）"| MQ
+    Content -.->|"content.video.offline（与推荐侧绑定键不一致，见 10.2）"| MQ
 
-    subgraph RealTimeProcessing ["推荐特征实时消费与处理"]
-        MQ -->|1. 消费上线事件| RS
-        RS -->|新视频入池并注入冷启动探索配额| CandidatePool
+    MQ -->|recommend-service.video-submitted.v1| RS
+    MQ -->|recommend-service.video-published.v1| RS
+    MQ -->|"recommend-service.video-lifecycle.v1（绑定 offlined / banned）"| RS
 
-        MQ -->|2. 消费互动点赞与收藏| RS
-        RS -->|强化当前用户短期兴趣标签与向量| UserProfile
-        RS -->|累加视频动态热度得分| CandidatePool
-
-        MQ -->|3. 消费封禁下线事件| RS
-        RS -->|秒级从全量候选池与缓存中物理抹除| CandidatePool
-    end
+    RS -->|写入向量 Point| Qdrant
+    RS -->|向量记录 / 候选池状态| DB
+    RS -->|"Feign task-callback（VECTOR_EMBEDDING=SUCCESS）"| Content
 ```
 
 ---
 
-## 4. 第一套件：HTTP 接口服务链路
+## 4. 第一套件：HTTP 接口
 
-所有端点统一挂载于 `/api/recommend/**` 下：
+所有端点挂载于 `/api/recommend/**`，由网关转发至 `lb://recommend-service`。
 
-| HTTP 方法 | URI 路径 | 鉴权要求 | 核心处理流与调用链 | 关键响应状态 |
+> **鉴权现状**：`/api/recommend/**` 不在网关白名单，**经网关访问的所有推荐接口都需要令牌**。代码中的“游客态”分支只在绕过网关直连服务时生效。
+
+| HTTP 方法 | URI 路径 | 服务内鉴权 | 处理流程 | 关键响应 |
 | :--- | :--- | :--- | :--- | :--- |
-| `GET` | `/api/recommend/feed` | 可选用户态 | 首页瀑布流 ➔ 判断游客/登录态 ➔ 多路召回 ➔ 排序与打散 ➔ 记录曝光 ➔ 返回推荐短码列表 | `200` 成功返回瀑布流物料 |
-| `POST` | `/api/recommend/feedback` | 可选用户态 | 行为流水上报 ➔ 写入 feedback_log 存证 ➔ 正向完播推进向量/标签、滑过抑制粗领域、负反馈拉黑 | `200` 反馈上报成功 |
-| `POST` | `/api/recommend/blocks` | `requireUser` | 用户明确屏蔽 ➔ 添加视频/作者/主题标签黑名单 ➔ 落地 user_block 表 | `200` 屏蔽成功 |
-| `DELETE` | `/api/recommend/blocks` | `requireUser` | 撤销明确屏蔽 ➔ 移除指定维度的屏蔽记录 | `200` 撤销成功 |
-| `GET` | `/api/recommend/blocks` | `requireUser` | 查询屏蔽黑名单 ➔ 获取当前用户的所有生效屏蔽项 | `200` 成功返回列表 |
-| `GET` | `/api/recommend/videos/{vid}/related` | 可选用户态 | 相关推荐 ➔ 提取当前视频标签与嵌入 ➔ 近邻召回 ➔ 过滤当前视频本身 ➔ 返回相关列表 | `200` 成功返回列表<br/>`404` 视频不存在 |
+| `GET` | `/api/recommend/feed` | 可选用户态 | 缓冲队列弹出或实时计算 → 返回推荐短码列表 | `200` |
+| `POST` | `/api/recommend/feedback` | 可选用户态 | 记入 `recommend_feedback_log` → 按行为类型更新画像（游客只记流水） | `200` |
+| `POST` | `/api/recommend/blocks` | 必须登录 | 新增视频/作者/主题屏蔽，写 `recommend_user_block` | `200` 返回屏蔽记录 |
+| `DELETE` | `/api/recommend/blocks?blockType=&targetId=` | 必须登录 | 撤销指定屏蔽 | `200` |
+| `GET` | `/api/recommend/blocks` | 必须登录 | 查询当前用户全部屏蔽 | `200` 返回列表 |
 
-### 4.1 接口响应报文契约
+**错误处理现状**：未登录调用屏蔽接口、未知 `actionType` / `blockType` 时抛出 `IllegalArgumentException`。服务未配置全局异常映射，**推断实际返回 `500`**（未实测）。请求体校验失败按 Spring 默认返回 `400`。
 
-#### 1. 首页瀑布流响应 (`GET /api/recommend/feed?size=10`)
+### 4.1 首页推荐流：`GET /api/recommend/feed`
+
+| 参数 | 类型 | 默认 | 规则 |
+| :--- | :--- | :--- | :--- |
+| `size` | int | 10 | `<= 0` 取默认值；上限 50 |
+
 ```json
 {
   "code": 0,
   "message": "success",
   "data": {
     "items": [
-      {
-        "vid": "cv05hG9Kq2RtLw7XbPmZv4Ya",
-        "recallChannel": "COLLABORATIVE_FILTERING",
-        "score": 0.942
-      },
-      {
-        "vid": "cv78jK2Lm3NqP4RtU5Vw8XyZ",
-        "recallChannel": "TAG_PREFERENCE",
-        "score": 0.885
-      },
-      {
-        "vid": "cv12aB3Cd4Ef5Gh6Ij7Kl8Mn",
-        "recallChannel": "COLD_START_EXPLORE",
-        "score": 0.750
-      }
+      { "vid": "cv05hG9Kq2RtLw7XbPmZv4Ya", "recallChannel": "PERSONALIZED", "score": 0.9421, "reason": "偏好标签推荐" },
+      { "vid": "cv78jK2Lm3NqP4RtU5Vw8XyZ", "recallChannel": "EXPLORE_SIMILAR", "score": 0.6120, "reason": "相似领域探索" },
+      { "vid": "cv12aB3Cd4Ef5Gh6Ij7Kl8Mn", "recallChannel": "COLD_START", "score": 0.7500, "reason": "新鲜发布" }
     ],
-    "hasMore": true,
-    "nextCursor": "cur_1773728000_50"
+    "hasMore": true
   }
 }
 ```
 
----
+- `recallChannel` 取值：`PERSONALIZED`、`EXPLORE_SIMILAR`、`EXPLORE_RANDOM`、`TRENDING`、`FOLLOWING`（当前恒为空）、`COLD_START`。
+- `score` 保留 4 位小数，只用于排序参考，不同通道之间不可直接比较。
+- **没有游标**：翻页靠服务端缓冲队列逐批弹出，客户端重复调用即可取下一批。
 
-## 5. 第二套件：MQ 消息链路（事件驱动特征流）
+### 4.2 行为反馈：`POST /api/recommend/feedback`
 
-### 5.1 消费的领域事件
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `vid` | string | 是 | 视频短码 |
+| `actionType` | string | 是 | `IMPRESSION` / `PLAY` / `SKIP` / `DISLIKE`，大小写不敏感 |
+| `playDuration` | int | 否 | 实际播放秒数，缺省 0 |
+| `videoDuration` | int | 否 | 视频总秒数，缺省 0 |
+| `reason` | string | 否 | 负反馈原因；`DISLIKE_AUTHOR` 表示屏蔽作者，其余按屏蔽视频处理 |
+| `occurredAt` | datetime | 否 | 客户端行为时间，缺省取服务端当前时间 |
 
-| 事件名称 | 路由键 RoutingKey | 触发业务与推荐特征联动 |
+画像更新规则（仅登录用户）：
+
+| 行为 | 触发条件 | 画像变化 |
 | :--- | :--- | :--- |
-| `content.video.published` | `content.video.published` | 视频上线 ➔ 提取视频标签、时长、发布时间 ➔ 注入 Redis 候选池，配置初始冷启动曝光量 |
-| `interaction.video.liked` | `interaction.video.liked` | 用户点赞 ➔ 用户兴趣模型加权该视频关联标签（权重 +1.0），提升该视频在全站热度榜中的排名 |
-| `interaction.video.starred` | `interaction.video.starred` | 用户收藏 ➔ 强正反馈信号（权重 +3.0），触发关联视频的协同召回候选计算 |
-| `content.video.banned` | `content.video.banned` | 视频封禁 ➔ **硬性熔断**：立即从 Redis 候选池、热度榜和向量库中删除该短码，防止任何端继续推荐 |
-| `content.video.offlined` | `content.video.offlined` | 创作者主动下架 ➔ 软下线：移出公开推荐池，保留统计特征 |
+| `PLAY` | 播放比例 >= 30% 或播放 >= 10 秒 | 用视频向量按 EMA（指数移动平均，新数据按固定权重逐步融入）更新用户向量，累加主题偏好，记入近期已看 |
+| `SKIP` | 播放比例 < 10% 且播放 < 3 秒 | 记一次粗领域“曝光未消费”，后续对该领域打折 |
+| `DISLIKE` | 无 | 自动写入屏蔽（作者或视频），并记一次粗领域曝光未消费 |
+| `IMPRESSION` | 无 | 只记流水 |
+
+> 注意：播放时长、视频时长都来自客户端，服务端不做校验。
+
+### 4.3 用户屏蔽：`/api/recommend/blocks`
+
+`POST` 请求体：`blockType`（`VIDEO` / `AUTHOR` / `TOPIC`）、`targetId`、`reason`（可选）。
+
+响应字段：`id`、`userId`、`blockType`、`targetId`、`reason`、`createdAt`。
 
 ---
 
-## 6. 第三套件：定时任务与异步补偿调度链路
+## 5. 第二套件：MQ 消息链路
 
-### 6.1 全局热度基准衰减调度器 (`TrendingDecayJob`)
-- **执行频率**：每小时执行一次；
-- **算法模型**：牛顿冷却定律时间衰减：
-  $$\text{CurrentScore} = \text{InitialScore} \times e^{-\lambda \cdot \Delta t}$$
-  其中 $\lambda$ 为衰减常数，$\Delta t$ 为发布距今小时数。确保平台始终有新鲜优质视频浮出，避免远期高赞老视频长期垄断首页推荐。
+所有队列绑定统一 Topic 交换机 `media.platform.events`。
 
-### 6.2 离线协同过滤矩阵增量计算任务 (`CollaborativeFilteringSyncJob`)
-- **执行频率**：每日凌晨 3:00 执行；
-- **任务目标**：批处理过去 7 天的全站互动日志，计算 Item-to-Item 相似度矩阵，同步至 Redis 缓存供近邻推荐快速查询。
+| 消费队列 | 绑定路由键 | 消费者 | 处理 |
+| :--- | :--- | :--- | :--- |
+| `recommend-service.video-submitted.v1` | `content.video.submitted` | `VideoSubmittedConsumer` | 虚拟线程异步计算向量 → 写 Qdrant 与 `recommend_video_vector` → Feign 回调 `task-callback` |
+| `recommend-service.video-published.v1` | `content.video.published` | `VideoPublishedConsumer` | 幂等写入 `recommend_candidate_video`，状态 `ACTIVE` |
+| `recommend-service.video-lifecycle.v1` | `content.video.offlined`、`content.video.banned` | `VideoLifecycleConsumer` | `banned` 置 `BANNED`，其他类型按下架置 `OFFLINE` |
 
----
-
-## 7. 核心缓存数据结构规范
-
-- **实时热门池（ZSET）**：`recommend:pool:trending`，Score 为综合热度分，Member 为业务短码 `vid`；
-- **标签倒排候选池（SET）**：`recommend:tag:{tagId}`，存储属于该标签的高分视频短码集合；
-- **用户短期兴趣画像（HASH）**：`recommend:user:profile:{userId}`，字段为 `tag:{id}`，值为动态浮点数权重；
-- **用户曝光去重布隆过滤器**：`recommend:bloom:{userId}`，采用可重置时效布隆过滤器，防止近期连续刷到相同内容。
+- 反序列化失败或缺少 `videoId` 的消息直接丢弃并记日志，**当前没有死信队列**。
+- 本服务**不发布**任何领域事件。
+- 未消费 `interaction.video-action.v1`，见第 10 节。
 
 ---
 
-## 8. 核心数据库与存储规范
+## 6. 第三套件：定时任务与补偿
+
+**当前没有任何 `@Scheduled` 定时任务。**
+
+- 推荐缓冲队列补水由请求触发（低水位异步补水），不是定时任务。
+- `application.yml` 中的 `recommend.callback.max-retries: 5` **当前没有代码读取**，不代表已实现回调重试。
+
+---
+
+## 7. 召回、过滤与编排细节
+
+### 7.1 四路召回通道
+
+| 通道 | 配比 | `supports` 条件 | 召回策略 | 不足时 |
+| :--- | :---: | :--- | :--- | :--- |
+| `PERSONALIZED` 核心个性化 | 50% | 已登录且有非空用户向量 | Qdrant ANN（近似最近邻检索）取 `max(count×4, 30)` 条；得分 = 余弦分 × 粗领域抑制系数 + 主题加分（上限 0.5） | 返回空，由其他通道吸收 |
+| `EXPLORE` 探索 | 30% | 始终执行 | 约 2/3 近似探索：检索前 35 条后倒序取弱相关，并要求主领域在用户已有领域内；约 1/3 跨领域：从最新候选中挑用户未接触过的主领域 | 用最新 `ACTIVE` 候选补齐 |
+| `TRENDING` 热度 | 10% | 始终执行 | 统计 `recommend_feedback_log` 近 24 小时播放最多的视频 | 用最新 `ACTIVE` 候选补齐 |
+| `FOLLOWING` 关注 | 10% | 已登录 | **当前直接返回空列表**，尚未调用 `user-service` | 配额由其他通道吸收 |
+
+- 每个通道请求量 = `max(期望条数×2, 4)`，用于抵消后续过滤损耗。
+- 所有通道共用 **500ms 全局超时**，超时或异常的通道降级为空，不影响其他通道。
+
+### 7.2 四道硬过滤
+
+在槽位混合前统一执行，冷启动补齐时同样执行：
+
+1. 候选状态必须是 `ACTIVE`；
+2. 不推荐用户本人的作品；
+3. 命中视频、作者、主题屏蔽则剔除；
+4. 画像中近期已看的视频剔除。
+
+### 7.3 槽位交织与打散
+
+- 10 槽模板：`PERSONALIZED, FOLLOWING, PERSONALIZED, EXPLORE, TRENDING, PERSONALIZED, EXPLORE, PERSONALIZED, EXPLORE, PERSONALIZED`。
+- 混合时取 `max(size×2, 20)` 条，给打散留余量；某槽的通道没有物料时，按配比从高到低依次向其他通道借。
+- 所有通道都耗尽仍不足 `size` 时，从最新 `ACTIVE` 候选补齐，通道标记 `COLD_START`，得分按发布时间衰减。
+- 打散规则：同一作者在结果中至少间隔 2 张卡片；实在凑不满时放宽限制。
+
+### 7.4 待看缓冲队列
+
+| 配置键（前缀 `recommend.feed.buffer`） | 默认 | 说明 |
+| :--- | :--- | :--- |
+| `enabled` | `true` | 关闭后所有请求走实时计算 |
+| `batch-generate-size` | 30 | 每次预生成条数 |
+| `default-pop-size` | 10 | `size <= 0` 时的弹出条数 |
+| `low-watermark` | 15 | 剩余条数 <= 该值时异步补水 |
+| `max-buffer-capacity` | 60 | 剩余条数达到该值时不再补水 |
+| `buffer-ttl-seconds` | 3600 | 队列过期时间 |
+| `refill-lock-timeout-seconds` | 30 | 补水锁超时 |
+
+- 游客不使用缓冲队列。
+- 队列中的物料不会在弹出时重新过滤：**用户新增屏蔽或视频被下架后，已进入队列的物料在过期前仍可能被下发**。
+
+### 7.5 Redis Key
+
+| Key | 类型 | 用途 |
+| :--- | :--- | :--- |
+| `recommend:feed:buffer:{userId}` | List | 用户待看缓冲队列，元素为推荐项 JSON |
+| `recommend:feed:refill:lock:{userId}` | String | 异步补水防重入锁 |
+
+---
+
+## 8. 数据库与存储
 
 - **自属数据库表**：
-  - [`recommend_video_vector`](../../service/recommend-service/db/schema/recommend-video-vector.sql)：记录视频向量、模型标识、维度、Qdrant 同步状态与处理状态，唯一键 `video_id`，索引 `vid`；
-  - [`recommend_candidate_video`](../../service/recommend-service/db/schema/recommend-candidate-video.sql)：推荐候选池轻量元数据表，维护作者打散维度（`author_id`）、领域/主题标签属性（`domain_tag_ids`/`topic_tag_ids`）与生命周期准入状态（`status: ACTIVE/OFFLINE/BANNED`）；
-  - [`recommend_user_profile`](../../service/recommend-service/db/schema/recommend-user-model.sql)：用户推荐兴趣画像与状态快照表，维护用户即时检索向量、细粒度主题偏好分快照、粗领域状态快照、近期观看短码序列与乐观锁版本；
-  - [`recommend_user_block`](../../service/recommend-service/db/schema/recommend-user-model.sql)：用户明确屏蔽与负反馈约束表，维护拉黑的视频、作者与主题标签，作为召回后的最高优先级一票否决门禁；
-  - [`recommend_feedback_log`](../../service/recommend-service/db/schema/recommend-user-model.sql)：推荐模块原始行为反馈事实流水表，只追加记录有效曝光、播放时长、滑过跳过与主动负反馈客观事实。
-- **Qdrant 向量数据库**：集合 `video_vectors`（Cosine 距离 HNSW 索引），Point ID 为视频 UUID，Payload 携带 `vid`、`authorId`、`title`、`modelName`；负责视频近邻向量索引与后续基于锚点视频的相似召回（Recommend API）。
+  - [`recommend_video_vector`](../../service/recommend-service/db/schema/recommend-video-vector.sql)：视频向量、模型标识、维度、Qdrant 同步状态与处理状态，唯一键 `video_id`，索引 `vid`；
+  - [`recommend_candidate_video`](../../service/recommend-service/db/schema/recommend-candidate-video.sql)：候选池元数据，含 `author_id`、`domain_tag_ids` / `topic_tag_ids` 与状态 `ACTIVE/OFFLINE/BANNED`；
+  - [`recommend_user_profile`](../../service/recommend-service/db/schema/recommend-user-model.sql)：用户向量、主题偏好、粗领域状态、近期已看序列与乐观锁版本；
+  - [`recommend_user_block`](../../service/recommend-service/db/schema/recommend-user-model.sql)：视频、作者、主题屏蔽；
+  - [`recommend_feedback_log`](../../service/recommend-service/db/schema/recommend-user-model.sql)：行为反馈流水，只追加。
+- **Qdrant**：集合 `video_vectors`（Cosine 距离），Point ID 为视频 ID，Payload 含 `vid`、`authorId`、`title`、`modelName`。
+- **向量引擎**：`recommend.embedding.type` 可选 `remote`（OpenAI 兼容接口，默认）/ `local`（本地特征哈希）/ `mock`；远程异常或未配 Key 时按 `fallback-to-local` 回退本地算法。
 
 ---
 
-## 9. 核心源码入口索引
+## 9. 核心源码入口
 
 - **启动类**：[`RecommendApplication.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/RecommendApplication.java)
-- **本地配置文件**：[`application.yml`](../../service/recommend-service/src/main/resources/application.yml)
-- **MQ 提审消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)
-- **MQ 发布与下线消费**：[`VideoPublishedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoPublishedConsumer.java)、[`VideoLifecycleConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoLifecycleConsumer.java)
-- **推荐编排应用服务**：[`RecommendFeedApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedApplicationService.java)
-- **行为流水应用服务**：[`FeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/FeedbackApplicationService.java)
-- **用户屏蔽应用服务**：[`UserBlockApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/UserBlockApplicationService.java)
-- **Web 控制器与 DTO**：[`RecommendFeedController.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/web/RecommendFeedController.java)
-- **向量应用编排**：[`VideoVectorApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/VideoVectorApplicationService.java)
-- **候选库存应用编排**：[`CandidateVideoApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/CandidateVideoApplicationService.java)
-- **用户模型领域层**：
-  - 用户画像聚合根：[`UserProfile.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserProfile.java)
-  - 用户向量与 EMA 算法：[`UserVector.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserVector.java)
-  - 细主题与粗领域状态：[`TopicPreference.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/TopicPreference.java)、[`DomainState.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/DomainState.java)
-  - 用户屏蔽实体：[`UserBlock.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/block/UserBlock.java)
-  - 行为流水实体：[`FeedbackLog.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/feedback/FeedbackLog.java)
-- **用户模型仓储实现**：
-  - 画像仓储：[`UserProfileRepositoryImpl.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/persistence/repository/UserProfileRepositoryImpl.java)
-  - 屏蔽仓储：[`UserBlockRepositoryImpl.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/persistence/repository/UserBlockRepositoryImpl.java)
-  - 流水仓储：[`FeedbackLogRepositoryImpl.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/persistence/repository/FeedbackLogRepositoryImpl.java)
-- **向量引擎路由**：[`VectorEmbeddingEngineRouter.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/engine/VectorEmbeddingEngineRouter.java)
-- **Qdrant 客户端**：[`QdrantClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/qdrant/QdrantClient.java)
+- **本地配置**：[`application.yml`](../../service/recommend-service/src/main/resources/application.yml)
+- **MQ 消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)、[`VideoPublishedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoPublishedConsumer.java)、[`VideoLifecycleConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoLifecycleConsumer.java)
+- **消息拓扑**：[`RecommendMessagingConfiguration.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/config/RecommendMessagingConfiguration.java)
+- **Web 控制器**：[`RecommendFeedController.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/web/RecommendFeedController.java)
+- **缓冲队列门面**：[`RecommendFeedBufferService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedBufferService.java)
+- **推荐编排**：[`RecommendFeedApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedApplicationService.java)
+- **召回通道**：[`channel/impl/`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/channel/impl/)（`PersonalizedRecallChannel`、`ExploreRecallChannel`、`TrendingRecallChannel`、`FollowingRecallChannel`）
+- **行为反馈**：[`FeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/FeedbackApplicationService.java)
+- **用户屏蔽**：[`UserBlockApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/UserBlockApplicationService.java)
+- **向量编排**：[`VideoVectorApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/VideoVectorApplicationService.java)
+- **候选池编排**：[`CandidateVideoApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/CandidateVideoApplicationService.java)
+- **用户模型**：[`UserProfile.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserProfile.java)、[`UserVector.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserVector.java)、[`UserBlock.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/block/UserBlock.java)、[`FeedbackLog.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/feedback/FeedbackLog.java)
+- **向量引擎与 Qdrant**：[`VectorEmbeddingEngineRouter.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/engine/VectorEmbeddingEngineRouter.java)、[`QdrantClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/qdrant/QdrantClient.java)
 - **内容门禁回调**：[`ContentServiceClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/client/ContentServiceClient.java)
-- **网关路由**：统一由网关转发 `/api/recommend/**` ➔ `lb://recommend-service`。
 
 ---
 
-## 10. 单次推送多路物料配比与槽位混合编排架构 (E&E 与 Slot Blending)
+## 10. 规划与已知缺口
 
-在首页推荐瀑布流（`GET /api/recommend/feed`）中，单次下发物料并非单一算法模型的同质化输出，而是采用工业级 **“探索与利用平衡（Exploration & Exploitation, E&E）”** 混合流架构。
+### 10.1 未实现能力
 
-### 10.1 多路物料构成与配比设计
+| 能力 | 现状 | 依赖 / 下一步 |
+| :--- | :--- | :--- |
+| 关注召回 | `FollowingRecallChannel` 恒返回空 | `user-service` 已提供 `GET /api/users/internal/{accountId}/following-ids`，需补 Feign 调用并声明超时与降级 |
+| 互动事件消费 | 未消费 `interaction.video-action.v1` | 幂等消费后，互动 Outbox 才能打开 `dispatch-enabled` |
+| 热度榜接入互动计数 | 热度只基于本服务反馈流水 | 依赖互动事件消费 |
+| 相关推荐 `GET /api/recommend/videos/{vid}/related` | 无接口 | 可复用 Qdrant 按锚点视频检索 |
+| 游客推荐 | 网关拦截，游客拿不到推荐 | 需确认是否把 `/api/recommend/feed` 加入网关白名单 |
+| 协同过滤、热度衰减等离线任务 | 无 | 待互动数据接入后再评估 |
+| 消费失败死信 | 非法消息直接丢弃 | 补死信队列与告警 |
 
-单次推送（以标准 `size = 10` 为例）的物料结构配比如下：
+### 10.2 已知问题
 
-| 召回通道类别 | 目标配比 | 核心定位与业务目的 | 召回实现策略与特征依赖 | 降级与演进策略 |
-| :--- | :---: | :--- | :--- | :--- |
-| **核心推荐 (Personalized)** | **50%** (5条) | 满足已知兴趣，保障基本盘留存与完播时长 | 基于 Qdrant ANN 向量余弦检索 Top 候选，叠加细主题偏好分（$BaseScore \times DomainSuppression + TopicBonus$） | 游客/冷启动时降级为最新发布候选池；向量检索异常时平滑回退 |
-| **探索发现 (Explore)** | **30%** (3条) | 破除信息茧房（Filter Bubble），试探新兴趣点 | 拆分为两大探索子通道：<br/>1. **近似探索 (20%, 2条)**：取 Qdrant 检索中后段（Rank 6~20）或次级偏好标签物料；<br/>2. **跨领域随机探索 (10%, 1条)**：从用户未产生曝光记录的粗领域中随机采样 ACTIVE 优质物料 | 本服务自闭环，当用户全领域曝光饱和时退化为全站轮询采样 |
-| **近期高热度 (Trending)** | **10%** (1条) | 引入全站高共鸣爆款，提供社会认同与热点时效 | 从全站近期消费频次最高、完播最好的物料池中召回 Top 物料 | **阶段演进**：<br/>• 阶段一（当前）：基于 `recommend_feedback_log` 近 24h 消费量或最新优质物料作为热榜；<br/>• 阶段二（未来）：对接 `interaction-service` 全站点赞/播放热度榜 |
-| **关注推荐 (Following)** | **10%** (1条) | 强化创作者社交黏性，促成私域互动回流 | 召回当前登录用户关注的创作者在近期（如 7 天内）发布的最新物料 | **阶段演进**：<br/>• 阶段一（当前）：通道预留，由于 `user-service` 关注功能尚未迁移，当前返回空并自动溢出回补核心推荐配额；<br/>• 阶段二（未来）：通过 OpenFeign 同步调用 `user-service` 关注列表 |
-
-### 10.2 槽位交织编排模板 (Slot Blending Pattern)
-
-为避免同类物料扎堆引发用户的模式疲劳（Pattern Fatigue），系统采用固定槽位模板进行交织混合。以 `size = 10` 为例：
-
-```
-槽位 01 [核心推荐] ➔ 抓住第一眼眼球，呈现最契合用户画像的高分物料
-槽位 02 [关注推荐] ➔ 熟人与偏爱创作者最新动态 (若未关注/无新作，核心推荐自动顶替)
-槽位 03 [核心推荐] ➔ 巩固核心偏好
-槽位 04 [近似探索] ➔ 相关领域的延伸探索 (同大类下的新主题)
-槽位 05 [近期高热度] ➔ 全站爆款破圈，提供热点共鸣
-槽位 06 [核心推荐] ➔ 核心偏好回拉
-槽位 07 [随机探索] ➔ 跨粗领域的全新尝试 (完全未涉足的领域)
-槽位 08 [核心推荐] ➔ 核心偏好回拉
-槽位 09 [近似探索] ➔ 次级兴趣标签延伸
-槽位 10 [核心推荐] ➔ 结尾高契合物料，维持刷屏吸引力
-```
-
-### 10.3 配额不足的自动降级与吸收铁律
-
-1. **游客 / 未登录用户**：
-   - 关注通道（0%）与核心个性化通道（0%）自动失效；
-   - 配额自动全量向“冷启动兜底池 + 跨领域探索池”吸收，维持全站优质新鲜内容均匀分发。
-2. **轻度用户 / 关注列表无更新**：
-   - 关注通道为空时，其 10% 配额优先被“核心推荐”吸收；若核心池不足则被“探索通道”吸收。
-3. **探索池或热度池不足**：
-   - 任何通道召回不足额时，差额物料自动从候选库最新 ACTIVE 物料中补齐。
-4. **统一收敛守门**：
-   - 混合组装完毕后，最终统一送入 **四道硬过滤（状态/自斥/拉黑/近期已看）** 与 **同作者打散重排（物理间隔 $\ge 2$）**，确保交付给客户端的物料既符合多样性配比，又绝不违背硬性约束。
-
-
+| 编号 | 问题 | 影响 | 状态 |
+| :--- | :--- | :--- | :--- |
+| REC-01 | `content-service` 下架时以 `content.video.offline` 为路由键发送；推荐侧只绑定 `content.video.offlined` | **创作者主动下架的视频不会移出推荐候选池**（封禁不受影响） | 待修复，需确定以哪边命名为准 |
+| REC-02 | 缓冲队列中的物料弹出时不再过滤 | 新屏蔽或刚下线的视频最多在 1 小时内仍可能被下发 | 待评估 |
+| REC-03 | 参数非法、未登录抛 `IllegalArgumentException`，无统一异常映射 | 推断返回 `500` 而非 `400/401` | 待处理 |
+| REC-04 | 反馈的播放时长和视频时长完全信任客户端 | 画像可被伪造上报影响 | 待决策 |
+| REC-05 | 未消费 `content.video.unbanned` | 解封后的视频在候选池中仍为 `BANNED`，不会重新被推荐（内容服务解封时只发 `unbanned`，不重发 `published`） | 待处理 |

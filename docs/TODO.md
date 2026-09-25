@@ -277,7 +277,7 @@
 - [x] 监听 RabbitMQ `content.video.submitted` 提审事件，在 Java 21 虚拟线程中异步计算视频高维特征向量。
 - [x] 设计双模向量引擎（优先标准通用 OpenAI 兼容协议，网络抖动或未配 Key 时自动降级为本地确定性 Feature Hashing 算法）。
 - [x] 对接 Qdrant 向量数据库（REST :6333），自动建立 `video_vectors` 集合（Cosine 距离），持久化 Point 并注入业务 Payload。
-- [x] 建立自属表 `recommend_video_vector` 与 Redis 向量热点缓存，保障服务内数据闭环与幂等防重。
+- [x] 建立自属表 `recommend_video_vector`，按视频幂等记录向量与处理状态（当前无 Redis 向量缓存）。
 - [x] 通过 OpenFeign 客户端回调 `content-service` 的 `/api/content/videos/internal/task-callback` 接口，汇报 `VECTOR_EMBEDDING` 为 `SUCCESS`，打通平台视频发布门禁全链路。
 
 ### 推荐候选池库存与生命周期闭环
@@ -285,6 +285,8 @@
 - [x] 建立自属推荐候选池轻量元数据表 `recommend_candidate_video`，负责维护作者打散维度、领域/主题标签属性及推荐可用状态。
 - [x] 监听 RabbitMQ `content.video.published` 发布上线事件，以强幂等方式将新作品正式准入推荐候选库存池（`status=ACTIVE`）。
 - [x] 监听 RabbitMQ `content.video.offlined` 与 `content.video.banned` 生命周期事件，将候选状态变更为 `OFFLINE` 或 `BANNED`，实现合规清退与熔断下线。
+- [ ] **【REC-01 契约不一致】**内容服务下架发送 `content.video.offline`，推荐侧绑定 `content.video.offlined`，创作者下架的视频不会出池。
+- [ ] **【REC-05】**消费 `content.video.unbanned`，解封后恢复 `ACTIVE`。
 
 ### 用户模型与行为反馈事实闭环
 
@@ -292,5 +294,21 @@
 - [x] 建立自属用户明确屏蔽约束表 `recommend_user_block`，维护拉黑视频、作者、主题标签的硬过滤规则与 O(1) 判定。
 - [x] 建立自属原始行为反馈事实流水表 `recommend_feedback_log`，只追加记录有效曝光、播放消费、滑过跳过与负反馈客观事实。
 - [x] 领域层实现 `UserProfile` 聚合根、`UserVector` 值对象（封装增量指数移动平均 EMA 与 L2 归一化）、`UserBlock` 实体及完整持久化仓储实现。
+- [x] 行为反馈接口 `POST /api/recommend/feedback`：记流水，有效播放推进画像，快速滑过抑制粗领域，负反馈自动屏蔽。
+- [x] 用户屏蔽接口 `GET / POST / DELETE /api/recommend/blocks`（视频 / 作者 / 主题）。
+- [ ] 反馈时长校验：播放时长与视频时长当前完全信任客户端（REC-04，待决策）。
+
+### 首页推荐流
+
+- [x] `GET /api/recommend/feed`：四路并发召回（个性化 50% / 探索 30% / 热度 10% / 关注 10%），500ms 全局超时，单通道异常降级为空。
+- [x] 四道硬过滤（状态、本人作品、屏蔽、近期已看）、槽位交织、冷启动补齐、同作者间隔 >= 2 打散。
+- [x] Redis 待看缓冲队列：大包预生成、低水位异步补水、Redis 异常回退实时计算。
+- [ ] 关注召回：`FollowingRecallChannel` 当前恒返回空，需接入 `user-service` 内部关注清单接口（含超时与降级）。
+- [ ] 消费 `interaction.video-action.v1`（幂等），热度召回接入互动数据。
+- [ ] 缓冲队列弹出时复核屏蔽与候选状态（REC-02）。
+- [ ] 参数校验与未登录错误映射为 `400 / 401`（REC-03，当前推断为 `500`）。
+- [ ] 确定游客是否可访问推荐流（需调整网关白名单）。
+- [ ] 相关推荐 `GET /api/recommend/videos/{vid}/related`（规划）。
+- [ ] 消费失败死信队列与告警（当前非法消息直接丢弃）。
 
 

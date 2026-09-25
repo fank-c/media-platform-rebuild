@@ -132,7 +132,7 @@ graph TD
 | **创作者端** | `POST` | `/api/content/videos/draft` | `requireUser` | `CreatorVideoController` ➔ 创建草稿，签发 Base62 短码 `vid` | `200` 返回短码 |
 | | `PUT` | `/api/content/videos/{id}` | 作者本人 | 更新草稿标题、简介、封面图与标签绑定 | `200` 成功 |
 | | `POST` | `/api/content/videos/{id}/submit` | 作者本人 | **Feign 强探活** 校验视频与封面就绪 ➔ 初始化任务网格 ➔ 事务写 Outbox ➔ 状态更至 `AUDITING` | `200` 受理成功<br/>`400` 文件未就绪 |
-| | `POST` | `/api/content/videos/{id}/offline`| 作者本人 | 创作者主动下架视频 ➔ 写入 `content.video.offlined` Outbox 事件 | `200` 成功 |
+| | `POST` | `/api/content/videos/{id}/offline`| 作者本人 | 创作者主动下架视频 ➔ 写入 `content.video.offline` Outbox 事件 | `200` 成功 |
 | | `DELETE`| `/api/content/videos/{id}` | 作者本人 | 逻辑删除视频 ➔ 扣减关联标签热度计数 | `200` 成功 |
 | | `GET` | `/api/content/videos/me` | `requireUser` | 分页查询本人创作中心作品列表（包含各发布状态） | `200` 成功 |
 | | `GET` | `/api/content/videos/{id}/tasks` | 作者本人 | 观测当前视频各子任务执行进度（0-100%）与就绪状态 | `200` 成功 |
@@ -160,9 +160,9 @@ graph TD
 | `content.video.submitted` | 提审探活通过入库 | `videoId`, `vid`, `authorId`, `videoFileId`, `coverFileId` | `audit-service` 启动机审；`transcode-service` 启动切片转码；AI Worker 启动向量计算 |
 | `content.video.published` | 分级门禁达成自动上线 | `videoId`, `vid`, `authorId`, `videoFileId`, `publishedAt` | 搜索引擎构建索引；推荐系统计算特征；站内信通知作者 |
 | `content.video.rejected` | 机审未通过违规驳回 | `videoId`, `vid`, `reason` | 创作者通知中心发送站内驳回说明 |
-| `content.video.offline` | 创作者主动下架 | `videoId`, `vid`, `authorId` | 搜索引擎与推荐流立即下线索引 |
+| `content.video.offline` | 创作者主动下架 | `videoId`, `vid`, `authorId` | 规划：搜索与推荐下线。**当前推荐服务绑定的是 `content.video.offlined`，收不到本事件**（见 [REC-01](recommend.md#102-已知问题)） |
 | `content.video.banned` | 管理员违规封禁 | `videoId`, `vid`, `authorId`, `reason` | 推荐与搜索立即拉黑下线，长连接通知端侧截流 |
-| `content.video.unbanned` | 管理员解封恢复 | `videoId`, `vid`, `authorId` | 重新激活搜索与推荐通道 |
+| `content.video.unbanned` | 管理员解封恢复 | `videoId`, `vid`, `authorId` | 规划：重新激活搜索与推荐。**当前推荐服务未消费本事件**（见 [REC-05](recommend.md#102-已知问题)） |
 
 ### 4.2 事务性发件箱 (Outbox) 发信动力系统架构
 
