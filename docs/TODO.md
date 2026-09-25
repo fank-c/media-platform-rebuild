@@ -209,34 +209,60 @@
 
 - [x] 提供服务启动入口与注册配置（工程骨架，集成 Redis、MySQL、MyBatis-Plus、RabbitMQ）。
 
-### 视频点赞、收藏与交互账本 (Like & Star Ledger)
+### 点赞
 
-- [x] 持久化维护用户点赞记录表（`interaction_like`）与有效状态。
-- [x] 用户系统默认收藏夹自动初始化与防误删保护。
-- [x] 用户自建自定义收藏夹生命周期管理（创建、重名检查、级联删除明细）。
-- [x] 视频收藏至指定/默认收藏夹与取消收藏，持久化明细表（`interaction_star_item`）维护。
-- [x] 分页查询用户本人点赞列表与收藏夹内视频短码明细列表。
-- [x] 基于 Redis 用户维度短缓存提供 O(1) 幂等判重与状态快照响应。
+- [x] 点赞与取消点赞，状态存在 `interaction_like`；重复请求幂等，不重复计数、不重复发事件。
+- [ ] 分页查询本人点赞列表（尚无接口）。
 
-### 时段增量缓冲与 RPC 定时回写 (Delta Buffer & Flush)
+### 收藏与收藏夹
 
-- [x] Redis 时段增量写缓冲器（`InteractionRedisBuffer`），记录当前窗口内指标变动增量（$\Delta \text{like}, \Delta \text{star}, \Delta \text{view}, \Delta \text{share}, \Delta \text{comment}$）。
-- [x] 基于 Lua 脚本实现增量数据的原子提取与置零（Drain & Clear），杜绝提取期间并发丢失新增量。
-- [x] 落地定时 RPC 批量回写调度器（`MetricsDeltaFlushScheduler`），通过 OpenFeign 批量推送至 `content-service`。
-- [x] RPC 调用失败时支持原子增量回滚恢复，确保数据不丢失。
-- [x] `content-service` 开放内部受信任端点 `POST /api/content/videos/internal/metrics-delta`，执行底层原子字段累加。
+- [x] 默认收藏夹在首次收藏或查询时自动创建。
+- [x] 新建自定义收藏夹。
+- [x] 收藏到指定或默认收藏夹、按收藏夹或全部取消；“首次收藏 / 彻底移除”才计数并发事件。
+- [x] 分页查询收藏夹内视频。
+- [x] 取消收藏后再收藏复活原明细，避免唯一键冲突。
+- [ ] **【P0 越权风险】收藏夹属主校验**：`resolveFolder` 与 `getStarItems` 未校验 `folderId` 归属，传入他人收藏夹 ID 即可写入或读取其内容。修复前不得对外开放收藏接口。
+- [ ] 收藏夹重命名、重名校验与删除（含明细处理）。
 
-### 播放会话结账与推荐反馈 (Session Feedback)
+### 观看心跳与观看历史
 
-- [x] 开放客户端播放器离场结账端点 `POST /api/interactions/videos/{vid}/session-finish`，接收完整播放上下文（时长、完播率、是否赞藏等）。
-- [x] 会话结账累加播放量时段增量至 Redis。
-- [x] 事务性发件箱（Outbox）打包派发高价值聚合事件 `interaction.user.session-feedback`。
-- [x] `recommend-service` 声明专属消费队列与消费者（`SessionFeedbackConsumer`），一次性完成行为流水留存与画像微调。
+- [x] 统一心跳入口：登录用户上报进度，服务端维护断点与累计时长；游客返回 `401`。
+- [x] 会话隔离：30 分钟无心跳视为新会话，每会话最多一次有效播放。
+- [x] 有效播放防重：会话满 5 秒计首次播放；再次播放需要上一会话达 30% 且超过 6 小时冷却；数据库双 CAS 抢占。
+- [x] Redisson 分布式锁在事务外层，等锁超时只读降级。
+- [x] 完播：播放头达 90% 时 CAS 置位并发送 `PLAY_COMPLETE`。
+- [x] 播放量在事务提交后才计入 Redis。
+- [x] 断点查询、播放页状态快照（点赞/收藏/断点/完播）。
+- [x] 观看历史分页、删除单条与清空；逻辑删除保留防刷时间戳，删了重看不重置冷却。
+- [ ] 防刷门禁：按服务端时间差校验增量、视频时长改用可信来源、完播需要观看时长佐证（待定时长来源）。
+- [ ] 统一完播防重语义（待定：每个用户每个视频一次，还是按会话计）。
 
-### 阶段二规划项
+### 分享
 
-- [ ] 树形评论与楼中楼盖楼系统（接入机审与多级排序）。
-- [ ] 播放进度断点续播与防刷风控门禁。
+- [x] 分享必须带 `Idempotency-Key`，`interaction_share_record` 持久化防重后计数并发事件。
+- [ ] 幂等键冲突返回 `409`（当前为 `500`）。
+
+### 公开计数
+
+- [x] 单条与批量查询公开计数，缺失的补 0。
+- [x] Redis Hash 写缓冲加脏集合，`VideoCounterFlushScheduler` 定时把快照刷进 `interaction_video_counter`；读写滑动续期。
+- [ ] **【P0 数据覆盖风险】计数刷盘覆盖**：Redis 计数 Key 过期后，下一次 `HINCRBY` 生成只含单字段的 Hash，`upsertSnapshot` 以绝对值覆盖 `interaction_video_counter`，导致历史累计被清零或变小（`comment_count` 每次写 0）。修复前公开计数不可信。
+- [ ] 刷盘失败后脏标记丢失；Redis 降级到本机内存后多实例计数分裂。
+- [ ] 点赞、收藏、分享计数改为事务提交后写入（与播放量一致）。
+
+### 领域事件与 Outbox
+
+- [x] 统一事件 `interaction.video-action.v1`（`LIKE / STAR / PLAY / PLAY_COMPLETE / SHARE`），只记录真实状态变化。
+- [x] 自属 `interaction_outbox`：同事务落库、租约抢占、Broker Confirm、有限重试；投递默认关闭。
+- [ ] `recommend-service` 消费 `interaction.video-action.v1`（幂等），之后才打开 `dispatch-enabled`。
+- [ ] Outbox 已发布记录的保留期清理。
+
+### 后续规划
+
+- [ ] 树形评论与楼中楼（接入机审与多级排序）。
+- [ ] 确定公开查询接口是否对游客开放（需要调整网关白名单）。
+
+> 已移除旧条目：`InteractionRedisBuffer` / `MetricsDeltaFlushScheduler` / content `metrics-delta` 回写、`session-finish` 结账端点与 `interaction.user.session-feedback` 事件。代码中不存在这些实现，并且与“计数由互动服务独占、不回写 content”的现行边界冲突。
 
 ## 推荐模块 · recommend-service
 

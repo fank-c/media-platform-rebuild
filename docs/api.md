@@ -105,8 +105,19 @@ Authorization: Bearer <accessToken>
 | GET | `/api/audit/tasks/{id}` | 内部微服务 | 内部查询审核工单与判定明细 |
 | GET | `/api/transcode/tasks/{id}` | 内部微服务 / 管理员 | 按工单 ID 查询流媒体转码任务详情 |
 | POST | `/api/transcode/tasks/trigger` | 内部微服务 / 管理员 | 手动触发指定画质切片转码流水线 |
+| POST / DELETE | `/api/interactions/videos/{vid}/like` | 已登录 | 点赞 / 取消点赞 |
+| POST / DELETE | `/api/interactions/videos/{vid}/star` | 已登录 | 收藏 / 取消收藏 |
+| GET / POST | `/api/interactions/star/folders` | 已登录 | 收藏夹列表 / 新建自定义收藏夹 |
+| GET | `/api/interactions/star/items` | 已登录 | 分页查询收藏夹内视频 |
+| POST | `/api/interactions/videos/{vid}/heartbeat` | 已登录 | 上报播放心跳 |
+| GET | `/api/interactions/videos/{vid}/watch-progress` | 已登录（服务内允许匿名） | 查询断点进度 |
+| GET / DELETE | `/api/interactions/watch/history` | 已登录 | 观看历史分页 / 删除单条或清空 |
+| GET | `/api/interactions/videos/{vid}/my-state` | 已登录（服务内允许匿名） | 播放页互动状态快照 |
+| GET | `/api/interactions/videos/{vid}/stat` | 已登录（服务内允许匿名） | 单视频公开计数 |
+| POST | `/api/interactions/videos/stats` | 已登录（服务内允许匿名） | 批量视频公开计数 |
+| POST | `/api/interactions/videos/{vid}/share` | 已登录，需 `Idempotency-Key` | 记录分享 |
 
-互动和推荐服务当前仅有预留路由，尚无业务接口。各微服务内部回调与受控端点（挂载于 `/internal/**`）由网关统一拦截，仅限集群内网受信通信。网关另配置 `/actuator/health`、`/actuator/info` 白名单作为管理探针，不代表所有下游管理端点对外开放。
+推荐服务当前仅有预留路由，尚无业务接口。互动接口经网关时全部需要令牌（`/api/interactions/**` 不在白名单）；标注“服务内允许匿名”的接口仅在绕过网关直连时对游客返回默认值。各微服务内部回调与受控端点（挂载于 `/internal/**`）由网关统一拦截，仅限集群内网受信通信。网关另配置 `/actuator/health`、`/actuator/info` 白名单作为管理探针，不代表所有下游管理端点对外开放。
 
 ## 2. 认证接口
 
@@ -1187,7 +1198,71 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 
 ---
 
-## 8. 核对来源与验证边界
+## 8. 互动模块接口
+
+路径前缀 `/api/interactions`，由 `interaction-service` 提供。设计说明见 [互动模块](modules/interaction.md)。
+
+### 8.1 点赞：POST / DELETE /api/interactions/videos/{vid}/like
+
+- 无请求体。重复点赞或重复取消都是幂等的。
+- 响应 `data`：`{ "vid": "...", "action": "LIKE" | "UNLIKE", "active": true | false }`。
+
+### 8.2 收藏：POST / DELETE /api/interactions/videos/{vid}/star
+
+- POST 请求体可省略：`{ "folderId": "可选，省略则进默认收藏夹" }`。
+- DELETE 查询参数 `folderId` 可选，省略则从全部收藏夹移除。
+- 响应 `data`：`{ "vid", "action": "STAR" | "UNSTAR", "active" }`。
+- 指定的收藏夹不存在或已删除时返回 `400`。
+
+### 8.3 收藏夹：GET / POST /api/interactions/star/folders
+
+- GET 返回收藏夹数组；用户一个收藏夹都没有时会自动创建默认收藏夹。
+- POST 请求体 `{ "title": "必填" }`，`title` 为空时返回 `400`。
+- 元素字段：`id`、`title`、`isDefault`、`status`、`createdAt`。
+
+### 8.4 收藏明细：GET /api/interactions/star/items
+
+- 查询参数：`folderId`（可选，默认收藏夹）、`page`（默认 1）、`size`（默认 20，最大 100）。
+- 元素字段：`id`、`folderId`、`vid`、`createdAt`。
+
+### 8.5 播放心跳：POST /api/interactions/videos/{vid}/heartbeat
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `position` | int | 当前播放头（秒），服务端截到 `[0, videoDuration]` |
+| `deltaDuration` | int | 距离上次心跳实际观看的秒数，服务端截到 `[0, 15]` |
+| `videoDuration` | int | 视频总时长（秒），0 表示未知 |
+
+- 响应 `data`：`{ vid, lastPosition, watchedDuration, videoDuration, completed }`。
+- 有效播放、完播判定和计数规则见 [互动模块 §3](modules/interaction.md#3-观看心跳与播放资格)。
+- 服务端等锁超时时，只返回已有进度，本次时长不入账。
+
+### 8.6 断点进度：GET /api/interactions/videos/{vid}/watch-progress
+
+- 响应结构同 8.5；没有记录或游客时返回零进度。
+
+### 8.7 观看历史：GET / DELETE /api/interactions/watch/history
+
+- GET 查询参数 `page`（默认 1）、`size`（默认 20，最大 100）；元素字段 `id`、`vid`、`lastPosition`、`watchedDuration`、`videoDuration`、`completed`、`firstWatchAt`、`lastWatchAt`。
+- DELETE 带 `vid` 删除单条，不带则清空；都是逻辑删除，保留防刷依据，不会重置播放冷却。
+
+### 8.8 播放页快照：GET /api/interactions/videos/{vid}/my-state
+
+- 响应 `data`：`{ vid, liked, starred, lastWatchPosition, completed }`；游客全部返回默认值。
+
+### 8.9 公开计数：GET /api/interactions/videos/{vid}/stat 与 POST /api/interactions/videos/stats
+
+- 单条响应：`{ vid, viewCount, likeCount, starCount, shareCount, commentCount }`。
+- 批量请求体 `{ "vids": ["..."] }`，响应是以 `vid` 为键的对象；缺失的视频补 0。
+- 计数经过 Redis 写缓冲，属于最终一致，可能比明细滞后几秒。
+
+### 8.10 分享：POST /api/interactions/videos/{vid}/share
+
+- 必须带 Header `Idempotency-Key`，缺失时返回 `400`。
+- 同一个键重复请求：幂等成功，不重复计数。同一个键被别的用户或别的视频用过：当前返回 `500`（已知问题，计划改为 `409`）。
+- 响应 `data`：`{ vid, action: "SHARE", active: true }`。
+
+## 9. 核对来源与验证边界
 
 本文核对了当前各微服务控制器源码及关联契约组件：
 - **认证服务**：[AuthController](../service/auth-service/src/main/java/com/calles/platform/auth/interfaces/http/AuthController.java)
@@ -1209,6 +1284,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
   - 内部端点：[InternalAuditController](../service/audit-service/src/main/java/com/calles/platform/audit/interfaces/http/controller/internal/InternalAuditController.java)
 - **转码服务**：
   - 任务调度与查询：[TranscodeTaskController](../service/transcode-service/src/main/java/com/calles/platform/transcode/interfaces/http/TranscodeTaskController.java)
+- **互动服务**：[InteractionLikeController](../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionLikeController.java)、[InteractionStarController](../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionStarController.java)、[InteractionWatchController](../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionWatchController.java)、[InteractionStatController](../service/interaction-service/src/main/java/com/calles/platform/interaction/interfaces/http/InteractionStatController.java)
 - **网关路由与安全配置**：[gateway-service/application.yml](../service/gateway-service/src/main/resources/application.yml) 与 [gateway-application.yml](back/gateway-application.yml)
 
 本文基于当前最新代码与接口层契约整理。具体用例、状态流转与时序图见各模块专用设计文档。
