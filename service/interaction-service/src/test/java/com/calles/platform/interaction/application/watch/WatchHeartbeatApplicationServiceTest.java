@@ -443,6 +443,25 @@ class WatchHeartbeatApplicationServiceTest {
     }
 
     @Test
+    @DisplayName("首次有效播放同时达到完播阈值时：按PLAY再PLAY_COMPLETE顺序各发布一次")
+    void shouldPublishPlayThenCompleteWhenOneHeartbeatMeetsBothThresholds() {
+        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.empty());
+        when(historyRepository.claimInitialPlay(any(), any(LocalDateTime.class), eq(5))).thenReturn(1);
+        when(historyRepository.markCompletedIfUncompleted(any())).thenReturn(1);
+
+        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 90, 5, 100);
+
+        assertThat(history.isSessionPlayEmitted()).isTrue();
+        assertThat(history.isCompleted()).isTrue();
+        ArgumentCaptor<VideoActionPayload> captor = ArgumentCaptor.forClass(VideoActionPayload.class);
+        verify(eventPublisher, org.mockito.Mockito.times(2)).publishVideoAction(captor.capture());
+        assertThat(captor.getAllValues())
+                .extracting(VideoActionPayload::action)
+                .containsExactly(VideoActionPayload.ACTION_PLAY, VideoActionPayload.ACTION_PLAY_COMPLETE);
+        verify(counterRepository).incrementViewCount("vid_100", 1L);
+    }
+
+    @Test
     @DisplayName("完播CAS返回0时：不重复发布完播事件")
     void shouldPreventDuplicateCompleteEventsWhenCompleteCasReturnsZero() {
         WatchHistory existing = WatchHistory.create("user_01", "vid_100", 85, 85, 100);

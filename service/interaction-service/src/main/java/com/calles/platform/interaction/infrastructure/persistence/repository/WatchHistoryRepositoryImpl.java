@@ -136,11 +136,4 @@ public class WatchHistoryRepositoryImpl implements WatchHistoryRepository {
         return mapper.claimRepeatPlay(id, now, cooldownBoundary, validThreshold);
     }
 
-    @Override
-    public int claimValidPlay(String id, LocalDateTime now, LocalDateTime cooldownBoundary) {
-        if (id == null || id.isBlank() || now == null || cooldownBoundary == null) {
-            return 0;
-        }
-        return mapper.claimValidPlay(id, now, cooldownBoundary);
-    }
 }

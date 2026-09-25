@@ -1,5 +1,6 @@
 package com.calles.platform.interaction.domain.model.watch;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 import lombok.AccessLevel;
@@ -123,7 +124,7 @@ public class WatchHistory {
         int safeDelta = Math.max(0, deltaDuration);
         int safeTotal = Math.max(0, videoDuration);
 
-        return WatchHistory.builder()
+        WatchHistory history = WatchHistory.builder()
                 .id(UUID.randomUUID().toString().replace("-", ""))
                 .userId(userId.trim())
                 .vid(vid.trim())
@@ -138,6 +139,8 @@ public class WatchHistory {
                 .lastWatchAt(now)
                 .deleted(false)
                 .build();
+        history.markEligibleForNextPlayIfSessionQualified();
+        return history;
     }
 
     /**
@@ -157,6 +160,30 @@ public class WatchHistory {
             this.videoDuration = videoDuration;
         }
         this.lastWatchAt = LocalDateTime.now();
+        markEligibleForNextPlayIfSessionQualified();
+    }
+
+    /**
+     * 判断当前会话是否达到视频总时长 30% 的消费门槛。
+     *
+     * <p>视频总时长未知时不产生下一会话播放资格，避免仅凭心跳时长错误放行。</p>
+     *
+     * @return true 表示当前会话已达到资格门槛
+     */
+    public boolean isSessionQualified() {
+        return this.videoDuration > 0
+                && this.sessionWatchedDuration >= qualifiedSessionDuration(this.videoDuration);
+    }
+
+    /**
+     * 依据当前会话的时长更新下一会话播放资格。
+     *
+     * <p>资格一经达成只会置为 true；新会话开始时再根据上一会话结果统一重置，避免同一会话内重复计算比例。</p>
+     */
+    public void markEligibleForNextPlayIfSessionQualified() {
+        if (isSessionQualified()) {
+            this.eligibleForNextPlay = true;
+        }
     }
 
     /**
@@ -182,6 +209,65 @@ public class WatchHistory {
         this.eligibleForNextPlay = previousSessionQualified;
         this.sessionWatchedDuration = 0;
         this.sessionPlayEmitted = false;
+    }
+
+    /**
+     * 超过会话超时时间时，以当前会话资格初始化下一会话状态。
+     *
+     * <p>逻辑删除记录此前已被授予资格时保留该资格，避免删除与复活之间的状态切换破坏既有防重语义。</p>
+     *
+     * @param now 当前业务时间
+     * @param sessionTimeout 无心跳时长阈值
+     * @return true 表示已切换至新会话
+     */
+    public boolean startNewSessionIfExpired(LocalDateTime now, java.time.Duration sessionTimeout) {
+        if (!isNewWatchSession(now, sessionTimeout)) {
+            return false;
+        }
+        boolean previousSessionQualified = isSessionQualified()
+                || (this.deleted && this.eligibleForNextPlay);
+        startNewSession(previousSessionQualified);
+        return true;
+    }
+
+    /**
+     * 根据已持久化的会话状态计算本次可尝试的有效播放资格。
+     *
+     * <p>该方法仅给出业务决策，不替代仓储 CAS。并发请求仍必须由数据库以 session_play_emitted、资格与冷却时间作为最终防线。</p>
+     *
+     * @param now 当前业务时间
+     * @param repeatWindow 重复有效播放的冷却周期
+     * @param validPlayThreshold 单会话有效播放时长门槛
+     * @return 播放资格决策；未达条件时返回 {@link PlayClaimDecision#none()}
+     */
+    public PlayClaimDecision decidePlayClaim(LocalDateTime now, Duration repeatWindow,
+                                             Duration validPlayThreshold) {
+        if (now == null || repeatWindow == null || validPlayThreshold == null
+                || this.sessionWatchedDuration < validPlayThreshold.toSeconds()
+                || this.sessionPlayEmitted) {
+            return PlayClaimDecision.none();
+        }
+        if (this.lastValidPlayAt == null) {
+            return PlayClaimDecision.initial();
+        }
+        LocalDateTime cooldownBoundary = now.minus(repeatWindow);
+        if (!this.eligibleForNextPlay || this.lastValidPlayAt.isAfter(cooldownBoundary)) {
+            return PlayClaimDecision.none();
+        }
+        return PlayClaimDecision.repeat(cooldownBoundary);
+    }
+
+    /**
+     * 判断已更新的观看事实是否需要尝试完播 CAS。
+     *
+     * <p>仅由领域实体维护位置、视频时长与完播状态的组合语义；数据库仍负责保证多请求下只成功一次。</p>
+     *
+     * @return true 表示已达到完播阈值且内存状态尚未完播
+     */
+    public boolean shouldClaimCompletion() {
+        return this.videoDuration > 0
+                && this.lastPosition >= completionPosition(this.videoDuration)
+                && !this.completed;
     }
 
     /**
@@ -212,6 +298,75 @@ public class WatchHistory {
      */
     public void markEligibleForNextPlay() {
         this.eligibleForNextPlay = true;
+    }
+
+    /**
+     * 计算指定视频时长对应的会话资格门槛秒数。
+     *
+     * @param videoDuration 视频总时长（秒）
+     * @return 向上取整后的 30% 门槛秒数
+     */
+    private static int qualifiedSessionDuration(int videoDuration) {
+        return (int) Math.ceil(videoDuration * QUALIFIED_THRESHOLD_RATIO);
+    }
+
+    /**
+     * 计算指定视频时长对应的完播位置阈值。
+     *
+     * @param videoDuration 视频总时长（秒）
+     * @return 向上取整后的 90% 位置阈值
+     */
+    private static int completionPosition(int videoDuration) {
+        return (int) Math.ceil(videoDuration * COMPLETION_THRESHOLD_RATIO);
+    }
+
+    /**
+     * 有效播放资格的领域决策结果。
+     *
+     * @param type 可尝试的播放类型
+     * @param cooldownBoundary 重复播放 CAS 使用的冷却时间边界；首次或不尝试时为 null
+     */
+    public record PlayClaimDecision(PlayClaimType type, LocalDateTime cooldownBoundary) {
+
+        /**
+         * 构建不应尝试 CAS 的决策。
+         *
+         * @return 无资格决策
+         */
+        public static PlayClaimDecision none() {
+            return new PlayClaimDecision(PlayClaimType.NONE, null);
+        }
+
+        /**
+         * 构建首次播放 CAS 决策。
+         *
+         * @return 首次播放决策
+         */
+        public static PlayClaimDecision initial() {
+            return new PlayClaimDecision(PlayClaimType.INITIAL, null);
+        }
+
+        /**
+         * 构建重复播放 CAS 决策。
+         *
+         * @param cooldownBoundary 冷却时间边界
+         * @return 重复播放决策
+         */
+        public static PlayClaimDecision repeat(LocalDateTime cooldownBoundary) {
+            return new PlayClaimDecision(PlayClaimType.REPEAT, cooldownBoundary);
+        }
+    }
+
+    /**
+     * 可尝试的有效播放类型。
+     */
+    public enum PlayClaimType {
+        /** 当前会话不应尝试抢占。 */
+        NONE,
+        /** 应尝试首次有效播放 CAS。 */
+        INITIAL,
+        /** 应尝试重复有效播放 CAS。 */
+        REPEAT
     }
 
     /**
@@ -258,5 +413,6 @@ public class WatchHistory {
         }
         this.completed = false;
         this.lastWatchAt = LocalDateTime.now();
+        markEligibleForNextPlayIfSessionQualified();
     }
 }

@@ -113,13 +113,4 @@ public interface WatchHistoryRepository {
      */
     int claimRepeatPlay(String id, LocalDateTime now, LocalDateTime cooldownBoundary, int validThreshold);
 
-    /**
-     * 原子抢占当前冷却周期的有效播放资格并更新 last_valid_play_at 时间戳。
-     *
-     * @param id 观看历史记录主键 ID
-     * @param now 当前时间戳
-     * @param cooldownBoundary 冷却时间边界 (now - repeatWindow)
-     * @return 实际影响行数（1=抢占成功，0=仍在冷却期内或已被其他并发请求抢先处理）
-     */
-    int claimValidPlay(String id, LocalDateTime now, LocalDateTime cooldownBoundary);
 }

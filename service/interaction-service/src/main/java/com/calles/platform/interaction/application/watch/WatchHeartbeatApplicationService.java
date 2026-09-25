@@ -3,6 +3,8 @@ package com.calles.platform.interaction.application.watch;
 import com.calles.platform.interaction.application.event.InteractionEventPublisher;
 import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory;
+import com.calles.platform.interaction.domain.model.watch.WatchHistory.PlayClaimDecision;
+import com.calles.platform.interaction.domain.model.watch.WatchHistory.PlayClaimType;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import com.calles.platform.interaction.domain.repository.WatchHistoryRepository;
 import com.calles.platform.interaction.exception.LockAcquireTimeoutException;
@@ -126,87 +128,186 @@ public class WatchHeartbeatApplicationService {
     }
 
     /**
-     * 事务内核心业务逻辑：负责观看事实持久化、会话流转、30%播放资格维护、CAS有效播放抢占与完播置位。
+     * 事务内核心编排：依次持久化观看事实、更新会话、抢占有效播放资格并处理完播。
+     *
+     * <p>事务由外层 {@link TransactionTemplate} 创建，以保证分布式锁覆盖整个提交过程。</p>
+     *
+     * @param vid 视频编码
+     * @param userId 用户 ID
+     * @param position 当前播放位置
+     * @param deltaDuration 本次观看增量
+     * @param videoDuration 视频总时长
+     * @return 已同步本次业务状态的观看历史
      */
     private WatchHistory doProcessHeartbeatInTransaction(String vid, String userId, int position,
                                                          int deltaDuration, int videoDuration) {
         LocalDateTime now = LocalDateTime.now();
-        Optional<WatchHistory> opt = historyRepository.findPhysicalByUserAndVid(userId, vid);
-        WatchHistory history;
 
-        if (opt.isEmpty()) {
-            // 步骤 2.1: 首次观看，初始化实体（0秒初始心跳或已携带有效增量）
-            history = WatchHistory.create(userId, vid, position, deltaDuration, videoDuration);
-            if (videoDuration > 0 && history.getSessionWatchedDuration() >= (int) Math.ceil(videoDuration * WatchHistory.QUALIFIED_THRESHOLD_RATIO)) {
-                history.markEligibleForNextPlay();
-            }
-            historyRepository.save(history);
-            log.debug("用户 [{}] 首次观看视频 [{}]，初始化观看事实成功", userId, vid);
-        } else {
-            // 步骤 2.2: 存在历史，判断是否进入新会话
-            history = opt.get();
-            boolean isNewSession = history.isNewWatchSession(now, this.sessionTimeout);
-            if (isNewSession) {
-                // 上一会话是否达到 30% 消费门槛赋予下一次播放资格
-                boolean qualified = (history.getVideoDuration() > 0
-                        && history.getSessionWatchedDuration() >= (int) Math.ceil(history.getVideoDuration() * WatchHistory.QUALIFIED_THRESHOLD_RATIO));
-                // 若为逻辑删除复活，且被删除前已具备资格，保留资格（防范误删破坏）
-                if (!qualified && history.isEligibleForNextPlay() && history.isDeleted()) {
-                    qualified = true;
-                }
-                history.startNewSession(qualified);
-                log.debug("用户 [{}] 针对视频 [{}] 开启新观看会话: 上一会话是否合格={}", userId, vid, qualified);
-            }
+        // 步骤 2.1: 先建立或取得观看事实，不在此阶段触发业务事件
+        LoadedHistory loadedHistory = loadOrCreateHistory(userId, vid, position, deltaDuration, videoDuration);
+        WatchHistory history = loadedHistory.history();
 
-            // 步骤 2.3: 更新断点事实（持续累计 watched_duration，独立维护 session_watched_duration）或自愈复活
-            if (history.isDeleted()) {
-                history.revive(position, deltaDuration, videoDuration);
-                if (videoDuration > 0 && history.getSessionWatchedDuration() >= (int) Math.ceil(videoDuration * WatchHistory.QUALIFIED_THRESHOLD_RATIO)) {
-                    history.markEligibleForNextPlay();
-                }
-                historyRepository.revive(history);
-            } else {
-                history.recordHeartbeat(position, deltaDuration, videoDuration);
-                if (videoDuration > 0 && history.getSessionWatchedDuration() >= (int) Math.ceil(videoDuration * WatchHistory.QUALIFIED_THRESHOLD_RATIO)) {
-                    history.markEligibleForNextPlay();
-                }
-                historyRepository.update(history);
-            }
-        }
+        // 步骤 2.2: 已有记录统一完成会话切换、心跳累计、资格更新与事实持久化
+        updateWatchSession(history, loadedHistory.created(), position, deltaDuration, videoDuration, now);
 
-        // 步骤 3: 全局唯一的有效播放门槛判定与 CAS 抢占
-        // 门槛：当前会话累计观看时长达到 valid-play-threshold (默认 5 秒) 且当前会话尚未发送播放事件
-        long thresholdSeconds = validPlayThreshold.toSeconds();
-        if (history.getSessionWatchedDuration() >= thresholdSeconds && !history.isSessionPlayEmitted()) {
-            if (tryClaimValidPlay(history, now)) {
-                // 步骤 3.1: CAS 抢占成功，写入一条标准 PLAY:ACTIVE 领域事件入 Outbox 表
-                history.markValidPlay(now);
-                history.markSessionPlayEmitted();
-                eventPublisher.publishVideoAction(VideoActionPayload.play(userId, vid));
+        // 步骤 3: 仅在 CAS 成功后发布 PLAY，并登记提交后的 Redis 计数回调
+        PlayClaimResult playClaim = claimPlayIfEligible(history, now);
+        publishPlayEventIfClaimed(playClaim, history, userId, vid, now);
 
-                // 步骤 3.2: 注册事务提交后回调（afterCommit），确保 Outbox 事件与事务完全 COMMIT 后才增加 Redis 播放计数
-                // 若 Outbox 插入异常导致事务回滚，afterCommit 绝不执行，杜绝播放量虚高
-                registerAfterCommitIncrement(vid);
-                log.info("用户 [{}] 针对视频 [{}] 达成有效播放 (CAS抢占成功)，写 Outbox 并在事务提交后递增播放量", userId, vid);
-            } else {
-                // 步骤 3.3: 仍在防刷冷却期、资格不符或已被抢占，静默跳过计数与事件，杜绝虚假刷量
-                log.debug("用户 [{}] 针对视频 [{}] 心跳已达有效阈值，但处于冷却期、资格不符或已被抢占，跳过重复计数", userId, vid);
-            }
-        }
-
-        // 步骤 4: 完播判定：达到 90% 阈值且尚未标记完播时，采用完播数据库 CAS 原子置位
-        if (videoDuration > 0 && position >= (int) Math.ceil(videoDuration * WatchHistory.COMPLETION_THRESHOLD_RATIO)) {
-            if (!history.isCompleted()) {
-                int affected = historyRepository.markCompletedIfUncompleted(history.getId());
-                if (affected > 0) {
-                    history.markCompleted();
-                    eventPublisher.publishVideoAction(VideoActionPayload.playComplete(userId, vid));
-                    log.info("用户 [{}] 针对视频 [{}] 达成完播 (CAS原子置位成功)，发布完播事件", userId, vid);
-                }
-            }
-        }
-
+        // 步骤 4: 完播是独立状态；同一心跳可在 PLAY 成功后继续发布 PLAY_COMPLETE
+        processCompletion(history, userId, vid);
         return history;
+    }
+
+    /**
+     * 查询物理观看历史；不存在时创建并持久化首次观看事实。
+     *
+     * <p>创建记录与事件触发严格分离，携带有效增量的首次心跳仍会在后续播放资格阶段参与 CAS。</p>
+     *
+     * @param userId 用户 ID
+     * @param vid 视频编码
+     * @param position 当前播放位置
+     * @param deltaDuration 本次观看增量
+     * @param videoDuration 视频总时长
+     * @return 已存在或新建的观看历史
+     */
+    private LoadedHistory loadOrCreateHistory(String userId, String vid, int position,
+                                              int deltaDuration, int videoDuration) {
+        Optional<WatchHistory> existing = historyRepository.findPhysicalByUserAndVid(userId, vid);
+        if (existing.isPresent()) {
+            return new LoadedHistory(existing.get(), false);
+        }
+
+        WatchHistory history = WatchHistory.create(userId, vid, position, deltaDuration, videoDuration);
+        historyRepository.save(history);
+        log.debug("用户 [{}] 首次观看视频 [{}]，初始化观看事实成功", userId, vid);
+        return new LoadedHistory(history, true);
+    }
+
+    /**
+     * 更新已有观看历史的会话状态与播放事实。
+     *
+     * <p>新建记录已由工厂方法写入本次心跳，避免首次心跳被重复累计；已有记录则统一在本方法内完成会话切换、资格更新与持久化。</p>
+     *
+     * @param history 观看历史
+     * @param position 当前播放位置
+     * @param deltaDuration 本次观看增量
+     * @param videoDuration 视频总时长
+     * @param now 当前业务时间
+     */
+    private void updateWatchSession(WatchHistory history, boolean created, int position, int deltaDuration,
+                                    int videoDuration, LocalDateTime now) {
+        if (created) {
+            return;
+        }
+
+        boolean newSession = history.startNewSessionIfExpired(now, sessionTimeout);
+        if (newSession) {
+            log.debug("用户 [{}] 针对视频 [{}] 开启新观看会话", history.getUserId(), history.getVid());
+        }
+
+        // 步骤 2.2.1: 逻辑删除记录需先复活；普通记录直接累计当前会话和历史时长
+        if (history.isDeleted()) {
+            history.revive(position, deltaDuration, videoDuration);
+            historyRepository.revive(history);
+            return;
+        }
+
+        history.recordHeartbeat(position, deltaDuration, videoDuration);
+        historyRepository.update(history);
+    }
+
+    /**
+     * 按当前会话状态尝试原子抢占有效播放资格。
+     *
+     * @param history 已持久化本次心跳的观看历史
+     * @param now 当前业务时间
+     * @return 抢占类型；未满足应用层前置条件或 CAS 失败时返回 {@link PlayClaimResult#NONE}
+     */
+    private PlayClaimResult claimPlayIfEligible(WatchHistory history, LocalDateTime now) {
+        PlayClaimDecision decision = history.decidePlayClaim(now, repeatWindow, validPlayThreshold);
+        int thresholdSeconds = Math.toIntExact(validPlayThreshold.toSeconds());
+
+        if (decision.type() == PlayClaimType.INITIAL) {
+            return historyRepository.claimInitialPlay(history.getId(), now, thresholdSeconds) > 0
+                    ? PlayClaimResult.INITIAL : PlayClaimResult.NONE;
+        }
+
+        if (decision.type() == PlayClaimType.REPEAT) {
+            return historyRepository.claimRepeatPlay(history.getId(), now,
+                    decision.cooldownBoundary(), thresholdSeconds) > 0
+                    ? PlayClaimResult.REPEAT : PlayClaimResult.NONE;
+        }
+        return PlayClaimResult.NONE;
+    }
+
+    /**
+     * 在播放 CAS 抢占成功后同步内存状态、写入 PLAY Outbox 并登记提交后计数。
+     *
+     * @param playClaim 播放资格抢占结果
+     * @param history 已更新的观看历史
+     * @param userId 用户 ID
+     * @param vid 视频编码
+     * @param now CAS 成功时写入的有效播放时间
+     */
+    private void publishPlayEventIfClaimed(PlayClaimResult playClaim, WatchHistory history,
+                                           String userId, String vid, LocalDateTime now) {
+        if (playClaim == PlayClaimResult.NONE) {
+            return;
+        }
+
+        // 步骤 3.1: 数据库 CAS 已成功，保持内存领域状态与数据库状态一致后写 Outbox
+        history.markValidPlay(now);
+        history.markSessionPlayEmitted();
+        eventPublisher.publishVideoAction(VideoActionPayload.play(userId, vid));
+
+        // 步骤 3.2: 只在事务提交成功后增加 Redis 计数，Outbox 写入失败时不会虚增
+        registerAfterCommitIncrement(vid);
+        log.info("用户 [{}] 针对视频 [{}] 达成{}有效播放，写 Outbox 并在事务提交后递增播放量",
+                userId, vid, playClaim);
+    }
+
+    /**
+     * 在达到完播阈值后通过 CAS 标记完播并发布 PLAY_COMPLETE 事件。
+     *
+     * <p>完播门槛由 {@link WatchHistory#shouldClaimCompletion()} 统一判断，应用服务只负责执行 CAS 与事件发布。</p>
+     *
+     * @param history 已更新的观看历史
+     * @param userId 用户 ID
+     * @param vid 视频编码
+     */
+    private void processCompletion(WatchHistory history, String userId, String vid) {
+        if (!history.shouldClaimCompletion()) {
+            return;
+        }
+
+        // 步骤 4.1: 数据库 CAS 是完播事件幂等防线，成功后才写 Outbox
+        if (historyRepository.markCompletedIfUncompleted(history.getId()) > 0) {
+            history.markCompleted();
+            eventPublisher.publishVideoAction(VideoActionPayload.playComplete(userId, vid));
+            log.info("用户 [{}] 针对视频 [{}] 达成完播 (CAS原子置位成功)，发布完播事件", userId, vid);
+        }
+    }
+
+    /**
+     * 查询或创建观看历史的结果。
+     *
+     * @param history 观看历史领域实体
+     * @param created 是否在本次心跳中新建
+     */
+    private record LoadedHistory(WatchHistory history, boolean created) {
+    }
+
+    /**
+     * 有效播放资格的 CAS 结果。
+     */
+    private enum PlayClaimResult {
+        /** 未满足条件或未抢占到资格。 */
+        NONE,
+        /** 首次有效播放资格抢占成功。 */
+        INITIAL,
+        /** 重复有效播放资格抢占成功。 */
+        REPEAT
     }
 
     /**
@@ -234,38 +335,6 @@ public class WatchHeartbeatApplicationService {
      */
     public WatchHistory startPlay(String vid, String userId) {
         return processHeartbeat(vid, userId, 0, 0, 0);
-    }
-
-    /**
-     * 尝试原子抢占当前会话的有效播放资格。
-     *
-     * <p>判定分支：
-     * <ul>
-     *   <li>首次播放：历史从未生成过播放事件 (lastValidPlayAt == null)，CAS 抢占 initial_play；</li>
-     *   <li>再次播放：必须满足上一会话达到 30% 门槛 (eligibleForNextPlay == true) 且距离上次播放已超出 repeat-window 冷却期，CAS 抢占 repeat_play。</li>
-     * </ul>
-     * </p>
-     *
-     * @param history 观看历史实体
-     * @param now 当前时间戳
-     * @return true 若成功抢到本周期有效播放资格，false 若在冷却期内、未具备资格或已被其他线程抢占
-     */
-    private boolean tryClaimValidPlay(WatchHistory history, LocalDateTime now) {
-        int threshold = (int) validPlayThreshold.toSeconds();
-        if (history.getLastValidPlayAt() == null) {
-            int affected = historyRepository.claimInitialPlay(history.getId(), now, threshold);
-            return affected > 0;
-        } else {
-            if (!history.isEligibleForNextPlay()) {
-                return false;
-            }
-            LocalDateTime cooldownBoundary = now.minus(this.repeatWindow);
-            if (history.getLastValidPlayAt().isAfter(cooldownBoundary)) {
-                return false;
-            }
-            int affected = historyRepository.claimRepeatPlay(history.getId(), now, cooldownBoundary, threshold);
-            return affected > 0;
-        }
     }
 
     /**

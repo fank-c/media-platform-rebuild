@@ -123,20 +123,4 @@ public interface WatchHistoryMapper extends BaseMapper<WatchHistoryPO> {
                         @Param("cooldownBoundary") LocalDateTime cooldownBoundary,
                         @Param("validThreshold") int validThreshold);
 
-    /**
-     * 兼容旧版原子抢占当前冷却周期的有效播放资格接口。
-     */
-    @Update("""
-            UPDATE interaction_watch_history
-            SET last_valid_play_at = #{now},
-                session_play_emitted = 1
-            WHERE id = #{id}
-              AND (
-                  last_valid_play_at IS NULL
-                  OR last_valid_play_at <= #{cooldownBoundary}
-              )
-            """)
-    int claimValidPlay(@Param("id") String id,
-                       @Param("now") LocalDateTime now,
-                       @Param("cooldownBoundary") LocalDateTime cooldownBoundary);
 }
