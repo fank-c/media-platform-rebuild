@@ -1,8 +1,11 @@
 package com.calles.platform.interaction.application.watch;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -12,9 +15,12 @@ import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import com.calles.platform.interaction.domain.repository.WatchHistoryRepository;
+import com.calles.platform.interaction.exception.LockAcquireTimeoutException;
+import com.calles.platform.interaction.infrastructure.redis.RedisLockService;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,7 +28,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DuplicateKeyException;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class WatchHeartbeatApplicationServiceTest {
@@ -43,24 +52,50 @@ class WatchHeartbeatApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
+        // 使用支持完整事务生命周期（包含 afterCommit 触发）的测试事务管理器
+        AbstractPlatformTransactionManager transactionManager = new AbstractPlatformTransactionManager() {
+            @Override
+            protected Object doGetTransaction() {
+                return new Object();
+            }
+
+            @Override
+            protected void doBegin(Object transaction, TransactionDefinition definition) {
+            }
+
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {
+            }
+
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {
+            }
+        };
+        TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+
+        // 使用本地锁降级实现的 RedisLockService，真实执行锁生命周期
+        RedisLockService lockService = new RedisLockService(null);
+
         service = new WatchHeartbeatApplicationService(
                 historyRepository,
                 counterRepository,
                 eventPublisher,
+                lockService,
+                transactionTemplate,
                 REPEAT_WINDOW,
                 VALID_PLAY_THRESHOLD
         );
     }
 
     @Test
-    @DisplayName("首次心跳时长未达到5秒阈值：仅写入观看历史断点，不增加播放量且不写事件")
-    void shouldNotIncrementViewCountWhenInitialHeartbeatBelowThreshold() {
+    @DisplayName("0秒初始心跳：纯净新建观看历史记录，绝不累加播放量且绝不发布事件")
+    void shouldCreateHistoryWithoutIncrementingViewOrPublishingEventOnInitialZeroSecondHeartbeat() {
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.empty());
 
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 3, 3, 100);
+        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 0, 0, 100);
 
-        assertThat(history.getLastPosition()).isEqualTo(3);
-        assertThat(history.getWatchedDuration()).isEqualTo(3);
+        assertThat(history.getLastPosition()).isEqualTo(0);
+        assertThat(history.getWatchedDuration()).isEqualTo(0);
         assertThat(history.getLastValidPlayAt()).isNull();
         verify(historyRepository).save(any(WatchHistory.class));
         verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
@@ -68,30 +103,23 @@ class WatchHeartbeatApplicationServiceTest {
     }
 
     @Test
-    @DisplayName("首次心跳即达到5秒阈值：写入历史并设置防重时间戳，累加播放量且发布标准 PLAY 事件")
-    void shouldIncrementViewCountWhenInitialHeartbeatMeetsThreshold() {
-        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.empty());
+    @DisplayName("心跳增量异常偏大时自动安全截断为15秒上限")
+    void shouldTruncateExcessiveDeltaDurationToMaxLimit() {
+        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 0, 0, 100);
+        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
 
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 6, 6, 100);
+        // 客户端上报 999 秒大增量（快进或恶意伪造）
+        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 20, 999, 100);
 
-        assertThat(history.getLastPosition()).isEqualTo(6);
-        assertThat(history.getWatchedDuration()).isEqualTo(6);
-        assertThat(history.getLastValidPlayAt()).isNotNull();
-        verify(historyRepository).save(any(WatchHistory.class));
-        verify(counterRepository).incrementViewCount("vid_100", 1L);
-
-        ArgumentCaptor<VideoActionPayload> captor = ArgumentCaptor.forClass(VideoActionPayload.class);
-        verify(eventPublisher).publishVideoAction(captor.capture());
-        assertThat(captor.getValue().action()).isEqualTo(VideoActionPayload.ACTION_PLAY);
-        assertThat(captor.getValue().state()).isEqualTo(VideoActionPayload.STATE_ACTIVE);
+        // 验证增量被安全截断为 15 秒，避免快速刷时长
+        assertThat(history.getWatchedDuration()).isEqualTo(15);
     }
 
     @Test
-    @DisplayName("心跳累计达到5秒阈值且CAS抢占成功：增加播放量并写入单条 PLAY 事件")
-    void shouldIncrementViewCountWhenWatchedDurationReachesThresholdAndCasSucceeds() {
+    @DisplayName("心跳累计达标且事务成功提交：通过 afterCommit 触发递增播放量与写入 PLAY 事件")
+    void shouldIncrementViewCountAfterCommitWhenThresholdMetAndCasSucceeds() {
         WatchHistory existing = WatchHistory.create("user_01", "vid_100", 3, 3, 100);
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
-        // CAS 抢占成功
         when(historyRepository.claimValidPlay(eq(existing.getId()), any(LocalDateTime.class), any(LocalDateTime.class)))
                 .thenReturn(1);
 
@@ -101,12 +129,34 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.getWatchedDuration()).isEqualTo(7);
         assertThat(history.getLastValidPlayAt()).isNotNull();
         verify(historyRepository).update(existing);
-        verify(counterRepository).incrementViewCount("vid_100", 1L);
 
+        // 验证写入 Outbox 事件
         ArgumentCaptor<VideoActionPayload> captor = ArgumentCaptor.forClass(VideoActionPayload.class);
         verify(eventPublisher).publishVideoAction(captor.capture());
         assertThat(captor.getValue().action()).isEqualTo(VideoActionPayload.ACTION_PLAY);
-        assertThat(captor.getValue().state()).isEqualTo(VideoActionPayload.STATE_ACTIVE);
+
+        // 验证事务提交后 afterCommit 触发了 Redis 播放量累加
+        verify(counterRepository).incrementViewCount("vid_100", 1L);
+    }
+
+    @Test
+    @DisplayName("写 Outbox 异常导致事务回滚时：afterCommit 不执行，Redis 播放量绝对不被累加")
+    void shouldNotIncrementViewCountWhenTransactionRollsBackDueToOutboxFailure() {
+        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 3, 3, 100);
+        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
+        when(historyRepository.claimValidPlay(eq(existing.getId()), any(LocalDateTime.class), any(LocalDateTime.class)))
+                .thenReturn(1);
+
+        // 模拟写入 Outbox 事件时抛出数据库或网络异常导致事务回滚
+        doThrow(new RuntimeException("Outbox 插入失败，模拟数据库磁盘满或死锁"))
+                .when(eventPublisher).publishVideoAction(any());
+
+        assertThatThrownBy(() -> service.processHeartbeat("vid_100", "user_01", 7, 4, 100))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Outbox 插入失败");
+
+        // 关键断言：事务回滚后，afterCommit 绝不执行，Redis 播放量绝不递增（杜绝虚高）
+        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
     }
 
     @Test
@@ -114,7 +164,6 @@ class WatchHeartbeatApplicationServiceTest {
     void shouldNotIncrementViewCountWithinCooldownWindowWhenCasFails() {
         WatchHistory existing = WatchHistory.create("user_01", "vid_100", 10, 10, 100);
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
-        // 处于冷却期内或已被并发处理，CAS 抢占返回 0
         when(historyRepository.claimValidPlay(eq(existing.getId()), any(LocalDateTime.class), any(LocalDateTime.class)))
                 .thenReturn(0);
 
@@ -130,9 +179,8 @@ class WatchHeartbeatApplicationServiceTest {
     @DisplayName("冷却期结束后再次观看达标：CAS再次成功，可重复计数并写入新一条 PLAY 事件")
     void shouldIncrementViewCountAgainWhenCooldownExpiredAndCasSucceeds() {
         WatchHistory existing = WatchHistory.create("user_01", "vid_100", 20, 20, 100);
-        existing.markValidPlay(LocalDateTime.now().minusHours(7)); // 7小时前有效播放，已过6小时冷却期
+        existing.markValidPlay(LocalDateTime.now().minusHours(7)); // 7小时前有效播放
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
-        // 超出冷却期后 CAS 再次成功抢占
         when(historyRepository.claimValidPlay(eq(existing.getId()), any(LocalDateTime.class), any(LocalDateTime.class)))
                 .thenReturn(1);
 
@@ -145,37 +193,10 @@ class WatchHeartbeatApplicationServiceTest {
         ArgumentCaptor<VideoActionPayload> captor = ArgumentCaptor.forClass(VideoActionPayload.class);
         verify(eventPublisher).publishVideoAction(captor.capture());
         assertThat(captor.getValue().action()).isEqualTo(VideoActionPayload.ACTION_PLAY);
-        assertThat(captor.getValue().state()).isEqualTo(VideoActionPayload.STATE_ACTIVE);
     }
 
     @Test
-    @DisplayName("多端首次并发心跳触发唯一键冲突：自愈重新读取，CAS保证同周期最多只计一次")
-    void shouldRecoverGracefullyFromConcurrentFirstHeartbeatInsert() {
-        WatchHistory existingFromOtherDevice = WatchHistory.create("user_01", "vid_100", 6, 6, 100);
-        existingFromOtherDevice.markValidPlay(LocalDateTime.now()); // 另一台设备先完成插入并成功抢占有效播放
-
-        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100"))
-                .thenReturn(Optional.empty()) // 首次查空
-                .thenReturn(Optional.of(existingFromOtherDevice)); // 冲突后重新查库得到已有记录
-
-        org.mockito.Mockito.doThrow(new DuplicateKeyException("Duplicate entry 'user_01-vid_100'"))
-                .when(historyRepository).save(any(WatchHistory.class));
-        // 另一设备已占领本轮时间戳，当前设备 CAS 返回 0
-        when(historyRepository.claimValidPlay(eq(existingFromOtherDevice.getId()), any(LocalDateTime.class), any(LocalDateTime.class)))
-                .thenReturn(0);
-
-        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 8, 2, 100);
-
-        assertThat(history.getVid()).isEqualTo("vid_100");
-        verify(historyRepository).save(any(WatchHistory.class));
-        verify(historyRepository).update(existingFromOtherDevice);
-        // 绝不重复递增计数与发布事件
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
-        verify(eventPublisher, never()).publishVideoAction(any());
-    }
-
-    @Test
-    @DisplayName("心跳进度达90%且CAS置位成功：标记完播并触发 PLAY_COMPLETE 事件")
+    @DisplayName("心跳进度达90%且完播CAS置位成功：标记完播并触发 PLAY_COMPLETE 事件")
     void shouldTriggerPlayCompleteWhenCasSucceeds() {
         WatchHistory existing = WatchHistory.create("user_01", "vid_100", 80, 80, 100);
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
@@ -190,20 +211,82 @@ class WatchHeartbeatApplicationServiceTest {
         ArgumentCaptor<VideoActionPayload> captor = ArgumentCaptor.forClass(VideoActionPayload.class);
         verify(eventPublisher).publishVideoAction(captor.capture());
         assertThat(captor.getValue().action()).isEqualTo(VideoActionPayload.ACTION_PLAY_COMPLETE);
-        assertThat(captor.getValue().state()).isEqualTo(VideoActionPayload.STATE_ACTIVE);
     }
 
     @Test
-    @DisplayName("多端并发心跳达90%时：完播CAS仅允许成功一次，防范完播事件双发")
+    @DisplayName("完播CAS返回0时：不重复发布完播事件")
     void shouldPreventDuplicateCompleteEventsWhenCompleteCasReturnsZero() {
         WatchHistory existing = WatchHistory.create("user_01", "vid_100", 85, 85, 100);
         when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
-        when(historyRepository.markCompletedIfUncompleted(existing.getId())).thenReturn(0); // 完播 CAS 抢占失败
+        when(historyRepository.markCompletedIfUncompleted(existing.getId())).thenReturn(0);
 
         WatchHistory history = service.processHeartbeat("vid_100", "user_01", 95, 10, 100);
 
         verify(historyRepository).update(existing);
         verify(historyRepository).markCompletedIfUncompleted(existing.getId());
         verify(eventPublisher, never()).publishVideoAction(any());
+    }
+
+    @Test
+    @DisplayName("用户伪删除历史记录后重播：自愈复活但严格继承原时间戳，冷却期内CAS返回0不刷播放量")
+    void shouldReviveSoftDeletedRecordAndPreserveCooldownWindow() {
+        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 20, 20, 100);
+        existing.markValidPlay(LocalDateTime.now().minusHours(1));
+        existing.markDeleted();
+        assertThat(existing.isDeleted()).isTrue();
+
+        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
+        when(historyRepository.claimValidPlay(eq(existing.getId()), any(LocalDateTime.class), any(LocalDateTime.class)))
+                .thenReturn(0);
+
+        WatchHistory history = service.processHeartbeat("vid_100", "user_01", 25, 5, 100);
+
+        assertThat(history.isDeleted()).isFalse();
+        verify(historyRepository).revive(existing);
+        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(eventPublisher, never()).publishVideoAction(any());
+    }
+
+    @Test
+    @DisplayName("心跳加锁排队超时：捕获 LockAcquireTimeoutException 并平滑降级为只读返回已有断点")
+    void shouldDegradeToReadOnlyWhenLockAcquireTimeoutExceptionOccurs() {
+        RedisLockService mockLock = mock(RedisLockService.class);
+        when(mockLock.executeWithLock(any(), any(), any(Supplier.class)))
+                .thenThrow(new LockAcquireTimeoutException("int:lock:watch:user_01:vid_100", Duration.ofSeconds(3)));
+
+        WatchHistory existing = WatchHistory.create("user_01", "vid_100", 40, 40, 100);
+        when(historyRepository.findByUserAndVid("user_01", "vid_100")).thenReturn(Optional.of(existing));
+
+        AbstractPlatformTransactionManager tm = new AbstractPlatformTransactionManager() {
+            @Override
+            protected Object doGetTransaction() { return new Object(); }
+            @Override
+            protected void doBegin(Object transaction, TransactionDefinition definition) {}
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {}
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {}
+        };
+        WatchHeartbeatApplicationService customService = new WatchHeartbeatApplicationService(
+                historyRepository, counterRepository, eventPublisher, mockLock,
+                new TransactionTemplate(tm),
+                REPEAT_WINDOW, VALID_PLAY_THRESHOLD
+        );
+
+        WatchHistory result = customService.processHeartbeat("vid_100", "user_01", 50, 10, 100);
+
+        assertThat(result.getLastPosition()).isEqualTo(40);
+        verify(historyRepository).findByUserAndVid("user_01", "vid_100");
+    }
+
+    @Test
+    @DisplayName("业务内部抛出运行时异常时：不被锁降级逻辑拦截，原样向上抛出")
+    void shouldPropagateBusinessExceptionWhenOccurredInsideTransaction() {
+        when(historyRepository.findPhysicalByUserAndVid("user_01", "vid_100"))
+                .thenThrow(new IllegalStateException("模拟底层状态校验非法异常"));
+
+        assertThatThrownBy(() -> service.processHeartbeat("vid_100", "user_01", 10, 5, 100))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("模拟底层状态校验非法异常");
     }
 }

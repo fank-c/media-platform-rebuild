@@ -41,6 +41,7 @@
         <!-- 对象存储 SDK 统一版本配置，支持 OSS 与 MinIO 双策略模式。 -->
         <aliyun-oss.version>3.17.4</aliyun-oss.version>
         <minio.version>8.5.17</minio.version>
+        <redisson.version>3.31.0</redisson.version>
     </properties>
 
     <dependencyManagement>
@@ -68,6 +69,11 @@
                 <groupId>com.calles.platform</groupId>
                 <artifactId>common-web</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.redisson</groupId>
+                <artifactId>redisson-spring-boot-starter</artifactId>
+                <version>${redisson.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
