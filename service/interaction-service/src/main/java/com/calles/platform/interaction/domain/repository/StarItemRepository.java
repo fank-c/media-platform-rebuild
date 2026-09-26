@@ -37,6 +37,15 @@ public interface StarItemRepository {
     boolean isStarredByUser(String userId, String vid);
 
     /**
+     * 查询指定用户针对某视频在所有收藏夹中的有效明细列表。
+     *
+     * @param userId 用户 ID
+     * @param vid 视频业务公开短码
+     * @return 明细条目列表
+     */
+    List<StarItem> findByUserAndVid(String userId, String vid);
+
+    /**
      * 分页查询指定收藏夹内的视频明细。
      *
      * @param folderId 收藏夹 ID
@@ -95,4 +104,20 @@ public interface StarItemRepository {
      * @return 实际删除行数
      */
     int deleteByUserAndVid(String userId, String vid);
+
+    /**
+     * 查询指定收藏夹内所有有效条目的视频公开业务编码列表。
+     *
+     * @param folderId 收藏夹 ID
+     * @return 视频公开业务编码列表（去重）
+     */
+    List<String> findVidsByFolderId(String folderId);
+
+    /**
+     * 逻辑删除指定收藏夹下的所有明细条目。
+     *
+     * @param folderId 收藏夹 ID
+     * @return 实际影响行数
+     */
+    int deleteByFolderId(String folderId);
 }

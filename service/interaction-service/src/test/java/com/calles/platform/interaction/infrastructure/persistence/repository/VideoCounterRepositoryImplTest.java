@@ -1,14 +1,14 @@
 package com.calles.platform.interaction.infrastructure.persistence.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.calles.platform.interaction.domain.model.counter.CounterType;
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
+import com.calles.platform.interaction.infrastructure.persistence.entity.VideoCounterPO;
 import com.calles.platform.interaction.infrastructure.persistence.mapper.VideoCounterMapper;
-import com.calles.platform.interaction.infrastructure.redis.VideoCounterRedisCache;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -18,57 +18,56 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
- * 视频互动统计仓储实现类单元测试。
- *
- * <p>验证仓储接口对于增量更新委托、缓存优先读取及降级加载回调的协同行为。</p>
+ * 已汇总视频计数快照仓储 MyBatis-Plus 实现测试。
  */
 @ExtendWith(MockitoExtension.class)
 class VideoCounterRepositoryImplTest {
 
-    /** 模拟持久层 Mapper。 */
     @Mock
     private VideoCounterMapper mapper;
 
-    /** 模拟 Redis 缓存与缓冲组件。 */
-    @Mock
-    private VideoCounterRedisCache redisCache;
-
-    /** 被测仓储实例。 */
     private VideoCounterRepositoryImpl repository;
 
-    /**
-     * 每个测试用例执行前的初始化配置。
-     */
     @BeforeEach
     void setUp() {
-        repository = new VideoCounterRepositoryImpl(mapper, redisCache);
+        repository = new VideoCounterRepositoryImpl(mapper);
     }
 
     @Test
-    @DisplayName("增量计数方法正确委托给 Redis 缓存")
-    void shouldDelegateAdjustMethodsToRedisCache() {
-        repository.incrementViewCount("vid_1", 5);
-        verify(redisCache).incrementView("vid_1", 5);
-
-        repository.adjustLikeCount("vid_1", 1);
-        verify(redisCache).adjustLike("vid_1", 1);
-
-        repository.adjustStarCount("vid_1", -1);
-        verify(redisCache).adjustStar("vid_1", -1);
-
-        repository.incrementShareCount("vid_1", 2);
-        verify(redisCache).incrementShare("vid_1", 2);
-    }
-
-    @Test
-    @DisplayName("findByVid 优先从缓存读取")
-    void shouldFindFromCache() {
+    @DisplayName("findByVid 从已汇总的数据库计数表读取")
+    void shouldFindFromDb() {
         VideoCounter sample = VideoCounter.createDefault("vid_1");
-        when(redisCache.getCounter(eq("vid_1"), any())).thenReturn(sample);
+        when(mapper.selectById("vid_1")).thenReturn(VideoCounterPO.fromDomain(sample));
 
-        Optional<VideoCounter> opt = repository.findByVid("vid_1");
+        Optional<VideoCounter> result = repository.findByVid("vid_1");
 
-        assertThat(opt).isPresent();
-        assertThat(opt.get().getVid()).isEqualTo("vid_1");
+        assertThat(result).isPresent();
+        assertThat(result.get().getVid()).isEqualTo("vid_1");
+    }
+
+    @Test
+    @DisplayName("applyDelta 正确分发到各维度的原子累加 Mapper 方法")
+    void shouldApplyDeltaCorrectly() {
+        repository.applyDelta("vid_1", CounterType.VIEW, 10L);
+        verify(mapper).applyViewDelta("vid_1", 10L);
+
+        repository.applyDelta("vid_1", CounterType.LIKE, 1L);
+        verify(mapper).applyLikeDelta("vid_1", 1L);
+
+        repository.applyDelta("vid_1", CounterType.STAR, -1L);
+        verify(mapper).applyStarDelta("vid_1", -1L);
+
+        repository.applyDelta("vid_1", CounterType.SHARE, 2L);
+        verify(mapper).applyShareDelta("vid_1", 2L);
+    }
+
+    @Test
+    @DisplayName("applyDelta 对非法入参防御拦截不调底层 Mapper")
+    void shouldIgnoreInvalidDeltaParameters() {
+        repository.applyDelta(null, CounterType.VIEW, 1L);
+        repository.applyDelta("vid_1", null, 1L);
+        repository.applyDelta("vid_1", CounterType.VIEW, 0L);
+
+        verifyNoInteractions(mapper);
     }
 }

@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -95,6 +96,36 @@ public class InteractionStarController {
         StarFolder folder = starService.createCustomFolder(user.userId(), request.title());
         return ApiResponse.ok(new InteractionResponses.StarFolderItem(
                 folder.getId(), folder.getTitle(), folder.isDefault(), folder.getStatus(), folder.getCreatedAt()));
+    }
+
+    /**
+     * 修改用户自定义收藏夹标题。
+     *
+     * @param folderId 待更名的收藏夹 ID
+     * @param request 包含新标题的更名请求体
+     * @return 修改后的收藏夹信息
+     */
+    @PutMapping("/star/folders/{folderId}")
+    public ApiResponse<InteractionResponses.StarFolderItem> updateFolder(
+            @PathVariable String folderId,
+            @Valid @RequestBody InteractionRequests.UpdateFolder request) {
+        UserInfo user = accessPolicy.requireUser();
+        StarFolder folder = starService.renameFolder(folderId, user.userId(), request.title());
+        return ApiResponse.ok(new InteractionResponses.StarFolderItem(
+                folder.getId(), folder.getTitle(), folder.isDefault(), folder.getStatus(), folder.getCreatedAt()));
+    }
+
+    /**
+     * 删除用户自定义收藏夹（级联清理收藏明细并联动计数）。
+     *
+     * @param folderId 待删除的收藏夹 ID
+     * @return 空成功响应
+     */
+    @DeleteMapping("/star/folders/{folderId}")
+    public ApiResponse<Void> deleteFolder(@PathVariable String folderId) {
+        UserInfo user = accessPolicy.requireUser();
+        starService.deleteFolder(folderId, user.userId());
+        return ApiResponse.ok(null);
     }
 
     /**

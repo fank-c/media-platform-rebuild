@@ -107,7 +107,7 @@ Authorization: Bearer <accessToken>
 | POST | `/api/transcode/tasks/trigger` | 内部微服务 / 管理员 | 手动触发指定画质切片转码流水线 |
 | POST / DELETE | `/api/interactions/videos/{vid}/like` | 已登录 | 点赞 / 取消点赞 |
 | POST / DELETE | `/api/interactions/videos/{vid}/star` | 已登录 | 收藏 / 取消收藏 |
-| GET / POST | `/api/interactions/star/folders` | 已登录 | 收藏夹列表 / 新建自定义收藏夹 |
+| GET / POST / PUT / DELETE | `/api/interactions/star/folders` | 已登录 | 收藏夹列表 / 新建 / 改名 / 删除 |
 | GET | `/api/interactions/star/items` | 已登录 | 分页查询收藏夹内视频 |
 | POST | `/api/interactions/videos/{vid}/heartbeat` | 已登录 | 上报播放心跳 |
 | GET | `/api/interactions/videos/{vid}/watch-progress` | 已登录（服务内允许匿名） | 查询断点进度 |
@@ -1217,15 +1217,18 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 - 响应 `data`：`{ "vid", "action": "STAR" | "UNSTAR", "active" }`。
 - 指定的收藏夹不存在或已删除时返回 `400`。
 
-### 8.3 收藏夹：GET / POST /api/interactions/star/folders
+### 8.3 收藏夹：GET / POST / PUT / DELETE /api/interactions/star/folders
 
-- GET 返回收藏夹数组；用户一个收藏夹都没有时会自动创建默认收藏夹。
-- POST 请求体 `{ "title": "必填" }`，`title` 为空时返回 `400`。
+- GET `/api/interactions/star/folders`：返回当前登录用户的所有可用收藏夹数组；纯读安全接口，用户无收藏夹时返回空数组 `[]`（不隐式写库）。
+- POST `/api/interactions/star/folders`：新建自定义收藏夹。请求体 `{ "title": "必填，不超过64字符" }`；使用“默认收藏夹”系统保留名或与既有可用收藏夹重名时返回 `400`。
+- PUT `/api/interactions/star/folders/{folderId}`：修改自定义收藏夹标题。请求体 `{ "title": "新标题，不超过64字符" }`；默认收藏夹不可改名（`400`），使用系统保留名或与其他可用收藏夹重名返回 `400`，非本人所有或不存在返回 `400`。
+- DELETE `/api/interactions/star/folders/{folderId}`：删除自定义收藏夹。默认收藏夹不可删除（`400`），非本人所有或不存在返回 `400`；级联软删除夹内明细，若被移出视频由此在用户所有收藏夹中均无收录，则扣减视频总收藏计数并同事务发布 Outbox `UNSTAR` 领域事件。
 - 元素字段：`id`、`title`、`isDefault`、`status`、`createdAt`。
 
 ### 8.4 收藏明细：GET /api/interactions/star/items
 
-- 查询参数：`folderId`（可选，默认收藏夹）、`page`（默认 1）、`size`（默认 20，最大 100）。
+- 查询参数：`folderId`（可选，不传时默认查询系统默认收藏夹；若用户尚未创建默认收藏夹则返回空数组 `[]`，不写库）、`page`（默认 1）、`size`（默认 20，最大 100）。
+- 权限与存在性：显式指定 `folderId` 时，若收藏夹不存在、已删除或非当前用户所有，返回 `400` 阻断越权。
 - 元素字段：`id`、`folderId`、`vid`、`createdAt`。
 
 ### 8.5 播放心跳：POST /api/interactions/videos/{vid}/heartbeat
@@ -1257,7 +1260,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 
 - 单条响应：`{ vid, viewCount, likeCount, starCount, shareCount, commentCount }`。
 - 批量请求体 `{ "vids": ["..."] }`，响应是以 `vid` 为键的对象；缺失的视频补 0。
-- 计数经过 Redis 写缓冲，属于最终一致，可能比明细滞后几秒。
+- 计数由业务事务写入 MySQL 增量表，后台汇总后展示；因此公开计数可能比用户互动状态滞后数秒。
 
 ### 8.10 分享：POST /api/interactions/videos/{vid}/share
 

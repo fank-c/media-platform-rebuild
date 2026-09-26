@@ -14,7 +14,7 @@ import static org.mockito.Mockito.when;
 import com.calles.platform.interaction.application.event.InteractionEventPublisher;
 import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory;
-import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
+import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.WatchHistoryRepository;
 import com.calles.platform.interaction.exception.LockAcquireTimeoutException;
 import com.calles.platform.interaction.infrastructure.redis.RedisLockService;
@@ -44,7 +44,7 @@ class WatchHeartbeatApplicationServiceTest {
     private WatchHistoryRepository historyRepository;
 
     @Mock
-    private VideoCounterRepository counterRepository;
+    private CounterDeltaRepository counterDeltaRepository;
 
     @Mock
     private InteractionEventPublisher eventPublisher;
@@ -83,7 +83,7 @@ class WatchHeartbeatApplicationServiceTest {
 
         service = new WatchHeartbeatApplicationService(
                 historyRepository,
-                counterRepository,
+                counterDeltaRepository,
                 eventPublisher,
                 lockService,
                 transactionTemplate,
@@ -106,7 +106,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.isSessionPlayEmitted()).isFalse();
         assertThat(history.getLastValidPlayAt()).isNull();
         verify(historyRepository).save(any(WatchHistory.class));
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
@@ -122,7 +122,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.isSessionPlayEmitted()).isTrue();
         assertThat(history.getLastValidPlayAt()).isNotNull();
         verify(historyRepository).save(any(WatchHistory.class));
-        verify(counterRepository).incrementViewCount("vid_100", 1L);
+        verify(counterDeltaRepository).incrementViewCount(eq("vid_100"), any(), eq(1L));
 
         ArgumentCaptor<VideoActionPayload> captor = ArgumentCaptor.forClass(VideoActionPayload.class);
         verify(eventPublisher).publishVideoAction(captor.capture());
@@ -142,7 +142,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.isSessionPlayEmitted()).isTrue();
         assertThat(history.getLastValidPlayAt()).isNotNull();
         verify(historyRepository).update(existing);
-        verify(counterRepository).incrementViewCount("vid_100", 1L);
+        verify(counterDeltaRepository).incrementViewCount(eq("vid_100"), any(), eq(1L));
 
         ArgumentCaptor<VideoActionPayload> captor = ArgumentCaptor.forClass(VideoActionPayload.class);
         verify(eventPublisher).publishVideoAction(captor.capture());
@@ -165,7 +165,7 @@ class WatchHeartbeatApplicationServiceTest {
         verify(historyRepository).update(existing);
         verify(historyRepository, never()).claimInitialPlay(any(), any(), anyInt());
         verify(historyRepository, never()).claimRepeatPlay(any(), any(), any(), anyInt());
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
@@ -184,7 +184,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.getSessionWatchedDuration()).isEqualTo(35);
         assertThat(history.isEligibleForNextPlay()).isTrue();
         verify(historyRepository).update(existing);
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
@@ -209,7 +209,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.isSessionPlayEmitted()).isFalse();
         // 上一会话 5 秒 < 30 秒，新会话不具备播放资格
         assertThat(history.isEligibleForNextPlay()).isFalse();
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
@@ -229,7 +229,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.getSessionWatchedDuration()).isEqualTo(5);
         assertThat(history.isEligibleForNextPlay()).isFalse();
         verify(historyRepository, never()).claimRepeatPlay(any(), any(), any(), anyInt());
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
@@ -253,7 +253,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.getSessionWatchedDuration()).isEqualTo(5);
         assertThat(history.isSessionPlayEmitted()).isTrue();
         verify(historyRepository).update(existing);
-        verify(counterRepository).incrementViewCount("vid_100", 1L);
+        verify(counterDeltaRepository).incrementViewCount(eq("vid_100"), any(), eq(1L));
 
         ArgumentCaptor<VideoActionPayload> captor = ArgumentCaptor.forClass(VideoActionPayload.class);
         verify(eventPublisher).publishVideoAction(captor.capture());
@@ -276,7 +276,7 @@ class WatchHeartbeatApplicationServiceTest {
 
         assertThat(history.getSessionWatchedDuration()).isEqualTo(5);
         verify(historyRepository, never()).claimRepeatPlay(any(), any(), any(), anyInt());
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
@@ -295,7 +295,7 @@ class WatchHeartbeatApplicationServiceTest {
 
         assertThat(history.getSessionWatchedDuration()).isEqualTo(3);
         verify(historyRepository, never()).claimRepeatPlay(any(), any(), any(), anyInt());
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
@@ -335,7 +335,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(history.isEligibleForNextPlay()).isTrue(); // 不丢失资格
         verify(historyRepository).revive(existing);
         // 处于冷却期内，不递增播放量
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
         verify(eventPublisher, never()).publishVideoAction(any());
     }
 
@@ -378,7 +378,7 @@ class WatchHeartbeatApplicationServiceTest {
                 .hasMessageContaining("Outbox 插入失败");
 
         // 关键断言：事务回滚后，afterCommit 绝不执行，Redis 播放量绝不递增
-        verify(counterRepository, never()).incrementViewCount(any(), any(Long.class));
+        verify(counterDeltaRepository, never()).incrementViewCount(any(), any(), any(Long.class));
     }
 
     @Test
@@ -402,7 +402,7 @@ class WatchHeartbeatApplicationServiceTest {
             protected void doRollback(DefaultTransactionStatus status) {}
         };
         WatchHeartbeatApplicationService customService = new WatchHeartbeatApplicationService(
-                historyRepository, counterRepository, eventPublisher, mockLock,
+                historyRepository, counterDeltaRepository, eventPublisher, mockLock,
                 new TransactionTemplate(tm),
                 REPEAT_WINDOW, VALID_PLAY_THRESHOLD, SESSION_TIMEOUT
         );
@@ -458,7 +458,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(captor.getAllValues())
                 .extracting(VideoActionPayload::action)
                 .containsExactly(VideoActionPayload.ACTION_PLAY, VideoActionPayload.ACTION_PLAY_COMPLETE);
-        verify(counterRepository).incrementViewCount("vid_100", 1L);
+        verify(counterDeltaRepository).incrementViewCount(eq("vid_100"), any(), eq(1L));
     }
 
     @Test

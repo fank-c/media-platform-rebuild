@@ -8,6 +8,7 @@ import com.calles.platform.interaction.application.star.StarApplicationService;
 import com.calles.platform.interaction.application.watch.WatchHeartbeatApplicationService;
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory;
+import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,9 @@ class InteractionQueryApplicationServiceTest {
     private VideoCounterRepository counterRepository;
 
     @Mock
+    private CounterDeltaRepository counterDeltaRepository;
+
+    @Mock
     private com.calles.platform.interaction.domain.repository.InteractionShareRecordRepository shareRecordRepository;
 
     @Mock
@@ -49,6 +53,7 @@ class InteractionQueryApplicationServiceTest {
                 starService,
                 watchService,
                 counterRepository,
+                counterDeltaRepository,
                 shareRecordRepository,
                 eventPublisher
         );
@@ -103,7 +108,7 @@ class InteractionQueryApplicationServiceTest {
         service.recordShare("vid_100", "user_01", "idem_key_1");
 
         org.mockito.Mockito.verify(shareRecordRepository).save(org.mockito.ArgumentMatchers.any());
-        org.mockito.Mockito.verify(counterRepository).incrementShareCount("vid_100", 1L);
+        org.mockito.Mockito.verify(counterDeltaRepository).incrementShareCount("vid_100", "idem_key_1", 1L);
         org.mockito.Mockito.verify(eventPublisher).publishVideoAction(org.mockito.ArgumentMatchers.any());
     }
 
@@ -117,7 +122,7 @@ class InteractionQueryApplicationServiceTest {
         service.recordShare("vid_100", "user_01", "idem_key_1");
 
         org.mockito.Mockito.verify(shareRecordRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
-        org.mockito.Mockito.verify(counterRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
+        org.mockito.Mockito.verify(counterDeltaRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
         org.mockito.Mockito.verify(eventPublisher, org.mockito.Mockito.never()).publishVideoAction(org.mockito.ArgumentMatchers.any());
     }
 

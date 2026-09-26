@@ -24,11 +24,20 @@ public interface StarItemMapper extends BaseMapper<StarItemPO> {
     StarItemPO selectPhysicalByFolderAndVid(@Param("folderId") String folderId, @Param("vid") String vid);
 
     /**
-     * 重新激活自愈已伪删除的收藏明细条目，置位 deleted = 0 并刷新创建时间。
+     * 重新激活自愈已伪删除的收藏明细条目，置位 deleted = 0、递增版本号并刷新创建时间。
      *
      * @param id 条目主键 UUID
      * @return 影响行数
      */
-    @Update("UPDATE interaction_star_item SET deleted = 0, created_at = CURRENT_TIMESTAMP(3) WHERE id = #{id}")
+    @Update("UPDATE interaction_star_item SET deleted = 0, version = version + 1, created_at = CURRENT_TIMESTAMP(3) WHERE id = #{id}")
     int reviveById(@Param("id") String id);
+
+    /**
+     * 逻辑删除指定收藏夹下的所有明细条目。
+     *
+     * @param folderId 收藏夹 ID
+     * @return 影响行数
+     */
+    @Update("UPDATE interaction_star_item SET deleted = 1 WHERE folder_id = #{folderId} AND deleted = 0")
+    int deleteByFolderId(@Param("folderId") String folderId);
 }

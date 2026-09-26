@@ -52,6 +52,21 @@ public class StarItemRepositoryImpl implements StarItemRepository {
     }
 
     @Override
+    public List<StarItem> findByUserAndVid(String userId, String vid) {
+        if (userId == null || vid == null) {
+            return List.of();
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .eq(StarItemPO::getUserId, userId)
+                .eq(StarItemPO::getVid, vid);
+        List<StarItemPO> pos = mapper.selectList(wrapper);
+        if (pos == null) {
+            return List.of();
+        }
+        return pos.stream().map(StarItemPO::toDomain).toList();
+    }
+
+    @Override
     public List<StarItem> findByFolderId(String folderId, int offset, int limit) {
         if (folderId == null || folderId.isBlank()) {
             return List.of();
@@ -125,5 +140,32 @@ public class StarItemRepositoryImpl implements StarItemRepository {
                 .eq(StarItemPO::getUserId, userId)
                 .eq(StarItemPO::getVid, vid);
         return mapper.delete(wrapper);
+    }
+
+    @Override
+    public List<String> findVidsByFolderId(String folderId) {
+        if (folderId == null || folderId.isBlank()) {
+            return List.of();
+        }
+        LambdaQueryWrapper<StarItemPO> wrapper = new LambdaQueryWrapper<StarItemPO>()
+                .select(StarItemPO::getVid)
+                .eq(StarItemPO::getFolderId, folderId.trim());
+        List<StarItemPO> pos = mapper.selectList(wrapper);
+        if (pos == null) {
+            return List.of();
+        }
+        return pos.stream()
+                .map(StarItemPO::getVid)
+                .filter(vid -> vid != null && !vid.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    @Override
+    public int deleteByFolderId(String folderId) {
+        if (folderId == null || folderId.isBlank()) {
+            return 0;
+        }
+        return mapper.deleteByFolderId(folderId.trim());
     }
 }

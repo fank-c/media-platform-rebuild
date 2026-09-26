@@ -104,7 +104,7 @@ graph TD
 | [**内容模块 (content)**](modules/content.md) | 创作者工作台、双 ID 体系、Feign 强探活、分级就绪门禁决策器、僵死任务超时自愈调度器。 | 实体拓扑类图、全生命周期状态机、门禁决策树 |
 | [**审核模块 (audit)**](modules/audit.md) | 提审事件消费、DFA 前缀树敏感词机审、阿里云内容安全 2.0 适配、综合仲裁引擎、回调指数退避重试。 | 多维机审流水线与最高风险综合仲裁流程图 |
 | [**转码模块 (transcode)**](modules/transcode.md) | 提审驱动流媒体压制、系统级 FFmpeg 适配、硬件公平信号量限流、切片托管与门禁闭环。 | 转码工单聚合根类图、转码生命周期流转图 |
-| [**互动模块 (interaction)**](modules/interaction.md) | 点赞、收藏、观看心跳与历史、分享；会话级有效播放 CAS 防重、Redis 计数写缓冲刷盘、自属 Outbox（投递默认关闭）。评论未实现。 | 心跳与播放资格时序图、计数 Write-Behind 流程图 |
+| [**互动模块 (interaction)**](modules/interaction.md) | 点赞、收藏、观看心跳与历史、分享；会话级有效播放 CAS 防重、MySQL 事务内计数增量及后台汇总、自属 Outbox（投递默认关闭）。评论未实现。 | 心跳与播放资格时序图、计数汇总流程图 |
 | [**推荐模块 (recommend)**](modules/recommend.md) | [骨架预留] 首页热门流、关联推荐；消费视频发布/封禁事件与多模态特征特征入库规划。 | 推荐召回、排序与特征录入拓扑图 |
 | [**公共模块 (common)**](modules/common.md) | 统一 ApiResponse 响应外壳、EventEnvelope 事件信封、UserContext 身份上下文与 TraceId 追踪。 | 公共契约与 Filter 线程上下文模型 |
 

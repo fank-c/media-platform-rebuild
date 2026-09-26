@@ -43,6 +43,15 @@ public class StarFolderRepositoryImpl implements StarFolderRepository {
     }
 
     @Override
+    public Optional<StarFolder> findDefaultByUserIdForUpdate(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return Optional.empty();
+        }
+        StarFolderPO po = mapper.selectDefaultByUserIdForUpdate(userId.trim());
+        return Optional.ofNullable(po).map(StarFolderPO::toDomain);
+    }
+
+    @Override
     public List<StarFolder> findActiveByUserId(String userId) {
         if (userId == null || userId.isBlank()) {
             return List.of();
@@ -73,5 +82,38 @@ public class StarFolderRepositoryImpl implements StarFolderRepository {
             return;
         }
         mapper.updateById(StarFolderPO.fromDomain(folder));
+    }
+
+    @Override
+    public boolean existsByUserIdAndTitle(String userId, String title) {
+        if (userId == null || userId.isBlank() || title == null || title.isBlank()) {
+            return false;
+        }
+        LambdaQueryWrapper<StarFolderPO> wrapper = new LambdaQueryWrapper<StarFolderPO>()
+                .eq(StarFolderPO::getUserId, userId.trim())
+                .eq(StarFolderPO::getTitle, title.trim())
+                .eq(StarFolderPO::getStatus, 1);
+        return mapper.selectCount(wrapper) > 0;
+    }
+
+    @Override
+    public boolean existsByUserIdAndTitleExcludingId(String userId, String title, String excludeFolderId) {
+        if (userId == null || userId.isBlank() || title == null || title.isBlank()) {
+            return false;
+        }
+        LambdaQueryWrapper<StarFolderPO> wrapper = new LambdaQueryWrapper<StarFolderPO>()
+                .eq(StarFolderPO::getUserId, userId.trim())
+                .eq(StarFolderPO::getTitle, title.trim())
+                .eq(StarFolderPO::getStatus, 1)
+                .ne(excludeFolderId != null && !excludeFolderId.isBlank(), StarFolderPO::getId, excludeFolderId);
+        return mapper.selectCount(wrapper) > 0;
+    }
+
+    @Override
+    public void deleteById(String id) {
+        if (id == null || id.isBlank()) {
+            return;
+        }
+        mapper.deleteFolderById(id.trim());
     }
 }

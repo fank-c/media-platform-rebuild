@@ -37,6 +37,10 @@ public class StarItemPO {
     @TableField("user_id")
     private String userId;
 
+    /** 明细版本号。 */
+    @TableField("version")
+    private Long version;
+
     /** 逻辑删除标记：0=正常, 1=已删除。 */
     @TableLogic
     @TableField("deleted")
@@ -52,6 +56,7 @@ public class StarItemPO {
                 .folderId(this.folderId)
                 .vid(this.vid)
                 .userId(this.userId)
+                .version(this.version != null ? this.version : 1L)
                 .createdAt(this.createdAt)
                 .deleted(this.deleted != null && this.deleted == 1)
                 .build();
@@ -66,6 +71,7 @@ public class StarItemPO {
                 .folderId(domain.getFolderId())
                 .vid(domain.getVid())
                 .userId(domain.getUserId())
+                .version(domain.getVersion())
                 .createdAt(domain.getCreatedAt())
                 .deleted(domain.isDeleted() ? 1 : 0)
                 .build();

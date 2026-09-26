@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.interfaces.http.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import java.util.List;
 
 /**
@@ -36,10 +37,22 @@ public final class InteractionRequests {
     /**
      * 创建自定义收藏夹请求体。
      *
-     * @param title 收藏夹名称标题 (必填)
+     * @param title 收藏夹名称标题 (必填，不超过64字符)
      */
     public record CreateFolder(
             @NotBlank(message = "收藏夹标题不能为空")
+            @Size(max = 64, message = "收藏夹标题长度不能超过64字符")
+            String title
+    ) { }
+
+    /**
+     * 修改自定义收藏夹标题请求体。
+     *
+     * @param title 收藏夹新标题 (必填，不超过64字符)
+     */
+    public record UpdateFolder(
+            @NotBlank(message = "收藏夹标题不能为空")
+            @Size(max = 64, message = "收藏夹标题长度不能超过64字符")
             String title
     ) { }
 

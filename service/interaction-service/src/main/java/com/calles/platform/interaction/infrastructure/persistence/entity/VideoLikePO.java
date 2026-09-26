@@ -38,6 +38,10 @@ public class VideoLikePO {
     @TableField("status")
     private Integer status;
 
+    /** 状态变更版本号。 */
+    @TableField("version")
+    private Long version;
+
     /** 逻辑删除标记：0=正常, 1=已删除。 */
     @TableLogic
     @TableField("deleted")
@@ -57,6 +61,7 @@ public class VideoLikePO {
                 .vid(this.vid)
                 .userId(this.userId)
                 .status(this.status != null ? LikeStatus.fromValue(this.status) : LikeStatus.CANCELLED)
+                .version(this.version != null ? this.version : 1L)
                 .deleted(this.deleted != null && this.deleted == 1)
                 .createdAt(this.createdAt)
                 .updatedAt(this.updatedAt)
@@ -72,6 +77,7 @@ public class VideoLikePO {
                 .vid(domain.getVid())
                 .userId(domain.getUserId())
                 .status(domain.getStatus() != null ? domain.getStatus().getValue() : LikeStatus.CANCELLED.getValue())
+                .version(domain.getVersion())
                 .deleted(domain.isDeleted() ? 1 : 0)
                 .createdAt(domain.getCreatedAt())
                 .updatedAt(domain.getUpdatedAt())

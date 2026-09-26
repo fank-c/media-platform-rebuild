@@ -83,11 +83,15 @@ public class StarFolder {
         if (title == null || title.isBlank()) {
             throw new IllegalArgumentException("收藏夹标题不能为空");
         }
+        String trimmedTitle = title.trim();
+        if (trimmedTitle.length() > 64) {
+            throw new IllegalArgumentException("收藏夹标题长度不能超过64字符");
+        }
         LocalDateTime now = LocalDateTime.now();
         return StarFolder.builder()
                 .id(UUID.randomUUID().toString().replace("-", ""))
                 .userId(userId.trim())
-                .title(title.trim())
+                .title(trimmedTitle)
                 .isDefault(false)
                 .status(1)
                 .deleted(false)
@@ -108,7 +112,11 @@ public class StarFolder {
         if (newTitle == null || newTitle.isBlank()) {
             throw new IllegalArgumentException("新标题不能为空");
         }
-        this.title = newTitle.trim();
+        String trimmedTitle = newTitle.trim();
+        if (trimmedTitle.length() > 64) {
+            throw new IllegalArgumentException("收藏夹标题长度不能超过64字符");
+        }
+        this.title = trimmedTitle;
         this.updatedAt = LocalDateTime.now();
     }
 

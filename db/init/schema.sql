@@ -536,6 +536,7 @@ CREATE TABLE IF NOT EXISTS `interaction_like` (
     `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
     `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '点赞状态: 1=已赞, 0=已取消',
+    `version` BIGINT NOT NULL DEFAULT 1 COMMENT '状态版本号，每次状态反转递增',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -554,9 +555,11 @@ CREATE TABLE IF NOT EXISTS `interaction_star_folder` (
     `is_default` TINYINT NOT NULL DEFAULT 0 COMMENT '是否默认收藏夹: 1=是, 0=否',
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1=正常, 0=已删除',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
+    `active_title` VARCHAR(64) GENERATED ALWAYS AS (IF(`deleted` = 0, `title`, NULL)) VIRTUAL COMMENT '有效收藏夹标题虚拟列，用于唯一定界',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_folder_user_active_title` (`user_id`, `active_title`),
     KEY `idx_folder_user` (`user_id`, `status`),
     CONSTRAINT `ck_star_folder_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏夹表';
@@ -567,6 +570,7 @@ CREATE TABLE IF NOT EXISTS `interaction_star_item` (
     `folder_id` CHAR(32) NOT NULL COMMENT '所属收藏夹ID',
     `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
     `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID (反查冗余)',
+    `version` BIGINT NOT NULL DEFAULT 1 COMMENT '明细版本号，每次自愈复活递增',
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
@@ -611,6 +615,26 @@ CREATE TABLE IF NOT EXISTS `interaction_share_record` (
     KEY `idx_share_user_vid` (`user_id`, `vid`),
     CONSTRAINT `ck_share_record_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频分享请求幂等防重记录表';
+
+-- interaction-service: 公开计数待汇总增量（仅真实业务状态变化时同事务写入）
+CREATE TABLE IF NOT EXISTS `interaction_counter_delta` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '汇总顺序与主键',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频业务编码',
+    `counter_type` VARCHAR(16) NOT NULL COMMENT 'VIEW LIKE STAR SHARE',
+    `delta` BIGINT NOT NULL COMMENT '计数增量',
+    `source_type` VARCHAR(32) NOT NULL COMMENT '业务事实类型: LIKE_ACTIVE, LIKE_INACTIVE, STAR_ACTIVE, STAR_INACTIVE, WATCH_PLAY, SHARE',
+    `source_id` VARCHAR(128) NOT NULL COMMENT '业务事实主键或幂等标识',
+    `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `processed_at` DATETIME(3) NULL COMMENT '汇总成功时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_counter_delta_pending` (`processed_at`, `id`),
+    UNIQUE KEY `uk_counter_delta_source` (`source_type`, `source_id`),
+    CONSTRAINT `ck_counter_delta_type` CHECK (`counter_type` IN ('VIEW', 'LIKE', 'STAR', 'SHARE')),
+    CONSTRAINT `ck_counter_delta_value` CHECK (
+        (`counter_type` IN ('VIEW', 'SHARE') AND `delta` > 0)
+        OR (`counter_type` IN ('LIKE', 'STAR') AND `delta` <> 0)
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='互动公开计数待汇总增量';
 
 -- interaction-service: 领域事件 Outbox 发件箱表
 CREATE TABLE IF NOT EXISTS `interaction_outbox` (

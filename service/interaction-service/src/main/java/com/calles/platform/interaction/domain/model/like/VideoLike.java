@@ -31,6 +31,9 @@ public class VideoLike {
     /** 点赞状态 (1=ACTIVE, 0=CANCELLED)。 */
     private LikeStatus status;
 
+    /** 状态变更版本号 (从 1 起始，每次状态实质反转严格单调递增，用于唯一约束幂等定界)。 */
+    private long version;
+
     /** 是否已逻辑删除：true=已删除, false=正常有效。 */
     private boolean deleted;
 
@@ -61,6 +64,7 @@ public class VideoLike {
                 .vid(vid.trim())
                 .userId(userId.trim())
                 .status(LikeStatus.ACTIVE)
+                .version(1L)
                 .deleted(false)
                 .createdAt(now)
                 .updatedAt(now)
@@ -85,6 +89,7 @@ public class VideoLike {
             return false;
         }
         this.status = LikeStatus.CANCELLED;
+        this.version++;
         this.updatedAt = LocalDateTime.now();
         return true;
     }
@@ -100,6 +105,7 @@ public class VideoLike {
         }
         this.status = LikeStatus.ACTIVE;
         this.deleted = false;
+        this.version++;
         this.updatedAt = LocalDateTime.now();
         return true;
     }

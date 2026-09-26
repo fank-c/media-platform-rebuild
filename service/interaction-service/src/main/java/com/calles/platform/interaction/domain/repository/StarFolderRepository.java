@@ -26,6 +26,16 @@ public interface StarFolderRepository {
     Optional<StarFolder> findDefaultByUserId(String userId);
 
     /**
+     * 采用当前读（Locking Read FOR UPDATE）查询用户的系统默认收藏夹。
+     *
+     * <p>穿透 MVCC 快照限制，保证读取到其他并发事务已提交的最新默认收藏夹记录。</p>
+     *
+     * @param userId 用户 ID
+     * @return 默认收藏夹实体 (若存在)
+     */
+    Optional<StarFolder> findDefaultByUserIdForUpdate(String userId);
+
+    /**
      * 查询用户所有正常可用收藏夹列表。
      *
      * @param userId 用户 ID
@@ -46,4 +56,30 @@ public interface StarFolderRepository {
      * @param folder 实体对象
      */
     void update(StarFolder folder);
+
+    /**
+     * 判断用户是否已存在同名可用收藏夹（未删除）。
+     *
+     * @param userId 用户 ID
+     * @param title 收藏夹标题
+     * @return true 若已存在同名活跃收藏夹
+     */
+    boolean existsByUserIdAndTitle(String userId, String title);
+
+    /**
+     * 判断用户是否存在同名可用收藏夹（排除指定收藏夹 ID）。
+     *
+     * @param userId 用户 ID
+     * @param title 收藏夹标题
+     * @param excludeFolderId 需排除的收藏夹 ID
+     * @return true 若已存在同名活跃收藏夹
+     */
+    boolean existsByUserIdAndTitleExcludingId(String userId, String title, String excludeFolderId);
+
+    /**
+     * 根据主键逻辑删除收藏夹。
+     *
+     * @param id 收藏夹 ID
+     */
+    void deleteById(String id);
 }

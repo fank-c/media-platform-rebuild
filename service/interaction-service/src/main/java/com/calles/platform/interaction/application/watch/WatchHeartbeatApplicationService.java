@@ -5,7 +5,7 @@ import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory.PlayClaimDecision;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory.PlayClaimType;
-import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
+import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.WatchHistoryRepository;
 import com.calles.platform.interaction.exception.LockAcquireTimeoutException;
 import com.calles.platform.interaction.infrastructure.redis.RedisLockService;
@@ -17,8 +17,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -30,7 +28,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li>锁超时平滑降级：并发心跳锁等待超时时优雅只读降级返回当前断点，杜绝向前端抛出 500 错误；</li>
  *   <li>输入规整与边界防御：拦截负数与越界断点，安全截断异常超大增量时长（上限 15 秒），防止快进恶意刷量；</li>
  *   <li>创建与发布严格解耦：0 秒初始心跳纯净创建事实记录，绝不增加播放量、绝不发任何事件；</li>
- *   <li>事务与计数单向强一致：通过 {@code afterCommit} 机制，保证仅在 Outbox 事件与 CAS 真正落库提交后才递增 Redis 播放量，事务回滚绝不误增。</li>
+ *   <li>事务与计数增量一致：有效播放 CAS、Outbox 和待汇总增量同事务提交，公开计数由后台汇总。</li>
  * </ul>
  * </p>
  */
@@ -48,7 +46,7 @@ public class WatchHeartbeatApplicationService {
     private static final int MAX_HEARTBEAT_DELTA_SECONDS = 15;
 
     private final WatchHistoryRepository historyRepository;
-    private final VideoCounterRepository counterRepository;
+    private final CounterDeltaRepository counterDeltaRepository;
     private final InteractionEventPublisher eventPublisher;
     private final RedisLockService lockService;
     private final TransactionTemplate transactionTemplate;
@@ -58,7 +56,7 @@ public class WatchHeartbeatApplicationService {
 
     public WatchHeartbeatApplicationService(
             WatchHistoryRepository historyRepository,
-            VideoCounterRepository counterRepository,
+            CounterDeltaRepository counterDeltaRepository,
             InteractionEventPublisher eventPublisher,
             RedisLockService lockService,
             TransactionTemplate transactionTemplate,
@@ -66,7 +64,7 @@ public class WatchHeartbeatApplicationService {
             @Value("${interaction.watch.valid-play-threshold:5s}") Duration validPlayThreshold,
             @Value("${interaction.watch.session-timeout:30m}") Duration sessionTimeout) {
         this.historyRepository = historyRepository;
-        this.counterRepository = counterRepository;
+        this.counterDeltaRepository = counterDeltaRepository;
         this.eventPublisher = eventPublisher;
         this.lockService = lockService;
         this.transactionTemplate = transactionTemplate;
@@ -150,7 +148,7 @@ public class WatchHeartbeatApplicationService {
         // 步骤 2.2: 已有记录统一完成会话切换、心跳累计、资格更新与事实持久化
         updateWatchSession(history, loadedHistory.created(), position, deltaDuration, videoDuration, now);
 
-        // 步骤 3: 仅在 CAS 成功后发布 PLAY，并登记提交后的 Redis 计数回调
+        // 步骤 3: 仅在 CAS 成功后发布 PLAY，并同事务写入计数增量
         PlayClaimResult playClaim = claimPlayIfEligible(history, now);
         publishPlayEventIfClaimed(playClaim, history, userId, vid, now);
 
@@ -242,7 +240,7 @@ public class WatchHeartbeatApplicationService {
     }
 
     /**
-     * 在播放 CAS 抢占成功后同步内存状态、写入 PLAY Outbox 并登记提交后计数。
+     * 在播放 CAS 抢占成功后同步内存状态，同事务写入 PLAY Outbox 与播放计数增量。
      *
      * @param playClaim 播放资格抢占结果
      * @param history 已更新的观看历史
@@ -261,9 +259,10 @@ public class WatchHeartbeatApplicationService {
         history.markSessionPlayEmitted();
         eventPublisher.publishVideoAction(VideoActionPayload.play(userId, vid));
 
-        // 步骤 3.2: 只在事务提交成功后增加 Redis 计数，Outbox 写入失败时不会虚增
-        registerAfterCommitIncrement(vid);
-        log.info("用户 [{}] 针对视频 [{}] 达成{}有效播放，写 Outbox 并在事务提交后递增播放量",
+        // 步骤 3.2: 与播放资格及 Outbox 在同一事务内记录公开计数增量
+        String sourceId = history.getId() + ":" + now;
+        counterDeltaRepository.incrementViewCount(vid, sourceId, 1L);
+        log.info("用户 [{}] 针对视频 [{}] 达成{}有效播放，写入 Outbox 与计数增量",
                 userId, vid, playClaim);
     }
 
@@ -308,22 +307,6 @@ public class WatchHeartbeatApplicationService {
         INITIAL,
         /** 重复有效播放资格抢占成功。 */
         REPEAT
-    }
-
-    /**
-     * 注册数据库事务成功提交后的播放计数递增回调。
-     */
-    private void registerAfterCommitIncrement(String vid) {
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    counterRepository.incrementViewCount(vid, 1L);
-                }
-            });
-        } else {
-            counterRepository.incrementViewCount(vid, 1L);
-        }
     }
 
     /**

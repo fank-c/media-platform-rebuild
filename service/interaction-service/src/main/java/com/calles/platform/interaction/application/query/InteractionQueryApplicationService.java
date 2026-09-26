@@ -5,6 +5,7 @@ import com.calles.platform.interaction.application.star.StarApplicationService;
 import com.calles.platform.interaction.application.watch.WatchHeartbeatApplicationService;
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
 import com.calles.platform.interaction.domain.model.watch.WatchHistory;
+import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import java.util.Collection;
 import java.util.List;
@@ -33,6 +34,7 @@ public class InteractionQueryApplicationService {
     private final StarApplicationService starService;
     private final WatchHeartbeatApplicationService watchService;
     private final VideoCounterRepository counterRepository;
+    private final CounterDeltaRepository counterDeltaRepository;
     private final com.calles.platform.interaction.domain.repository.InteractionShareRecordRepository shareRecordRepository;
     private final com.calles.platform.interaction.application.event.InteractionEventPublisher eventPublisher;
 
@@ -146,7 +148,7 @@ public class InteractionQueryApplicationService {
         com.calles.platform.interaction.domain.model.share.InteractionShareRecord newRecord =
                 com.calles.platform.interaction.domain.model.share.InteractionShareRecord.create(idempotencyKey.trim(), userId, vid);
         shareRecordRepository.save(newRecord);
-        counterRepository.incrementShareCount(vid, 1L);
+        counterDeltaRepository.incrementShareCount(vid, idempotencyKey.trim(), 1L);
         eventPublisher.publishVideoAction(com.calles.platform.interaction.domain.model.event.VideoActionPayload.share(userId, vid));
         log.info("用户 [{}] 成功分享视频 [{}]，幂等键 [{}]，写入 Outbox", userId, vid, idempotencyKey);
     }

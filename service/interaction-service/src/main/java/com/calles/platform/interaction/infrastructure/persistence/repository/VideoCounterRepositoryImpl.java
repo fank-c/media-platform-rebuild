@@ -1,10 +1,10 @@
 package com.calles.platform.interaction.infrastructure.persistence.repository;
 
+import com.calles.platform.interaction.domain.model.counter.CounterType;
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import com.calles.platform.interaction.infrastructure.persistence.entity.VideoCounterPO;
 import com.calles.platform.interaction.infrastructure.persistence.mapper.VideoCounterMapper;
-import com.calles.platform.interaction.infrastructure.redis.VideoCounterRedisCache;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -12,49 +12,40 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 /**
- * 视频互动统计聚合根仓储实现类 (Cache-Aside + Write-Behind 架构)。
+ * 视频公开互动统计快照仓储 MyBatis-Plus 实现类。
  *
- * <p>读取优先命中 Redis 内存缓存；高频增量变动全在 Redis 内存完成并由后台调度器平滑批量刷盘。</p>
+ * <p>基于 {@link VideoCounterMapper} 提供已汇总快照的单条/批量查询，以及后台汇总用例的原子累加落地。</p>
  */
 @Repository
 @RequiredArgsConstructor
 public class VideoCounterRepositoryImpl implements VideoCounterRepository {
 
-    /** 视频互动统计计数持久层数据访问接口。 */
+    /** 视频公开互动统计快照 Mapper。 */
     private final VideoCounterMapper mapper;
 
-    /** 视频互动计数 Redis 缓存与 Write-Behind 异步缓冲组件。 */
-    private final VideoCounterRedisCache redisCache;
-
     /**
-     * 根据视频短码查询互动统计聚合根。
-     *
-     * <p>优先走缓存读取；若缓存未命中则通过 lambda 回调从数据库冷加载并回填缓存，避免缓存击穿。</p>
+     * 查询已汇总的 MySQL 计数快照。
      *
      * @param vid 视频公开业务短码
-     * @return 包含计数信息的领域对象 Optional；入参为空或查无数据时返回相应空/默认实例
+     * @return 统计计数；无记录时返回全零实体
      */
     @Override
     public Optional<VideoCounter> findByVid(String vid) {
-        // 步骤 1: 校验业务短码有效性
+        // 步骤 1: 业务短码有效性防御
         if (vid == null || vid.isBlank()) {
             return Optional.empty();
         }
-        // 步骤 2: 优先查缓存，未命中时执行 DB 回调加载并回填
-        VideoCounter counter = redisCache.getCounter(vid, () -> {
-            VideoCounterPO po = mapper.selectById(vid);
-            return po != null ? po.toDomain() : VideoCounter.createDefault(vid);
-        });
-        return Optional.ofNullable(counter);
+
+        // 步骤 2: 主键检索并转换为领域对象，查无记录时兜底默认零值对象
+        VideoCounterPO po = mapper.selectById(vid.trim());
+        return Optional.of(po != null ? po.toDomain() : VideoCounter.createDefault(vid.trim()));
     }
 
     /**
-     * 批量查询多个视频的互动统计聚合根。
-     *
-     * <p>支持缓存与冷加载混合查询：已在缓存中的直接返回，缓存缺失的批量回源数据库并回填。</p>
+     * 批量读取已汇总计数快照。
      *
      * @param vids 视频短码集合
-     * @return 互动统计聚合根列表
+     * @return 计数快照列表
      */
     @Override
     public List<VideoCounter> findByVids(Collection<String> vids) {
@@ -62,75 +53,32 @@ public class VideoCounterRepositoryImpl implements VideoCounterRepository {
         if (vids == null || vids.isEmpty()) {
             return List.of();
         }
-        // 步骤 2: 委托 RedisCache 执行批量查询与差集回源
-        return redisCache.getBatchCounters(vids, missingVids -> {
-            List<VideoCounterPO> pos = mapper.selectBatchIds(missingVids);
-            if (pos == null) {
-                return List.of();
-            }
-            return pos.stream().map(VideoCounterPO::toDomain).toList();
-        });
+
+        // 步骤 2: 批量主键查询并转换为领域对象列表
+        List<VideoCounterPO> pos = mapper.selectBatchIds(vids);
+        return pos == null ? List.of() : pos.stream().map(VideoCounterPO::toDomain).toList();
     }
 
     /**
-     * 保存或更新视频互动统计计数聚合根快照。
+     * 原子累加指定维度的计数快照。
      *
-     * @param counter 领域聚合根实体
+     * @param vid 视频业务短码
+     * @param type 计数维度类型
+     * @param delta 净变动量
      */
     @Override
-    public void save(VideoCounter counter) {
-        if (counter == null) {
+    public void applyDelta(String vid, CounterType type, long delta) {
+        // 步骤 1: 防御无效参数与零变动
+        if (vid == null || vid.isBlank() || type == null || delta == 0) {
             return;
         }
-        // 步骤 1: 领域实体转换为持久化 PO
-        VideoCounterPO po = VideoCounterPO.fromDomain(counter);
-        // 步骤 2: 覆盖写入快照（利用 ON DUPLICATE KEY UPDATE 幂等保存）
-        mapper.upsertSnapshot(po);
-    }
 
-    /**
-     * 增加视频播放量。
-     *
-     * <p>直接在 Redis 内存中原子自增并标记脏数据，由后台调度器平滑异步刷盘。</p>
-     *
-     * @param vid 视频短码
-     * @param delta 播放增量
-     */
-    @Override
-    public void incrementViewCount(String vid, long delta) {
-        redisCache.incrementView(vid, delta);
-    }
-
-    /**
-     * 调整视频点赞计数。
-     *
-     * @param vid 视频短码
-     * @param delta 点赞变动量 (+1 或 -1)
-     */
-    @Override
-    public void adjustLikeCount(String vid, long delta) {
-        redisCache.adjustLike(vid, delta);
-    }
-
-    /**
-     * 调整视频收藏计数。
-     *
-     * @param vid 视频短码
-     * @param delta 收藏变动量 (+1 或 -1)
-     */
-    @Override
-    public void adjustStarCount(String vid, long delta) {
-        redisCache.adjustStar(vid, delta);
-    }
-
-    /**
-     * 增加视频分享计数。
-     *
-     * @param vid 视频短码
-     * @param delta 分享增量
-     */
-    @Override
-    public void incrementShareCount(String vid, long delta) {
-        redisCache.incrementShare(vid, delta);
+        // 步骤 2: 路由到对应维度的原子更新 Mapper 方法
+        switch (type) {
+            case VIEW -> mapper.applyViewDelta(vid.trim(), delta);
+            case LIKE -> mapper.applyLikeDelta(vid.trim(), delta);
+            case STAR -> mapper.applyStarDelta(vid.trim(), delta);
+            case SHARE -> mapper.applyShareDelta(vid.trim(), delta);
+        }
     }
 }

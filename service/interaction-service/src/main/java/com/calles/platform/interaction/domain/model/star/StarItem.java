@@ -29,6 +29,9 @@ public class StarItem {
     /** 所属用户 ID (冗余支持高效反查本人是否收藏过)。 */
     private String userId;
 
+    /** 明细生命周期版本号 (每次自愈复活递增，用于事实追溯与幂等定界)。 */
+    private long version;
+
     /** 收藏时间。 */
     private LocalDateTime createdAt;
 
@@ -59,6 +62,7 @@ public class StarItem {
                 .folderId(folderId.trim())
                 .vid(vid.trim())
                 .userId(userId.trim())
+                .version(1L)
                 .createdAt(LocalDateTime.now())
                 .deleted(false)
                 .build();
@@ -76,6 +80,7 @@ public class StarItem {
      */
     public void revive() {
         this.deleted = false;
+        this.version++;
         this.createdAt = LocalDateTime.now();
     }
 }
