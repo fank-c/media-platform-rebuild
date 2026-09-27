@@ -23,7 +23,7 @@ public interface CounterDeltaRepository {
      * 便捷方法：记录有效播放量增量并关联播放事实来源。
      *
      * @param vid 视频业务编码
-     * @param sourceId 播放事实唯一标识（如历史记录ID与时间戳组合）
+     * @param sourceId 播放事实唯一标识（约定格式 watch_session:{sessionId}）
      * @param delta 播放增量（必须严格大于 0）
      */
     default void incrementViewCount(String vid, String sourceId, long delta) {

@@ -28,12 +28,12 @@ public class InteractionExceptionHandler {
      * @return 状态码与异常一致的错误响应
      */
     @ExceptionHandler(InteractionException.class)
-    public ResponseEntity<ApiResponse<Void>> handleInteraction(InteractionException exception) {
+    public ResponseEntity<ApiResponse<Object>> handleInteraction(InteractionException exception) {
         // 步骤 1：业务错误只记录可定位的状态与安全提示，不将预期内的未登录当成系统故障输出堆栈。
         log.warn("交互业务异常: status={}, message={}", exception.getStatus().value(), exception.getMessage());
-        // 步骤 2：继续使用原有业务状态码和提示，便于客户端区分未登录与系统错误。
+        // 步骤 2：继续使用原有业务状态码和提示，若有附带数据 (如 409 活跃会话标识) 则一同返回。
         return ResponseEntity.status(exception.getStatus())
-                .body(new ApiResponse<>(exception.getStatus().value(), exception.getMessage(), null));
+                .body(new ApiResponse<>(exception.getStatus().value(), exception.getMessage(), exception.getData()));
     }
 
     /**

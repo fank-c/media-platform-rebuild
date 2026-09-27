@@ -5,9 +5,9 @@ import static org.mockito.Mockito.when;
 
 import com.calles.platform.interaction.application.like.LikeApplicationService;
 import com.calles.platform.interaction.application.star.StarApplicationService;
-import com.calles.platform.interaction.application.watch.WatchHeartbeatApplicationService;
+import com.calles.platform.interaction.application.watch.WatchProgressApplicationService;
+import com.calles.platform.interaction.application.watch.WatchProgressView;
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
-import com.calles.platform.interaction.domain.model.watch.WatchHistory;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import java.util.List;
@@ -30,7 +30,7 @@ class InteractionQueryApplicationServiceTest {
     private StarApplicationService starService;
 
     @Mock
-    private WatchHeartbeatApplicationService watchService;
+    private WatchProgressApplicationService watchProgressService;
 
     @Mock
     private VideoCounterRepository counterRepository;
@@ -51,7 +51,7 @@ class InteractionQueryApplicationServiceTest {
         service = new InteractionQueryApplicationService(
                 likeService,
                 starService,
-                watchService,
+                watchProgressService,
                 counterRepository,
                 counterDeltaRepository,
                 shareRecordRepository,
@@ -64,9 +64,8 @@ class InteractionQueryApplicationServiceTest {
     void shouldReturnCorrectMyStateForUser() {
         when(likeService.isLiked("vid_100", "user_01")).thenReturn(true);
         when(starService.isStarred("vid_100", "user_01")).thenReturn(false);
-
-        WatchHistory watch = WatchHistory.create("user_01", "vid_100", 45, 45, 120);
-        when(watchService.getWatchProgress("vid_100", "user_01")).thenReturn(Optional.of(watch));
+        when(watchProgressService.getProgress("vid_100", "user_01"))
+                .thenReturn(new WatchProgressView("vid_100", 45, 45, 120, false));
 
         InteractionQueryApplicationService.UserInteractionState state = service.getMyState("vid_100", "user_01");
 

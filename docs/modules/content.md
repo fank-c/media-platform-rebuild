@@ -159,6 +159,7 @@ graph TD
 | :--- | :--- | :--- | :--- |
 | `content.video.submitted` | 提审探活通过入库 | `videoId`, `vid`, `authorId`, `videoFileId`, `coverFileId` | `audit-service` 启动机审；`transcode-service` 启动切片转码；AI Worker 启动向量计算 |
 | `content.video.published` | 分级门禁达成自动上线 | `videoId`, `vid`, `authorId`, `videoFileId`, `publishedAt` | 搜索引擎构建索引；推荐系统计算特征；站内信通知作者 |
+| `content.video.metadata` | 与 `content.video.published` 同事务发布 | `videoId`, `vid`, `duration`, `metadataVersion`, `status`, `updatedAt` | `interaction-service` 建立本地视频时长快照，用于播放量门槛与完播判定（不改变发布事件的既有语义） |
 | `content.video.rejected` | 机审未通过违规驳回 | `videoId`, `vid`, `reason` | 创作者通知中心发送站内驳回说明 |
 | `content.video.offline` | 创作者主动下架 | `videoId`, `vid`, `authorId` | 规划：搜索与推荐下线。**当前推荐服务绑定的是 `content.video.offlined`，收不到本事件**（见 [REC-01](recommend.md#102-已知问题)） |
 | `content.video.banned` | 管理员违规封禁 | `videoId`, `vid`, `authorId`, `reason` | 推荐与搜索立即拉黑下线，长连接通知端侧截流 |

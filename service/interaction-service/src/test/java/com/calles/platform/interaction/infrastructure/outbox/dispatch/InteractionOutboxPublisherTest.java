@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.calles.platform.interaction.application.event.InteractionEventPublisher;
 import com.calles.platform.interaction.config.InteractionMessagingConfiguration;
 import com.calles.platform.interaction.config.InteractionOutboxProperties;
 import com.calles.platform.interaction.infrastructure.outbox.model.ClaimedOutboxMessage;
@@ -54,7 +55,7 @@ class InteractionOutboxPublisherTest {
             return null;
         }).when(rabbitTemplate).send(
                 eq(InteractionMessagingConfiguration.MEDIA_EVENTS_EXCHANGE),
-                eq(InteractionMessagingConfiguration.VIDEO_ACTION_ROUTING_KEY),
+                eq(InteractionEventPublisher.EVENT_TYPE_VIDEO_ACTION),
                 any(),
                 any(CorrelationData.class)
         );
@@ -78,7 +79,7 @@ class InteractionOutboxPublisherTest {
             throw new RuntimeException("Broker network failure");
         }).when(rabbitTemplate).send(
                 eq(InteractionMessagingConfiguration.MEDIA_EVENTS_EXCHANGE),
-                eq(InteractionMessagingConfiguration.VIDEO_ACTION_ROUTING_KEY),
+                eq(InteractionEventPublisher.EVENT_TYPE_VIDEO_ACTION),
                 any(),
                 any(CorrelationData.class)
         );

@@ -6,6 +6,7 @@
 - 核对方式：阅读源码与 Mapper SQL；**未编写复现用例**。标注“推断”的条目只做了代码推导，没有实际跑过。
 - 优先级：**P0** = 数据错误或越权；**P1** = 统计/推荐信号失真，或错误码不对；**P2** = 边界问题、技术债。
 - 状态：`待处理` / `待决策`（得先定规则才能改）/ `文档已同步`（只剩代码残留）。
+- 观看相关条目（播放资格、会话、完播、删除后复活、`PLAY` 事件）已由 [ADR 0005](../adr/0005-观看能力拆分与视频时长本地快照.md) 的观看重构处理；计数相关的 Redis 写缓冲、脏集合刷盘条目已由 [ADR 0004](../adr/0004-interaction-counter-deltas.md) 的事务内增量方案取代。文中出现的 `WatchHistory`、`interaction_watch_history`、`PLAY_COMPLETE`、`VideoCounterRedisCache`、`VideoCounterFlushScheduler` 等位置指向重构前的实现，保留作审计记录。
 
 ## 总览
 
@@ -157,7 +158,7 @@
 
 - **现状**：
   - `dispatch-enabled=false`，所有事件都一直停在 `PENDING`。
-  - `recommend-service` 还没有 `interaction.video-action.v1` 的队列和消费者。
+  - `recommend-service` 还没有 `interaction.video-action` 的队列和消费者。
   - `interaction_outbox` 没有归档或清理任务，表会一直变大。
 - **建议**：先做推荐侧的幂等消费者，再打开投递；同时补一个 `PUBLISHED` 记录的保留期清理任务。
 

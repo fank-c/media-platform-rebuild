@@ -109,7 +109,7 @@ Authorization: Bearer <accessToken>
 | POST / DELETE | `/api/interactions/videos/{vid}/star` | 已登录 | 收藏 / 取消收藏 |
 | GET / POST / PUT / DELETE | `/api/interactions/star/folders` | 已登录 | 收藏夹列表 / 新建 / 改名 / 删除 |
 | GET | `/api/interactions/star/items` | 已登录 | 分页查询收藏夹内视频 |
-| POST | `/api/interactions/videos/{vid}/heartbeat` | 已登录 | 上报播放心跳 |
+| POST | `/api/interactions/videos/{vid}/heartbeat` | 已登录 | 上报播放心跳，返回会话与服务端判定结果 |
 | GET | `/api/interactions/videos/{vid}/watch-progress` | 已登录（服务内允许匿名） | 查询断点进度 |
 | GET / DELETE | `/api/interactions/watch/history` | 已登录 | 观看历史分页 / 删除单条或清空 |
 | GET | `/api/interactions/videos/{vid}/my-state` | 已登录（服务内允许匿名） | 播放页互动状态快照 |
@@ -1233,15 +1233,53 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 
 ### 8.5 播放心跳：POST /api/interactions/videos/{vid}/heartbeat
 
+本接口通过请求头与请求体入参区分**起播（Start Play）**与**后续心跳（Subsequent Heartbeat）**两种形态：
+
+- **起播（开启新会话）**：必须携带 Header `Idempotency-Key`（≤64 字符）；请求体 `sessionId` 为空/null、`sequence = 0`、`deltaDuration = 0`。立即判定内容已发布准入与 6 小时冷却窗口记录播放量。
+- **后续心跳（推进进度）**：必须在请求体回传有效 `sessionId`；`sequence > 0` 单调递增、`deltaDuration ≥ 0`。校验并累计有效观看时长，达标后由凭据防重独立发出合格观看与完播事件。
+
+请求头：
+
+| 请求头 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `Idempotency-Key` | string | 起播必填 | 起播幂等键（≤64 字符），重试时幂等返回已有会话；后续心跳无需携带 |
+
+请求体字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `sessionId` | string | 后续心跳必填 | 活跃会话 ID；起播时必须为空或省略 |
+| `sequence` | long | 是 | 心跳序号；起播必须为 0；后续心跳必须 > 0 且单调递增 |
+| `position` | int | 是 | 当前播放头（秒），服务端截到 `[0, 视频时长]` |
+| `deltaDuration` | int | 是 | 距上次心跳的增量秒数；起播必须为 0；后续心跳受三重上限校验截断 |
+
+不接收视频总时长：视频时长一律取自服务端本地快照，客户端无法通过上报时长影响门槛与完播判定。
+
+响应 `data`：
+
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `position` | int | 当前播放头（秒），服务端截到 `[0, videoDuration]` |
-| `deltaDuration` | int | 距离上次心跳实际观看的秒数，服务端截到 `[0, 15]` |
-| `videoDuration` | int | 视频总时长（秒），0 表示未知 |
+| `vid` | string | 视频短码 |
+| `sessionId` | string | 当前活跃会话 ID，客户端应在后续心跳回传 |
+| `acceptedSequence` | long \| null | 服务端已接受的最大心跳序号 |
+| `lastPosition` | int | 最新断点（秒） |
+| `watchedDuration` | int | 该视频累计有效观看时长（秒） |
+| `sessionWatchedDuration` | int | 本会话服务端认可的有效观看时长（秒） |
+| `videoDuration` | int | 服务端本地时长快照（秒），0 表示暂无可用快照 |
+| `qualificationThreshold` | int | 本会话合格观看门槛（秒），0 表示无可用快照 |
+| `qualifiedThisSession` | boolean | 本会话是否已达合格观看门槛（与播放量彻底解耦） |
+| `viewCountedThisSession` | boolean | 本会话起播时是否已成功计入播放量 |
+| `completedThisSession` | boolean | 本会话是否已达双 90% 完播 |
+| `duplicateRequest` | boolean | 本次请求是否为重复投递或乱序到达（只读回执） |
 
-- 响应 `data`：`{ vid, lastPosition, watchedDuration, videoDuration, completed }`。
-- 有效播放、完播判定和计数规则见 [互动模块 §3](modules/interaction.md#3-观看心跳与播放资格)。
-- 服务端等锁超时时，只返回已有进度，本次时长不入账。
+- 错误语义：
+  - `401 Unauthorized`：未登录；
+  - `400 Bad Request`：参数非法（起播缺少 Header、起播 sequence/delta 非 0、心跳缺少 sessionId、心跳 sequence 非正数等）；
+  - `409 Conflict`（携带统一错误码与业务数据）：
+    - `WATCH_SESSION_ACTIVE`：起播时已有活跃未过期的会话；响应体 `data` 携带 `{ "activeSessionId": "...", "acceptedSequence": ... }`；
+    - `WATCH_SESSION_INVALID`：后续心跳回传的 `sessionId` 不存在或跨用户/跨视频错位；
+    - `WATCH_SESSION_EXPIRED`：后续心跳回传的会话已超时关闭；
+  - 播放量、完播、会话与冷却规则见 [互动模块 §3](modules/interaction.md#3-观看心跳与播放资格)。
 
 ### 8.6 断点进度：GET /api/interactions/videos/{vid}/watch-progress
 
@@ -1250,7 +1288,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 ### 8.7 观看历史：GET / DELETE /api/interactions/watch/history
 
 - GET 查询参数 `page`（默认 1）、`size`（默认 20，最大 100）；元素字段 `id`、`vid`、`lastPosition`、`watchedDuration`、`videoDuration`、`completed`、`firstWatchAt`、`lastWatchAt`。
-- DELETE 带 `vid` 删除单条，不带则清空；都是逻辑删除，保留防刷依据，不会重置播放冷却。
+- DELETE 带 `vid` 删除单条，不带则清空；只隐藏展示，保留播放量冷却与事件凭据，不会重置播放冷却。
 
 ### 8.8 播放页快照：GET /api/interactions/videos/{vid}/my-state
 

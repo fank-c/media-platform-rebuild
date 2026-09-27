@@ -180,7 +180,7 @@ graph TD
 
 - 反序列化失败或缺少 `videoId` 的消息直接丢弃并记日志，**当前没有死信队列**。
 - 本服务**不发布**任何领域事件。
-- 未消费 `interaction.video-action.v1`，见第 10 节。
+- 未消费 `interaction.video-action`，见第 10 节。
 
 ---
 
@@ -287,7 +287,7 @@ graph TD
 | 能力 | 现状 | 依赖 / 下一步 |
 | :--- | :--- | :--- |
 | 关注召回 | `FollowingRecallChannel` 恒返回空 | `user-service` 已提供 `GET /api/users/internal/{accountId}/following-ids`，需补 Feign 调用并声明超时与降级 |
-| 互动事件消费 | 未消费 `interaction.video-action.v1` | 幂等消费后，互动 Outbox 才能打开 `dispatch-enabled` |
+| 互动事件消费 | 未消费 `interaction.video-action` | 幂等消费后，互动 Outbox 才能打开 `dispatch-enabled` |
 | 热度榜接入互动计数 | 热度只基于本服务反馈流水 | 依赖互动事件消费 |
 | 相关推荐 `GET /api/recommend/videos/{vid}/related` | 无接口 | 可复用 Qdrant 按锚点视频检索 |
 | 游客推荐 | 网关拦截，游客拿不到推荐 | 需确认是否把 `/api/recommend/feed` 加入网关白名单 |

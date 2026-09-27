@@ -17,8 +17,9 @@
 | :--- | :--- | :--- |
 | [0001](0001-interaction-outbox-and-video-action-events.md) | 互动模块自属 Outbox 与统一视频交互事件 | 已采纳 |
 | [0002](0002-object-storage-presigned-url-exception.md) | 对象存储预签名直传与下载作为网关的受控例外 | 已采纳（追认） |
-| [0003](0003-interaction-redisson-distributed-lock.md) | 互动服务引入 Redisson 分布式锁串行化观看心跳 | 已采纳（追认） |
+| [0003](0003-interaction-redisson-distributed-lock.md) | 互动服务引入 Redisson 分布式锁串行化观看心跳 | 已被 [0005](0005-观看能力拆分与视频时长本地快照.md) 取代 |
 | [0004](0004-interaction-counter-deltas.md) | 互动公开计数采用事务内增量与后台汇总 | 已采纳 |
+| [0005](0005-观看能力拆分与视频时长本地快照.md) | 观看能力按进度 / 会话 / 资格 / 凭据拆分，并使用视频时长本地快照 | 已采纳 |
 
 ## 待补
 

@@ -16,10 +16,6 @@ spring:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
       username: ${NACOS_SERVER_USERNAME:nacos}
       password: ${NACOS_SERVER_PASSWORD:nacos_password}
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
   datasource:
     url: ${INTERACTION_DB_URL:jdbc:mysql://localhost:3306/media_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC}
     username: ${INTERACTION_DB_USERNAME:media}
@@ -33,6 +29,18 @@ spring:
     publisher-returns: true
     template:
       mandatory: true
+    listener:
+      simple:
+        # 消费端限流：单消费者预取上限，避免元数据事件堆积时压垮应用
+        prefetch: ${RABBITMQ_LISTENER_PREFETCH:20}
+        # 业务异常时由容器重试，重试耗尽后拒收并按队列死信配置转入死信队列，避免毒消息无限重投
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: ${RABBITMQ_LISTENER_MAX_ATTEMPTS:3}
+          initial-interval: 1s
+          multiplier: 2
+          max-interval: 10s
 
 mybatis-plus:
   configuration:
@@ -51,8 +59,22 @@ interaction:
     session-timeout: ${INTERACTION_WATCH_SESSION_TIMEOUT:30m}
     # 同一用户针对同一视频防重复累加播放量的冷却周期，默认 6 小时 (6h)
     repeat-window: ${INTERACTION_WATCH_REPEAT_WINDOW:6h}
-    # 判定为单次有效播放的当前会话观看时长门槛，默认 5 秒 (5s)
+    # 判定为单次有效播放的当前会话观看时长门槛，与 30% 时长门槛取较大值，默认 5 秒 (5s)
     valid-play-threshold: ${INTERACTION_WATCH_VALID_PLAY_THRESHOLD:5s}
+    # 单次心跳允许计入的最大有效增量时长，超出部分截断，默认 15 秒 (15s)
+    max-heartbeat-delta: ${INTERACTION_WATCH_MAX_HEARTBEAT_DELTA:15s}
+    # 增量时间校验容差：客户端增量不得超过服务端两次心跳间隔加该容差（默认 2s）
+    heartbeat-credit-tolerance: ${INTERACTION_WATCH_HEARTBEAT_CREDIT_TOLERANCE:2s}
+    # 播放量资格的时长比例门槛，0.30 表示 30%
+    qualification-ratio: ${INTERACTION_WATCH_QUALIFICATION_RATIO:0.30}
+    # 完播判定的位置与有效时长比例门槛，0.90 表示双 90% 条件
+    completion-ratio: ${INTERACTION_WATCH_COMPLETION_RATIO:0.90}
+    # 观看会话、事件凭据与已隐藏进度的保留期，默认 30 天 (30d)
+    retention: ${INTERACTION_WATCH_RETENTION:30d}
+    # 单次保留期清理最多处理的行数
+    cleanup-batch-size: ${INTERACTION_WATCH_CLEANUP_BATCH_SIZE:500}
+    # 保留期清理任务间隔
+    cleanup-rate-ms: ${INTERACTION_WATCH_CLEANUP_RATE_MS:3600000}
   outbox:
     # 是否启用发件箱事件持久化写入能力
     enabled: ${INTERACTION_OUTBOX_ENABLED:true}

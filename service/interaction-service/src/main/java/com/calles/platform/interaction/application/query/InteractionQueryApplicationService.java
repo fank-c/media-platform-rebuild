@@ -2,9 +2,9 @@ package com.calles.platform.interaction.application.query;
 
 import com.calles.platform.interaction.application.like.LikeApplicationService;
 import com.calles.platform.interaction.application.star.StarApplicationService;
-import com.calles.platform.interaction.application.watch.WatchHeartbeatApplicationService;
+import com.calles.platform.interaction.application.watch.WatchProgressApplicationService;
+import com.calles.platform.interaction.application.watch.WatchProgressView;
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
-import com.calles.platform.interaction.domain.model.watch.WatchHistory;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import java.util.Collection;
@@ -32,7 +32,7 @@ public class InteractionQueryApplicationService {
 
     private final LikeApplicationService likeService;
     private final StarApplicationService starService;
-    private final WatchHeartbeatApplicationService watchService;
+    private final WatchProgressApplicationService watchProgressService;
     private final VideoCounterRepository counterRepository;
     private final CounterDeltaRepository counterDeltaRepository;
     private final com.calles.platform.interaction.domain.repository.InteractionShareRecordRepository shareRecordRepository;
@@ -73,10 +73,10 @@ public class InteractionQueryApplicationService {
         boolean isLiked = likeService.isLiked(vid, userId);
         boolean isStarred = starService.isStarred(vid, userId);
 
-        // 步骤 2: 读取观看历史断点进度
-        Optional<WatchHistory> watchOpt = watchService.getWatchProgress(vid, userId);
-        int lastPos = watchOpt.map(WatchHistory::getLastPosition).orElse(0);
-        boolean isCompleted = watchOpt.map(WatchHistory::isCompleted).orElse(false);
+        // 步骤 2: 读取观看断点进度
+        WatchProgressView watchProgress = watchProgressService.getProgress(vid, userId);
+        int lastPos = watchProgress.lastPosition();
+        boolean isCompleted = watchProgress.completed();
 
         return UserInteractionState.builder()
                 .vid(vid)

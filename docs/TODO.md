@@ -227,15 +227,21 @@
 ### 观看心跳与观看历史
 
 - [x] 统一心跳入口：登录用户上报进度，服务端维护断点与累计时长；游客返回 `401`。
-- [x] 会话隔离：30 分钟无心跳视为新会话，每会话最多一次有效播放。
-- [x] 有效播放防重：会话满 5 秒计首次播放；再次播放需要上一会话达 30% 且超过 6 小时冷却；数据库双 CAS 抢占。
-- [x] Redisson 分布式锁在事务外层，等锁超时只读降级。
-- [x] 完播：播放头达 90% 时 CAS 置位并发送 `PLAY_COMPLETE`。
-- [x] 播放资格 CAS 成功时，在同一事务内记录播放量增量；公开计数后台汇总后展示。
+- [x] 会话隔离与起播计数：起播显式开启新会话（必传 `Idempotency-Key`，`sequence=0, deltaDuration=0`），校验视频已发布与 6 小时冷却立即记录播放量，解耦时长门槛；活跃未过期会话返回 409 `WATCH_SESSION_ACTIVE`。
+- [x] 观看播放量与行为事件解耦：起播增量来源为 `WATCH_PLAY:watch_session:{sessionId}`，会话内一次性决策；后续心跳有效观看达标 `max(5 秒, 30% 时长)` 独立发出 `WATCH_VIEW_QUALIFIED`，不重计播放量、不读改冷却。
+- [x] 心跳递增序号，重复与乱序请求幂等返回只读回执；会话失效或过期返回 409 `WATCH_SESSION_INVALID` / `WATCH_SESSION_EXPIRED`。
+- [x] Redisson 分布式锁在事务外层，等锁超时只读降级。**已被 ADR 0005 取代并移除**（改用行级锁）。
+- [x] 完播：播放位置与有效观看时长双 90% 时抢占完播凭据并发 `WATCH_COMPLETED`，不增加播放量。
+- [x] 播放量在起播事务内记录增量；公开计数后台汇总后展示。
 - [x] 断点查询、播放页状态快照（点赞/收藏/断点/完播）。
-- [x] 观看历史分页、删除单条与清空；逻辑删除保留防刷时间戳，删了重看不重置冷却。
-- [ ] 防刷门禁：按服务端时间差校验增量、视频时长改用可信来源、完播需要观看时长佐证（待定时长来源）。
-- [ ] 统一完播防重语义（待定：每个用户每个视频一次，还是按会话计）。
+- [x] 观看历史分页、删除单条与清空；只隐藏展示、不释放防刷状态，删了重看不重置冷却。
+- [x] 防刷门禁：按服务端时间差与单次上限、会话剩余时长三重校验增量；视频时长改用 content-service 事件建立的本地快照；完播需位置与有效时长双 90%（见 [ADR 0005](adr/0005-观看能力拆分与视频时长本地快照.md)）。
+- [x] 观看能力拆表：进度 / 会话 / 资格 / 事件凭据分离，防重依据收敛到 `interaction_watch_event_claim` 唯一键，心跳不再依赖 Redisson 锁。
+- [x] 统一完播防重语义：按观看会话计，每会话最多一次 `WATCH_COMPLETED`，不增加播放量。
+- [x] 元数据事件 `content.video.metadata` 与消费队列 `interaction-service.video-metadata`（含死信出口）。
+- [x] 观看数据保留期清理（会话、凭据、已隐藏进度，增加防清理保护）。
+- [x] 删除旧观看执行链路与版本号命名：`interaction_watch_history`、旧实体与 CAS Mapper、Redisson 依赖与 `RedisLockService`、`PLAY`/`PLAY_COMPLETE` 事件、模型切换开关、`/v2/...` 路径与事件路由版本后缀。
+- [ ] 观看改造集成验证：开启 `WATCH_HEARTBEAT_IT_ENABLED=true` 后跑元数据事件幂等、凭据唯一键防重与重复序号零写入集成用例。
 
 ### 分享
 
@@ -251,9 +257,9 @@
 
 ### 领域事件与 Outbox
 
-- [x] 统一事件 `interaction.video-action.v1`（`LIKE / STAR / PLAY / PLAY_COMPLETE / SHARE`），只记录真实状态变化。
+- [x] 统一事件 `interaction.video-action`（`LIKE / STAR / SHARE / WATCH_VIEW_QUALIFIED / WATCH_COMPLETED`），只记录真实状态变化。
 - [x] 自属 `interaction_outbox`：同事务落库、租约抢占、Broker Confirm、有限重试；投递默认关闭。
-- [ ] `recommend-service` 消费 `interaction.video-action.v1`（幂等），之后才打开 `dispatch-enabled`。
+- [ ] `recommend-service` 消费 `interaction.video-action`（幂等，按 `action` 分支），之后才打开 `dispatch-enabled`。
 - [ ] Outbox 已发布记录的保留期清理。
 
 ### 后续规划
@@ -303,7 +309,7 @@
 - [x] 四道硬过滤（状态、本人作品、屏蔽、近期已看）、槽位交织、冷启动补齐、同作者间隔 >= 2 打散。
 - [x] Redis 待看缓冲队列：大包预生成、低水位异步补水、Redis 异常回退实时计算。
 - [ ] 关注召回：`FollowingRecallChannel` 当前恒返回空，需接入 `user-service` 内部关注清单接口（含超时与降级）。
-- [ ] 消费 `interaction.video-action.v1`（幂等），热度召回接入互动数据。
+- [ ] 消费 `interaction.video-action`（幂等，按 `action` 分支），热度召回接入互动数据。
 - [ ] 缓冲队列弹出时复核屏蔽与候选状态（REC-02）。
 - [ ] 参数校验与未登录错误映射为 `400 / 401`（REC-03，当前推断为 `500`）。
 - [ ] 确定游客是否可访问推荐流（需调整网关白名单）。

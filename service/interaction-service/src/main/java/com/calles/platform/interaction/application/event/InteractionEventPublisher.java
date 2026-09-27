@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
  * <p>核心机制：
  * <ul>
  *   <li><b>本地事务一致性</b>：在业务事务内将事件序列化并写入 {@code interaction_outbox} 表，与业务事实强一致；</li>
- *   <li><b>统一契约</b>：统一输出契约 {@code interaction.video-action} v1 规范载荷；</li>
+ *   <li><b>统一契约</b>：统一输出 {@code interaction.video-action} 载荷，点赞 / 收藏 / 分享 / 观看量资格 / 完播共用一条路由；</li>
  *   <li><b>受控派发</b>：根据配置开关受控派发或仅存储，确保与下游推荐模块平滑演进。</li>
  * </ul>
  * </p>
@@ -33,7 +33,11 @@ public class InteractionEventPublisher {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(InteractionEventPublisher.class);
 
+    /** 视频互动事件类型标识；派发时同时作为 RabbitMQ 路由键。 */
     public static final String EVENT_TYPE_VIDEO_ACTION = "interaction.video-action";
+
+    /** 事件契约版本号；当前实现即最新版本，不保留历史路由。 */
+    public static final int EVENT_VERSION = 1;
 
     private final InteractionOutboxRepository outboxRepository;
     private final InteractionOutboxDispatchNotifier dispatchNotifier;
@@ -56,12 +60,16 @@ public class InteractionEventPublisher {
     /**
      * 在当前业务事务内记录一条视频互动领域事件至发件箱。
      *
+     * <p>调用方必须已经用持久化防重手段确认"这是真实状态变化"：点赞收藏状态版本、分享幂等键、
+     * 观看事件凭据唯一键都是各自的防线。本方法本身不做去重。</p>
+     *
      * @param payload 视频交互载荷
+     * @return 已落库的事件 ID；发件箱总开关关闭时返回 null
      */
-    public void publishVideoAction(VideoActionPayload payload) {
+    public String publishVideoAction(VideoActionPayload payload) {
         if (!outboxProperties.isEnabled()) {
             LOGGER.debug("Interaction Outbox 总开关未开启，跳过事件生成");
-            return;
+            return null;
         }
 
         // 步骤 1: 生成全局唯一事件 ID 与链路追踪 ID
@@ -74,7 +82,7 @@ public class InteractionEventPublisher {
         InteractionEventEnvelope<VideoActionPayload> envelope = new InteractionEventEnvelope<>(
                 eventId,
                 EVENT_TYPE_VIDEO_ACTION,
-                1,
+                EVENT_VERSION,
                 traceId,
                 occurredAtStr,
                 payload
@@ -89,11 +97,10 @@ public class InteractionEventPublisher {
         }
 
         // 步骤 4: 构造持久化发件箱记录 (以 vid 作为关联聚合根 ID)
-        InteractionOutboxRecord record = new InteractionOutboxRecord(
+        InteractionOutboxRecord record = InteractionOutboxRecord.of(
                 eventId,
                 payload.vid(),
                 EVENT_TYPE_VIDEO_ACTION,
-                1,
                 json,
                 traceId,
                 now
@@ -103,8 +110,9 @@ public class InteractionEventPublisher {
         outboxRepository.insert(record);
         dispatchNotifier.notifyDispatch(eventId);
 
-        LOGGER.info("已记录视频互动事件至 Outbox: eventId={}, vid={}, userId={}, action={}, state={}",
-                eventId, payload.vid(), payload.userId(), payload.action(), payload.state());
+        LOGGER.info("已记录视频互动事件至 Outbox: eventId={}, vid={}, userId={}, action={}, sessionId={}",
+                eventId, payload.vid(), payload.userId(), payload.action(), payload.sessionId());
+        return eventId;
     }
 
     private String resolveCurrentTraceId() {

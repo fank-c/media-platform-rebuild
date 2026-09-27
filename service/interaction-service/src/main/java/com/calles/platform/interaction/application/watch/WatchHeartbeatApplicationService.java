@@ -1,369 +1,406 @@
 package com.calles.platform.interaction.application.watch;
 
 import com.calles.platform.interaction.application.event.InteractionEventPublisher;
+import com.calles.platform.interaction.config.InteractionWatchProperties;
 import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
-import com.calles.platform.interaction.domain.model.watch.WatchHistory;
-import com.calles.platform.interaction.domain.model.watch.WatchHistory.PlayClaimDecision;
-import com.calles.platform.interaction.domain.model.watch.WatchHistory.PlayClaimType;
+import com.calles.platform.interaction.domain.model.video.VideoSnapshot;
+import com.calles.platform.interaction.domain.model.watch.WatchCreditValidator;
+import com.calles.platform.interaction.domain.model.watch.WatchEventClaim;
+import com.calles.platform.interaction.domain.model.watch.WatchEventType;
+import com.calles.platform.interaction.domain.model.watch.WatchProgress;
+import com.calles.platform.interaction.domain.model.watch.WatchQualificationPolicy;
+import com.calles.platform.interaction.domain.model.watch.WatchSession;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
-import com.calles.platform.interaction.domain.repository.WatchHistoryRepository;
-import com.calles.platform.interaction.exception.LockAcquireTimeoutException;
-import com.calles.platform.interaction.infrastructure.redis.RedisLockService;
-import java.time.Duration;
+import com.calles.platform.interaction.domain.repository.VideoSnapshotRepository;
+import com.calles.platform.interaction.domain.repository.WatchEventClaimRepository;
+import com.calles.platform.interaction.domain.repository.WatchProgressRepository;
+import com.calles.platform.interaction.domain.repository.WatchSessionRepository;
+import com.calles.platform.interaction.exception.WatchSessionActiveException;
+import com.calles.platform.interaction.exception.WatchSessionExpiredException;
+import com.calles.platform.interaction.exception.WatchSessionInvalidException;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 视频播放心跳与观看历史应用服务。
+ * 观看心跳应用服务：起播计数与观看行为事件彻底解耦后的心跳实现。
  *
- * <p>核心职责：
+ * <p>核心架构与职责：
  * <ul>
- *   <li>分布式锁与事务分层：锁在外层、事务在内层，确保事务完全提交后才释放锁，彻底消灭快照读与并发竞态；</li>
- *   <li>锁超时平滑降级：并发心跳锁等待超时时优雅只读降级返回当前断点，杜绝向前端抛出 500 错误；</li>
- *   <li>输入规整与边界防御：拦截负数与越界断点，安全截断异常超大增量时长（上限 15 秒），防止快进恶意刷量；</li>
- *   <li>创建与发布严格解耦：0 秒初始心跳纯净创建事实记录，绝不增加播放量、绝不发任何事件；</li>
- *   <li>事务与计数增量一致：有效播放 CAS、Outbox 和待汇总增量同事务提交，公开计数由后台汇总。</li>
+ *   <li><b>并发控制</b>：以 {@code SELECT ... FOR UPDATE} 锁定 {@code interaction_watch_progress} 行作为唯一串行化入口，
+ *       锁后以统一 Clock 取 now；首次心跳并发插入由唯一键兜底退化为行锁；</li>
+ *   <li><b>起播计数</b>：新会话创建时，若视频已发布且已满冷却窗口，立即在本地事务写入 {@code WATCH_PLAY} 增量 (+1)
+ *       并记录会话 {@code view_counted_at} 与进度 {@code last_view_claimed_at}；退出仍保留，不要求 5 秒或 30% 时长；</li>
+ *   <li><b>合格观看事件</b>：后续心跳中会话有效时长达到 30% / 5 秒门槛时发出，不触碰播放量、不读冷却、不改冷却时间；</li>
+ *   <li><b>完播事件</b>：后续心跳中播放位置与有效时长双 90% 达标时发出；</li>
+ *   <li><b>起播幂等与会话恢复</b>：同幂等键重试返回只读回执；键不存在而活跃会话仍存活时抛出 409 要求恢复现有会话；</li>
+ *   <li><b>降级与异常</b>：无快照或未发布内容只保存断点不计数；会话不匹配或超时分别抛出 409。</li>
  * </ul>
  * </p>
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class WatchHeartbeatApplicationService {
 
-    /** 视频心跳分布式锁 Key 前缀。 */
-    private static final String WATCH_LOCK_PREFIX = "int:lock:watch:";
-
-    /** 分布式锁最大排队等待时间 (3 秒)。 */
-    private static final Duration LOCK_WAIT_TIME = Duration.ofSeconds(3);
-
-    /** 单次心跳允许的最大有效增量时长 (秒)，超过此值予以截断以防刷量。 */
-    private static final int MAX_HEARTBEAT_DELTA_SECONDS = 15;
-
-    private final WatchHistoryRepository historyRepository;
+    private final WatchProgressRepository progressRepository;
+    private final WatchSessionRepository sessionRepository;
+    private final WatchEventClaimRepository claimRepository;
+    private final VideoSnapshotRepository videoSnapshotRepository;
     private final CounterDeltaRepository counterDeltaRepository;
     private final InteractionEventPublisher eventPublisher;
-    private final RedisLockService lockService;
-    private final TransactionTemplate transactionTemplate;
-    private final Duration repeatWindow;
-    private final Duration validPlayThreshold;
-    private final Duration sessionTimeout;
-
-    public WatchHeartbeatApplicationService(
-            WatchHistoryRepository historyRepository,
-            CounterDeltaRepository counterDeltaRepository,
-            InteractionEventPublisher eventPublisher,
-            RedisLockService lockService,
-            TransactionTemplate transactionTemplate,
-            @Value("${interaction.watch.repeat-window:6h}") Duration repeatWindow,
-            @Value("${interaction.watch.valid-play-threshold:5s}") Duration validPlayThreshold,
-            @Value("${interaction.watch.session-timeout:30m}") Duration sessionTimeout) {
-        this.historyRepository = historyRepository;
-        this.counterDeltaRepository = counterDeltaRepository;
-        this.eventPublisher = eventPublisher;
-        this.lockService = lockService;
-        this.transactionTemplate = transactionTemplate;
-        this.repeatWindow = repeatWindow != null ? repeatWindow : Duration.ofHours(6);
-        this.validPlayThreshold = validPlayThreshold != null ? validPlayThreshold : Duration.ofSeconds(5);
-        this.sessionTimeout = sessionTimeout != null ? sessionTimeout : Duration.ofMinutes(30);
-    }
+    private final InteractionWatchProperties properties;
 
     /**
-     * 处理播放端周期心跳上报（全生命周期统一入口）。
+     * 处理一次观看心跳（区分起播与后续心跳）。
      *
-     * @param vid 视频业务公开短码
+     * @param vid 视频公开业务短码
      * @param userId 已鉴权登录用户 ID
-     * @param position 当前播放头秒数位置
-     * @param deltaDuration 距上次心跳增量秒数
-     * @param videoDuration 视频总秒数
-     * @return 更新后的观看历史实体
+     * @param command 心跳命令
+     * @return 心跳处理结果
+     * @throws IllegalArgumentException 视频编码或用户 ID 为空
+     * @throws WatchSessionActiveException 起播时仍存在存活活跃会话 (409)
+     * @throws WatchSessionExpiredException 起播重试或后续心跳命中已超时过期会话 (409)
+     * @throws WatchSessionInvalidException 后续心跳会话 ID 无效或不属于当前用户/视频 (409)
      */
-    public WatchHistory processHeartbeat(String vid, String userId, int position,
-                                         int deltaDuration, int videoDuration) {
-        // 步骤 0: 参数防御性校验与安全规整
+    @Transactional(rollbackFor = Exception.class)
+    public WatchHeartbeatOutcome processHeartbeat(String vid, String userId, WatchHeartbeatCommand command) {
         String cleanVid = vid != null ? vid.trim() : "";
         String cleanUserId = userId != null ? userId.trim() : "";
         if (cleanVid.isBlank() || cleanUserId.isBlank()) {
             throw new IllegalArgumentException("视频编码与用户ID不能为空");
         }
 
-        int safeVideoDuration = Math.max(0, videoDuration);
-        int safePosition = Math.max(0, position);
-        if (safeVideoDuration > 0) {
-            safePosition = Math.min(safePosition, safeVideoDuration);
-        }
+        WatchHeartbeatCommand cmd = command != null
+                ? command
+                : new WatchHeartbeatCommand(null, 0L, 0, 0, null);
 
-        int safeDelta = Math.max(0, deltaDuration);
-        if (safeDelta > MAX_HEARTBEAT_DELTA_SECONDS) {
-            log.debug("心跳增量异常偏大 ({}s)，安全截断为 {}s: userId={}, vid={}", safeDelta, MAX_HEARTBEAT_DELTA_SECONDS, cleanUserId, cleanVid);
-            safeDelta = MAX_HEARTBEAT_DELTA_SECONDS;
-        }
-
-        String lockKey = WATCH_LOCK_PREFIX + cleanUserId + ":" + cleanVid;
-
-        // 步骤 1: 锁在外层保护（由 Redisson 看门狗自动续期），避免事务未提交前释放锁
-        try {
-            int finalSafePosition = safePosition;
-            int finalSafeDelta = safeDelta;
-            return lockService.executeWithLock(lockKey, LOCK_WAIT_TIME, () -> {
-                // 步骤 2: 事务在内层执行，保证事务在锁释放前完全 COMMIT
-                return transactionTemplate.execute(status ->
-                        doProcessHeartbeatInTransaction(cleanVid, cleanUserId, finalSafePosition, finalSafeDelta, safeVideoDuration));
-            });
-        } catch (LockAcquireTimeoutException e) {
-            // 步骤 1.1: 仅对分布式锁排队超时进行只读平滑降级，返回已有断点；业务任务内部异常绝不在此拦截
-            log.warn("心跳获取分布式锁排队超时，触发平滑降级: userId={}, vid={}, error={}", cleanUserId, cleanVid, e.getMessage());
-            int finalSafePosition = safePosition;
-            int finalSafeDelta = safeDelta;
-            return historyRepository.findByUserAndVid(cleanUserId, cleanVid)
-                    .orElseGet(() -> WatchHistory.create(cleanUserId, cleanVid, finalSafePosition, finalSafeDelta, safeVideoDuration));
-        }
-    }
-
-    /**
-     * 事务内核心编排：依次持久化观看事实、更新会话、抢占有效播放资格并处理完播。
-     *
-     * <p>事务由外层 {@link TransactionTemplate} 创建，以保证分布式锁覆盖整个提交过程。</p>
-     *
-     * @param vid 视频编码
-     * @param userId 用户 ID
-     * @param position 当前播放位置
-     * @param deltaDuration 本次观看增量
-     * @param videoDuration 视频总时长
-     * @return 已同步本次业务状态的观看历史
-     */
-    private WatchHistory doProcessHeartbeatInTransaction(String vid, String userId, int position,
-                                                         int deltaDuration, int videoDuration) {
+        // 步骤 1：以行级排他锁取得观看进度，作为同一用户同一视频心跳的串行化入口
+        // 获得行锁后统一取当前业务时间 now，确保事务内领域判定时间基准一致
+        WatchProgress progress = lockOrCreateProgress(cleanUserId, cleanVid, LocalDateTime.now());
         LocalDateTime now = LocalDateTime.now();
 
-        // 步骤 2.1: 先建立或取得观看事实，不在此阶段触发业务事件
-        LoadedHistory loadedHistory = loadOrCreateHistory(userId, vid, position, deltaDuration, videoDuration);
-        WatchHistory history = loadedHistory.history();
+        // 步骤 2：读取本地视频元数据快照，区分为内容准入 (isPublished) 与时长可用 (isUsable)
+        VideoSnapshot snapshot = videoSnapshotRepository.findByVid(cleanVid).orElse(null);
+        int durationSnapshot = (snapshot != null && snapshot.isUsable()) ? snapshot.getDuration() : 0;
+        int safePosition = resolveSafePosition(cmd.position(), durationSnapshot);
 
-        // 步骤 2.2: 已有记录统一完成会话切换、心跳累计、资格更新与事实持久化
-        updateWatchSession(history, loadedHistory.created(), position, deltaDuration, videoDuration, now);
-
-        // 步骤 3: 仅在 CAS 成功后发布 PLAY，并同事务写入计数增量
-        PlayClaimResult playClaim = claimPlayIfEligible(history, now);
-        publishPlayEventIfClaimed(playClaim, history, userId, vid, now);
-
-        // 步骤 4: 完播是独立状态；同一心跳可在 PLAY 成功后继续发布 PLAY_COMPLETE
-        processCompletion(history, userId, vid);
-        return history;
+        // 步骤 3：根据命令类型进入起播或后续心跳分支
+        if (cmd.isStartPlay()) {
+            return processStartPlay(cleanUserId, cleanVid, cmd, progress, snapshot, durationSnapshot, safePosition, now);
+        } else {
+            return processSubsequentHeartbeat(cleanUserId, cleanVid, cmd, progress, durationSnapshot, safePosition, now);
+        }
     }
 
     /**
-     * 查询物理观看历史；不存在时创建并持久化首次观看事实。
-     *
-     * <p>创建记录与事件触发严格分离，携带有效增量的首次心跳仍会在后续播放资格阶段参与 CAS。</p>
+     * 处理起播请求（创建新会话或返回重试回执，并执行起播计数决策）。
+     */
+    private WatchHeartbeatOutcome processStartPlay(String userId, String vid, WatchHeartbeatCommand cmd,
+                                                   WatchProgress progress, VideoSnapshot snapshot,
+                                                   int durationSnapshot, int safePosition, LocalDateTime now) {
+        String startKey = cmd.startRequestKey();
+
+        // 步骤 1：按起播请求幂等键查本用户本视频的历史会话（防重试）
+        if (startKey != null && !startKey.isBlank()) {
+            Optional<WatchSession> existingByStartKey = sessionRepository.findByStartRequestKey(userId, vid, startKey);
+            if (existingByStartKey.isPresent()) {
+                WatchSession session = existingByStartKey.get();
+                // 历史会话若已超时过期或已被关闭，返回 409 WATCH_SESSION_EXPIRED
+                if (session.getClosedAt() != null || session.isExpired(now, properties.getSessionTimeout())) {
+                    log.debug("起播重试命中已过期历史会话: userId={}, vid={}, sessionId={}, startKey={}",
+                            userId, vid, session.getSessionId(), startKey);
+                    throw new WatchSessionExpiredException("起播请求已超时失效，请重新发起播放");
+                }
+                // 未过期则幂等返回该会话只读回执，不刷新活跃时间、不重复计数
+                log.debug("起播请求幂等重试命中活跃会话，返回只读回执: userId={}, vid={}, sessionId={}, startKey={}",
+                        userId, vid, session.getSessionId(), startKey);
+                Set<WatchEventType> claimedTypes = loadClaimedTypes(userId, vid, session.getSessionId());
+                return buildOutcome(progress, session, session.getDurationSnapshot(),
+                        session.isViewCounted(),
+                        claimedTypes.contains(WatchEventType.WATCH_COMPLETED),
+                        true);
+            }
+        }
+
+        // 步骤 2：起播键不存在时，检查当前是否已有未超时活跃会话
+        String activeSessionId = progress.getActiveSessionId();
+        if (activeSessionId != null && !activeSessionId.isBlank()) {
+            WatchSession active = sessionRepository.findById(activeSessionId).orElse(null);
+            if (active != null && active.getClosedAt() == null && !active.isExpired(now, properties.getSessionTimeout())) {
+                // 当前会话仍活跃，返回 409 WATCH_SESSION_ACTIVE 要求播放器恢复现有会话
+                log.debug("起播请求到达但当前仍有存活活跃会话，要求恢复: userId={}, vid={}, activeSessionId={}",
+                        userId, vid, active.getSessionId());
+                throw new WatchSessionActiveException(active.getSessionId(), active.getLastSequence());
+            } else if (active != null && active.getClosedAt() == null) {
+                // 活跃会话已超时，予以关闭
+                active.close(now);
+                sessionRepository.close(active.getSessionId(), now);
+                log.debug("历史活跃会话超时关闭: userId={}, vid={}, closedSessionId={}", userId, vid, active.getSessionId());
+            }
+        }
+
+        // 步骤 3：创建新会话并固定门槛与起播幂等键
+        int threshold = WatchQualificationPolicy.resolveQualificationThreshold(
+                durationSnapshot, properties.getValidPlayThreshold(), properties.getQualificationRatio());
+        WatchSession newSession = WatchSession.open(userId, vid, startKey, durationSnapshot, threshold, safePosition, now);
+
+        // 步骤 4：起播计数决策：内容已正式发布 (PUBLISHED) && 播放量冷却在 now 已结束
+        boolean contentUsable = (snapshot != null && snapshot.isPublished());
+        boolean cooldownElapsed = WatchQualificationPolicy.isCooldownElapsed(
+                progress.getLastViewClaimedAt(), now, properties.getRepeatWindow());
+        if (contentUsable && cooldownElapsed) {
+            // 在同一业务事务内写入播放量增量，并更新会话的 viewCountedAt 与进度的 lastViewClaimedAt
+            counterDeltaRepository.incrementViewCount(vid, "watch_session:" + newSession.getSessionId(), 1L);
+            newSession.markViewCounted(now);
+            progress.markViewClaimed(now);
+            progressRepository.markViewClaimed(progress.getId(), now);
+            log.info("起播开启新会话并计入播放量: userId={}, vid={}, sessionId={}", userId, vid, newSession.getSessionId());
+        } else {
+            log.debug("起播开启新会话但不计入播放量: userId={}, vid={}, sessionId={}, contentUsable={}, cooldownElapsed={}",
+                    userId, vid, newSession.getSessionId(), contentUsable, cooldownElapsed);
+        }
+
+        // 步骤 5：保存新会话并挂接断点到进度
+        sessionRepository.insert(newSession);
+        progress.attachSession(newSession.getSessionId());
+        progress.recordHeartbeat(safePosition, 0, now);
+        progressRepository.updateHeartbeat(progress);
+
+        // 起播不生成合格观看或完播事件
+        return buildOutcome(progress, newSession, durationSnapshot, newSession.isViewCounted(), false, false);
+    }
+
+    /**
+     * 处理后续心跳请求（安全累计有效时长，独立判定合格观看与完播事件，绝不触碰播放量计数）。
+     */
+    private WatchHeartbeatOutcome processSubsequentHeartbeat(String userId, String vid, WatchHeartbeatCommand cmd,
+                                                             WatchProgress progress, int durationSnapshot,
+                                                             int safePosition, LocalDateTime now) {
+        String clientSessionId = cmd.sessionId();
+
+        // 步骤 1：验证 sessionId 属于当前用户与当前视频，防止伪造会话
+        WatchSession session = sessionRepository.findById(clientSessionId).orElse(null);
+        if (session == null || !userId.equals(session.getUserId()) || !vid.equals(session.getVid())) {
+            log.warn("心跳上报无效或不属于当前用户/视频的会话 ID: userId={}, vid={}, clientSessionId={}",
+                    userId, vid, clientSessionId);
+            throw new WatchSessionInvalidException("观看会话无效或不存在");
+        }
+
+        // 步骤 2：序号检查：重复或较小序号只返回只读回执，不累计时长、不更新断点、不重复发事件
+        if (session.isReplayOrStale(cmd.sequence())) {
+            log.debug("心跳序号重复或过期，幂等返回当前状态: userId={}, vid={}, sessionId={}, sequence={}, lastSequence={}",
+                    userId, vid, session.getSessionId(), cmd.sequence(), session.getLastSequence());
+            Set<WatchEventType> claimedTypes = loadClaimedTypes(userId, vid, session.getSessionId());
+            return buildOutcome(progress, session, session.getDurationSnapshot(),
+                    session.isViewCounted(),
+                    claimedTypes.contains(WatchEventType.WATCH_COMPLETED),
+                    true);
+        }
+
+        // 步骤 3：会话超时与状态检查
+        // 若会话已关闭、超时、或已不再是当前活跃会话，抛出 409 WATCH_SESSION_EXPIRED
+        boolean isCurrentActive = session.getSessionId().equals(progress.getActiveSessionId());
+        boolean isExpired = session.isExpired(now, properties.getSessionTimeout());
+        if (session.getClosedAt() != null || isExpired || !isCurrentActive) {
+            if (session.getClosedAt() == null && isExpired) {
+                session.close(now);
+                sessionRepository.close(session.getSessionId(), now);
+            }
+            log.debug("后续心跳命中的会话已关闭或过期: userId={}, vid={}, sessionId={}", userId, vid, session.getSessionId());
+            throw new WatchSessionExpiredException("观看会话已超时过期，请重新起播");
+        }
+
+        // 步骤 4：把客户端增量换算为服务端认可的有效观看增量
+        int creditedDelta = WatchCreditValidator.resolveCreditedDelta(
+                cmd.deltaDuration(),
+                session.getLastHeartbeatAt(),
+                now,
+                properties.getMaxHeartbeatDelta(),
+                properties.getHeartbeatCreditTolerance(),
+                session.getDurationSnapshot(),
+                session.getCreditedDuration());
+        if (WatchCreditValidator.isSuspiciousForwardJump(session.getLastPosition(), safePosition,
+                creditedDelta, properties.getHeartbeatCreditTolerance())) {
+            log.debug("心跳断点前跳幅度超过认可增量，仅更新断点不计入时长: userId={}, vid={}, previous={}, current={}, credited={}",
+                    userId, vid, session.getLastPosition(), safePosition, creditedDelta);
+        }
+
+        // 步骤 5：累计到会话与进度
+        session.recordHeartbeat(creditedDelta, safePosition, cmd.sequence(), now);
+        session.refreshQualification();
+        sessionRepository.updateHeartbeat(session);
+
+        progress.recordHeartbeat(safePosition, creditedDelta, now);
+        progressRepository.updateHeartbeat(progress);
+
+        // 步骤 6：合格观看与完播事件独立判定与凭据抢占（绝不更新播放量增量或冷却时间）
+        Set<WatchEventType> claimedTypes = loadClaimedTypes(userId, vid, session.getSessionId());
+        claimQualifiedWatchIfEligible(userId, vid, session,
+                claimedTypes.contains(WatchEventType.WATCH_VIEW_QUALIFIED), now);
+        boolean completed = claimCompletionIfEligible(userId, vid, session, safePosition,
+                claimedTypes.contains(WatchEventType.WATCH_COMPLETED), now);
+
+        return buildOutcome(progress, session, session.getDurationSnapshot(),
+                session.isViewCounted(), completed, false);
+    }
+
+    /**
+     * 以行级排他锁取得观看进度；记录不存在时创建，并发首次心跳由唯一键兜底后退化为锁定已存在行。
      *
      * @param userId 用户 ID
      * @param vid 视频编码
-     * @param position 当前播放位置
-     * @param deltaDuration 本次观看增量
-     * @param videoDuration 视频总时长
-     * @return 已存在或新建的观看历史
+     * @param now 当前业务时间
+     * @return 已持锁的观看进度实体
      */
-    private LoadedHistory loadOrCreateHistory(String userId, String vid, int position,
-                                              int deltaDuration, int videoDuration) {
-        Optional<WatchHistory> existing = historyRepository.findPhysicalByUserAndVid(userId, vid);
+    private WatchProgress lockOrCreateProgress(String userId, String vid, LocalDateTime now) {
+        Optional<WatchProgress> existing = progressRepository.lockByUserAndVid(userId, vid);
         if (existing.isPresent()) {
-            return new LoadedHistory(existing.get(), false);
+            return existing.get();
         }
 
-        WatchHistory history = WatchHistory.create(userId, vid, position, deltaDuration, videoDuration);
-        historyRepository.save(history);
-        log.debug("用户 [{}] 首次观看视频 [{}]，初始化观看事实成功", userId, vid);
-        return new LoadedHistory(history, true);
+        WatchProgress created = WatchProgress.create(userId, vid, now);
+        try {
+            progressRepository.insert(created);
+            return created;
+        } catch (DuplicateKeyException e) {
+            log.debug("并发首次心跳触发唯一键冲突，转为锁定已存在记录: userId={}, vid={}", userId, vid);
+            return progressRepository.lockByUserAndVid(userId, vid)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "并发首次心跳未能锁定观看进度记录: userId=" + userId + ", vid=" + vid));
+        }
     }
 
     /**
-     * 更新已有观看历史的会话状态与播放事实。
+     * 在会话达到合格观看门槛时抢占凭据并发出领域事件。
      *
-     * <p>新建记录已由工厂方法写入本次心跳，避免首次心跳被重复累计；已有记录则统一在本方法内完成会话切换、资格更新与持久化。</p>
+     * <p>与播放量完全解耦：不检查冷却窗口、不写入播放量增量、不刷新冷却时间。</p>
      *
-     * @param history 观看历史
-     * @param position 当前播放位置
-     * @param deltaDuration 本次观看增量
-     * @param videoDuration 视频总时长
+     * @param userId 用户 ID
+     * @param vid 视频编码
+     * @param session 当前会话
+     * @param alreadyClaimed 本会话此前是否已抢占过合格观看凭据
      * @param now 当前业务时间
+     * @return 本会话是否已达成合格观看（含此前已达成或本次刚达成）
      */
-    private void updateWatchSession(WatchHistory history, boolean created, int position, int deltaDuration,
-                                    int videoDuration, LocalDateTime now) {
-        if (created) {
-            return;
+    private boolean claimQualifiedWatchIfEligible(String userId, String vid, WatchSession session,
+                                                  boolean alreadyClaimed, LocalDateTime now) {
+        if (alreadyClaimed) {
+            return true;
+        }
+        if (!session.isQualified()) {
+            return false;
         }
 
-        boolean newSession = history.startNewSessionIfExpired(now, sessionTimeout);
-        if (newSession) {
-            log.debug("用户 [{}] 针对视频 [{}] 开启新观看会话", history.getUserId(), history.getVid());
+        WatchEventClaim claim = WatchEventClaim.create(userId, vid, session.getSessionId(),
+                WatchEventType.WATCH_VIEW_QUALIFIED, now);
+        if (!claimRepository.tryClaim(claim)) {
+            return false;
         }
 
-        // 步骤 2.2.1: 逻辑删除记录需先复活；普通记录直接累计当前会话和历史时长
-        if (history.isDeleted()) {
-            history.revive(position, deltaDuration, videoDuration);
-            historyRepository.revive(history);
-            return;
-        }
-
-        history.recordHeartbeat(position, deltaDuration, videoDuration);
-        historyRepository.update(history);
+        String outboxEventId = eventPublisher.publishVideoAction(VideoActionPayload.watchViewQualified(
+                userId, vid, session.getSessionId(), session.getCreditedDuration(), session.getDurationSnapshot()));
+        claimRepository.attachOutboxEventId(claim.getId(), outboxEventId);
+        log.info("观看会话达成合格观看门槛并发出合格事件: userId={}, vid={}, sessionId={}, creditedDuration={}",
+                userId, vid, session.getSessionId(), session.getCreditedDuration());
+        return true;
     }
 
     /**
-     * 按当前会话状态尝试原子抢占有效播放资格。
+     * 在同时满足位置与有效时长双 90% 条件时抢占完播凭据。
      *
-     * @param history 已持久化本次心跳的观看历史
+     * <p>完播不增加公开播放量，只产生对外完播事件。</p>
+     *
+     * @param userId 用户 ID
+     * @param vid 视频编码
+     * @param session 当前会话
+     * @param position 本次播放位置 (秒)
+     * @param alreadyCompleted 本会话此前是否已计入过完播
      * @param now 当前业务时间
-     * @return 抢占类型；未满足应用层前置条件或 CAS 失败时返回 {@link PlayClaimResult#NONE}
+     * @return 本会话是否已计入完播
      */
-    private PlayClaimResult claimPlayIfEligible(WatchHistory history, LocalDateTime now) {
-        PlayClaimDecision decision = history.decidePlayClaim(now, repeatWindow, validPlayThreshold);
-        int thresholdSeconds = Math.toIntExact(validPlayThreshold.toSeconds());
-
-        if (decision.type() == PlayClaimType.INITIAL) {
-            return historyRepository.claimInitialPlay(history.getId(), now, thresholdSeconds) > 0
-                    ? PlayClaimResult.INITIAL : PlayClaimResult.NONE;
+    private boolean claimCompletionIfEligible(String userId, String vid, WatchSession session,
+                                              int position, boolean alreadyCompleted, LocalDateTime now) {
+        if (alreadyCompleted) {
+            return true;
+        }
+        if (!WatchQualificationPolicy.isCompleted(position, session.getCreditedDuration(),
+                session.getDurationSnapshot(), properties.getCompletionRatio())) {
+            return false;
         }
 
-        if (decision.type() == PlayClaimType.REPEAT) {
-            return historyRepository.claimRepeatPlay(history.getId(), now,
-                    decision.cooldownBoundary(), thresholdSeconds) > 0
-                    ? PlayClaimResult.REPEAT : PlayClaimResult.NONE;
-        }
-        return PlayClaimResult.NONE;
-    }
-
-    /**
-     * 在播放 CAS 抢占成功后同步内存状态，同事务写入 PLAY Outbox 与播放计数增量。
-     *
-     * @param playClaim 播放资格抢占结果
-     * @param history 已更新的观看历史
-     * @param userId 用户 ID
-     * @param vid 视频编码
-     * @param now CAS 成功时写入的有效播放时间
-     */
-    private void publishPlayEventIfClaimed(PlayClaimResult playClaim, WatchHistory history,
-                                           String userId, String vid, LocalDateTime now) {
-        if (playClaim == PlayClaimResult.NONE) {
-            return;
+        WatchEventClaim claim = WatchEventClaim.create(userId, vid, session.getSessionId(),
+                WatchEventType.WATCH_COMPLETED, now);
+        if (!claimRepository.tryClaim(claim)) {
+            return false;
         }
 
-        // 步骤 3.1: 数据库 CAS 已成功，保持内存领域状态与数据库状态一致后写 Outbox
-        history.markValidPlay(now);
-        history.markSessionPlayEmitted();
-        eventPublisher.publishVideoAction(VideoActionPayload.play(userId, vid));
-
-        // 步骤 3.2: 与播放资格及 Outbox 在同一事务内记录公开计数增量
-        String sourceId = history.getId() + ":" + now;
-        counterDeltaRepository.incrementViewCount(vid, sourceId, 1L);
-        log.info("用户 [{}] 针对视频 [{}] 达成{}有效播放，写入 Outbox 与计数增量",
-                userId, vid, playClaim);
+        String outboxEventId = eventPublisher.publishVideoAction(VideoActionPayload.watchCompleted(
+                userId, vid, session.getSessionId(), session.getCreditedDuration(), session.getDurationSnapshot()));
+        claimRepository.attachOutboxEventId(claim.getId(), outboxEventId);
+        log.info("观看会话达成完播并记为一次完播: userId={}, vid={}, sessionId={}, position={}, creditedDuration={}",
+                userId, vid, session.getSessionId(), position, session.getCreditedDuration());
+        return true;
     }
 
     /**
-     * 在达到完播阈值后通过 CAS 标记完播并发布 PLAY_COMPLETE 事件。
+     * 读取本会话已抢占的凭据类型集合。
      *
-     * <p>完播门槛由 {@link WatchHistory#shouldClaimCompletion()} 统一判断，应用服务只负责执行 CAS 与事件发布。</p>
-     *
-     * @param history 已更新的观看历史
      * @param userId 用户 ID
      * @param vid 视频编码
+     * @param sessionId 会话 ID
+     * @return 凭据类型集合
      */
-    private void processCompletion(WatchHistory history, String userId, String vid) {
-        if (!history.shouldClaimCompletion()) {
-            return;
+    private Set<WatchEventType> loadClaimedTypes(String userId, String vid, String sessionId) {
+        return claimRepository.findClaimedTypes(userId, vid, sessionId);
+    }
+
+    /**
+     * 组装心跳结果。
+     *
+     * @param progress 观看进度
+     * @param session 当前会话
+     * @param durationSnapshot 视频时长快照 (秒)
+     * @param viewCounted 本会话是否已计入播放量
+     * @param completed 本会话是否已计入完播
+     * @param duplicateOrStaleRequest 是否为重复或乱序请求
+     * @return 心跳结果
+     */
+    private WatchHeartbeatOutcome buildOutcome(WatchProgress progress, WatchSession session,
+                                               int durationSnapshot, boolean viewCounted, boolean completed,
+                                               boolean duplicateOrStaleRequest) {
+        return new WatchHeartbeatOutcome(
+                progress.getVid(),
+                session.getSessionId(),
+                session.getLastSequence(),
+                session.getLastPosition(),
+                progress.getWatchedDuration(),
+                session.getCreditedDuration(),
+                durationSnapshot,
+                session.getQualificationThreshold(),
+                session.isQualified(),
+                viewCounted,
+                completed,
+                duplicateOrStaleRequest);
+    }
+
+    /**
+     * 把播放位置规整为非负值，并在有可用时长快照时截断到视频时长以内。
+     *
+     * @param position 客户端上报位置 (秒)
+     * @param durationSnapshot 视频时长快照 (秒)
+     * @return 规整后的播放位置
+     */
+    private int resolveSafePosition(int position, int durationSnapshot) {
+        int safe = Math.max(0, position);
+        if (durationSnapshot > 0) {
+            safe = Math.min(safe, durationSnapshot);
         }
-
-        // 步骤 4.1: 数据库 CAS 是完播事件幂等防线，成功后才写 Outbox
-        if (historyRepository.markCompletedIfUncompleted(history.getId()) > 0) {
-            history.markCompleted();
-            eventPublisher.publishVideoAction(VideoActionPayload.playComplete(userId, vid));
-            log.info("用户 [{}] 针对视频 [{}] 达成完播 (CAS原子置位成功)，发布完播事件", userId, vid);
-        }
-    }
-
-    /**
-     * 查询或创建观看历史的结果。
-     *
-     * @param history 观看历史领域实体
-     * @param created 是否在本次心跳中新建
-     */
-    private record LoadedHistory(WatchHistory history, boolean created) {
-    }
-
-    /**
-     * 有效播放资格的 CAS 结果。
-     */
-    private enum PlayClaimResult {
-        /** 未满足条件或未抢占到资格。 */
-        NONE,
-        /** 首次有效播放资格抢占成功。 */
-        INITIAL,
-        /** 重复有效播放资格抢占成功。 */
-        REPEAT
-    }
-
-    /**
-     * 起播辅助方法（与心跳共用统一逻辑）。
-     *
-     * @param vid 视频编码
-     * @param userId 用户 ID
-     * @return 观看历史实体
-     */
-    public WatchHistory startPlay(String vid, String userId) {
-        return processHeartbeat(vid, userId, 0, 0, 0);
-    }
-
-    /**
-     * 获取用户在指定视频上的断点播放进度。
-     *
-     * @param vid 视频编码
-     * @param userId 用户 ID
-     * @return 观看历史 (包含 lastPosition)
-     */
-    public Optional<WatchHistory> getWatchProgress(String vid, String userId) {
-        return historyRepository.findByUserAndVid(userId, vid);
-    }
-
-    /**
-     * 分页查询用户历史观看记录列表。
-     *
-     * @param userId 用户 ID
-     * @param page 当前页码 (从 1 起始)
-     * @param size 每页大小
-     * @return 历史记录列表
-     */
-    public List<WatchHistory> getHistoryPage(String userId, int page, int size) {
-        int safePage = Math.max(1, page);
-        int safeSize = Math.max(1, Math.min(100, size));
-        int offset = (safePage - 1) * safeSize;
-        return historyRepository.findByUserId(userId, offset, safeSize);
-    }
-
-    /**
-     * 删除单条视频观看历史。
-     *
-     * @param vid 视频编码
-     * @param userId 用户 ID
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void removeHistory(String vid, String userId) {
-        historyRepository.deleteByUserAndVid(userId, vid);
-    }
-
-    /**
-     * 清空当前用户全部观看历史。
-     *
-     * @param userId 用户 ID
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void clearAllHistory(String userId) {
-        historyRepository.deleteAllByUserId(userId);
+        return safe;
     }
 }

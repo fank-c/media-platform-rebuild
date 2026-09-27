@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -225,10 +226,22 @@ class PublishGatekeeperTest {
         // 步骤 2 (When)：触发尝试发布
         boolean published = gatekeeper.tryPublishIfEligible("v_100");
 
-        // 步骤 3 (Then)：断言发布成功，视频状态变更为 PUBLISHED，且持久化了 Outbox 发布记录
+        // 步骤 3 (Then)：断言发布成功，视频状态变更为 PUBLISHED，且同一事务内写入发布事件与元数据事件两条 Outbox 记录
         assertThat(published).isTrue();
         assertThat(video.getPublishStatus()).isEqualTo(PublishStatus.PUBLISHED);
-        verify(contentOutboxMapper).insert(any(ContentOutboxRecord.class), any(Timestamp.class), eq("PENDING"), any(Timestamp.class));
+        ArgumentCaptor<ContentOutboxRecord> recordCaptor = ArgumentCaptor.forClass(ContentOutboxRecord.class);
+        verify(contentOutboxMapper, org.mockito.Mockito.times(2))
+                .insert(recordCaptor.capture(), any(Timestamp.class), eq("PENDING"), any(Timestamp.class));
+
+        List<ContentOutboxRecord> records = recordCaptor.getAllValues();
+        assertThat(records).extracting(ContentOutboxRecord::eventType)
+                .containsExactly("content.video.published", "content.video.metadata");
+
+        // 元数据事件必须携带 duration，供互动服务建立本地时长快照
+        ContentOutboxRecord metadataRecord = records.get(1);
+        assertThat(metadataRecord.payload()).contains("\"duration\"");
+        assertThat(metadataRecord.payload()).contains("\"metadataVersion\":1");
+        assertThat(metadataRecord.aggregateId()).isEqualTo("v_100");
     }
 
     /**

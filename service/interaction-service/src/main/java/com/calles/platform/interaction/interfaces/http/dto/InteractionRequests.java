@@ -15,14 +15,18 @@ public final class InteractionRequests {
     /**
      * 播放心跳上报请求体。
      *
+     * <p>不接收视频总时长：时长口径完全来自服务端本地快照，客户端无法通过上报时长影响播放量门槛与完播判定。</p>
+     *
+     * @param sessionId 服务端返回的会话 ID，首次心跳为空
+     * @param sequence 客户端单调递增心跳序号，用于重复与乱序请求的幂等处理，可为空
      * @param position 当前播放头所在位置 (秒)
-     * @param deltaDuration 距上次心跳增量秒数 (如 5)
-     * @param videoDuration 视频总时长 (秒)
+     * @param deltaDuration 距上次心跳增量秒数
      */
     public record Heartbeat(
+            String sessionId,
+            Long sequence,
             int position,
-            int deltaDuration,
-            int videoDuration
+            Integer deltaDuration
     ) { }
 
     /**

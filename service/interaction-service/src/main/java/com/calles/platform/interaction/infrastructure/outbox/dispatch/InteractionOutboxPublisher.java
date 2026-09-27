@@ -51,10 +51,10 @@ public class InteractionOutboxPublisher {
         Message message = new Message(claimed.payload().getBytes(StandardCharsets.UTF_8), messageProperties);
 
         try {
-            // 步骤 1: 投递至平台统一 Topic 交换机，路由键使用 interaction.video-action.v1
+            // 步骤 1: 投递至平台统一 Topic 交换机，路由键即事件类型（不带版本后缀）
             rabbitTemplate.send(
                     InteractionMessagingConfiguration.MEDIA_EVENTS_EXCHANGE,
-                    InteractionMessagingConfiguration.VIDEO_ACTION_ROUTING_KEY,
+                    claimed.eventType(),
                     message,
                     correlation
             );

@@ -580,27 +580,77 @@ CREATE TABLE IF NOT EXISTS `interaction_star_item` (
     CONSTRAINT `ck_star_item_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户收藏明细表';
 
--- interaction-service: 用户视频观看历史与心跳断点表
-CREATE TABLE IF NOT EXISTS `interaction_watch_history` (
+-- interaction-service: 视频元数据本地快照（播放量门槛与完播判定的唯一时长口径）
+-- duration <= 0 表示快照不可用，此时只允许保存断点，不产生播放量与完播事件
+CREATE TABLE IF NOT EXISTS `interaction_video_snapshot` (
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `duration` INT NOT NULL DEFAULT 0 COMMENT '视频总时长 (秒)，<=0 表示快照不可用',
+    `metadata_version` INT NOT NULL DEFAULT 1 COMMENT '内容元数据版本号',
+    `source_event_id` CHAR(32) NOT NULL COMMENT '来源 content.video.metadata 事件 ID，用于消费幂等',
+    `status` VARCHAR(16) NOT NULL DEFAULT 'PUBLISHED' COMMENT '内容状态: PUBLISHED',
+    `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '快照更新时间',
+    PRIMARY KEY (`vid`),
+    UNIQUE KEY `uk_video_snapshot_source_event` (`source_event_id`),
+    CONSTRAINT `ck_video_snapshot_duration` CHECK (`duration` >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频元数据本地快照表';
+
+-- interaction-service: 观看进度（断点续播、历史展示、最近一次播放量时间）
+-- 删除历史只置 deleted = 1 隐藏展示，记录不物理删除，避免"删掉历史再重新观看"重置播放量冷却
+CREATE TABLE IF NOT EXISTS `interaction_watch_progress` (
     `id` CHAR(32) NOT NULL COMMENT '记录主键 UUID',
     `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
     `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
-    `last_position` INT NOT NULL DEFAULT 0 COMMENT '上次播放头进度 (秒)，用于断点续播',
+    `active_session_id` CHAR(32) NULL COMMENT '当前活跃观看会话 ID，无活跃会话时为空',
+    `last_position` INT NOT NULL DEFAULT 0 COMMENT '上次播放头断点位置 (秒)，用于断点续播',
     `watched_duration` INT NOT NULL DEFAULT 0 COMMENT '累计有效观看总时长 (秒)',
-    `session_watched_duration` INT NOT NULL DEFAULT 0 COMMENT '当前观看会话累计有效观看时长 (秒)',
-    `session_play_emitted` TINYINT NOT NULL DEFAULT 0 COMMENT '当前会话是否已经发送播放事件: 0=否, 1=是',
-    `eligible_for_next_play` TINYINT NOT NULL DEFAULT 0 COMMENT '上一会话达到30%门槛从而允许下一次会话触发播放事件: 0=否, 1=是',
-    `video_duration` INT NOT NULL DEFAULT 0 COMMENT '视频总时长 (秒)',
-    `completed` TINYINT NOT NULL DEFAULT 0 COMMENT '是否完播: 1=是, 0=否',
     `first_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '首次观看时间',
-    `last_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '最近一次心跳活跃时间',
-    `last_valid_play_at` DATETIME(3) NULL COMMENT '最近一次计入有效播放并生成播放事件的时间',
-    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
+    `last_watch_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '最近一次心跳活跃时间',
+    `last_view_claimed_at` DATETIME(3) NULL COMMENT '最近一次成功计入播放量的时间，用于重复播放冷却判断',
+    `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=仅隐藏历史展示（不释放防重状态）',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_watch_user_vid` (`user_id`, `vid`),
-    KEY `idx_watch_user_recent` (`user_id`, `last_watch_at` DESC),
-    CONSTRAINT `ck_watch_history_deleted` CHECK (`deleted` IN (0, 1))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户视频观看历史与进度表';
+    UNIQUE KEY `uk_watch_progress_user_vid` (`user_id`, `vid`),
+    KEY `idx_watch_progress_user_recent` (`user_id`, `last_watch_at` DESC),
+    CONSTRAINT `ck_watch_progress_deleted` CHECK (`deleted` IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户视频观看进度与断点表';
+
+-- interaction-service: 观看会话（本会话服务端认可的有效观看时长与序号状态）
+-- duration_snapshot 与 qualification_threshold 在会话创建时固定，避免视频元数据变化导致门槛漂移
+CREATE TABLE IF NOT EXISTS `interaction_watch_session` (
+    `session_id` CHAR(32) NOT NULL COMMENT '会话主键 UUID，由服务端首次心跳生成',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `duration_snapshot` INT NOT NULL DEFAULT 0 COMMENT '会话开始时使用的视频时长快照 (秒)',
+    `qualification_threshold` INT NOT NULL DEFAULT 0 COMMENT '本会话播放量门槛 (秒)，创建时固定',
+    `credited_duration` INT NOT NULL DEFAULT 0 COMMENT '本会话服务端校验后的累计有效观看时长 (秒)',
+    `last_sequence` BIGINT NULL COMMENT '已处理的最大客户端心跳序号，为空表示客户端未提供序号',
+    `last_position` INT NOT NULL DEFAULT 0 COMMENT '本会话最近一次播放位置 (秒)',
+    `qualified` TINYINT NOT NULL DEFAULT 0 COMMENT '本会话是否达到播放量门槛: 0=否, 1=是',
+    `view_counted_at` DATETIME(3) NULL COMMENT '播放量入账时间，非空表示该会话已记入播放量',
+    `start_request_key` VARCHAR(64) NULL COMMENT '起播请求幂等键',
+    `started_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '会话开始时间',
+    `last_heartbeat_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '最近一次有效心跳时间',
+    `closed_at` DATETIME(3) NULL COMMENT '会话关闭时间，超时切换新会话时写入',
+    PRIMARY KEY (`session_id`),
+    UNIQUE KEY `uk_watch_session_start_key` (`user_id`, `vid`, `start_request_key`),
+    KEY `idx_watch_session_user_vid_heartbeat` (`user_id`, `vid`, `last_heartbeat_at` DESC),
+    KEY `idx_watch_session_heartbeat` (`last_heartbeat_at`),
+    CONSTRAINT `ck_watch_session_qualified` CHECK (`qualified` IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户观看会话与有效时长累计表';
+
+-- interaction-service: 观看事件凭据（播放量与完播事件的最终防重依据）
+-- 唯一键 (user_id, vid, session_id, event_type) 保证每会话每类事件只能成功一次
+CREATE TABLE IF NOT EXISTS `interaction_watch_event_claim` (
+    `id` CHAR(32) NOT NULL COMMENT '凭据主键 UUID',
+    `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
+    `vid` VARCHAR(32) NOT NULL COMMENT '视频公开业务短码',
+    `session_id` CHAR(32) NOT NULL COMMENT '所属观看会话 ID',
+    `event_type` VARCHAR(32) NOT NULL COMMENT '事件类型: WATCH_VIEW_QUALIFIED / WATCH_COMPLETED',
+    `outbox_event_id` CHAR(32) NULL COMMENT '同事务写入的 Outbox 事件 ID，用于对账',
+    `claimed_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '抢占成功时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_watch_event_claim` (`user_id`, `vid`, `session_id`, `event_type`),
+    KEY `idx_watch_event_claim_claimed_at` (`claimed_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='观看播放量与完播事件凭据表';
 
 -- interaction-service: 视频分享请求幂等防重记录表
 CREATE TABLE IF NOT EXISTS `interaction_share_record` (

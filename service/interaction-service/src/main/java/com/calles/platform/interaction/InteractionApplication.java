@@ -1,6 +1,7 @@
 package com.calles.platform.interaction;
 
 import com.calles.platform.interaction.config.InteractionOutboxProperties;
+import com.calles.platform.interaction.config.InteractionWatchProperties;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -14,7 +15,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * <p>注解说明：通过 {@link EnableScheduling} 开启后台调度，支持高频互动计数的异步批量刷盘任务与 Outbox 扫描。</p>
  */
 @EnableScheduling
-@EnableConfigurationProperties(InteractionOutboxProperties.class)
+@EnableConfigurationProperties({InteractionOutboxProperties.class, InteractionWatchProperties.class})
 @SpringBootApplication
 @MapperScan(basePackages = {
         "com.calles.platform.interaction.infrastructure.persistence.mapper",

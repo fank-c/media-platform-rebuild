@@ -154,7 +154,19 @@ public class PublishGatekeeper {
         contentOutboxMapper.insert(outbox, Timestamp.from(instantNow), "PENDING", Timestamp.from(instantNow));
         contentOutboxDispatchNotifier.notifyAfterCommit(outbox.eventId());
 
-        // 步骤 6：记录审计日志
+        // 步骤 6：同一事务内额外发布视频元数据事件，供互动服务建立本地时长快照；
+        // 独立事件而不扩展 content.video.published 载荷，避免改变既有发布事件语义与推荐侧入池行为。
+        ContentOutboxRecord metadataOutbox = ContentOutboxRecord.of(
+                video.getId(),
+                "content.video.metadata",
+                String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"duration\":%d,\"metadataVersion\":1,\"status\":\"PUBLISHED\",\"updatedAt\":\"%s\"}",
+                        video.getId(), video.getVid(), video.getDuration(), instantNow),
+                instantNow
+        );
+        contentOutboxMapper.insert(metadataOutbox, Timestamp.from(instantNow), "PENDING", Timestamp.from(instantNow));
+        contentOutboxDispatchNotifier.notifyAfterCommit(metadataOutbox.eventId());
+
+        // 步骤 7：记录审计日志
         log.info("视频 [{}] 已通过分级就绪门禁，正式自动发布上线！", videoId);
         return true;
     }

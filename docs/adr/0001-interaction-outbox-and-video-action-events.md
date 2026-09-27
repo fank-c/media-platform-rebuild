@@ -61,3 +61,5 @@
 
 - 补登 `PLAY_COMPLETE`，明确 v1 的可加性兼容约定。
 - 把播放防重的具体规则（会话、阈值、冷却时间、CAS 语句）移到模块文档，本 ADR 只保留决策本身。
+- 路由键去掉版本后缀：`interaction.video-action.v1` → `interaction.video-action`，且不再采用“`eventType + .v + eventVersion`”推导路由键的机制，派发时直接以事件类型作为路由键。原因是本服务从未开启投递、也没有任何消费方，不存在需要兼容的历史契约（见 [ADR 0005](0005-观看能力拆分与视频时长本地快照.md)）。后续若真需要破坏性变更，仍按本文“兼容约定”发新路由。
+- 删除 `PLAY` / `PLAY_COMPLETE` / `PLAY_START` 三个 action：观看量与完播改由 `WATCH_VIEW_QUALIFIED` / `WATCH_COMPLETED` 表达（与点赞收藏分享共用同一路由）。三者从未被投递，不构成已生效契约。

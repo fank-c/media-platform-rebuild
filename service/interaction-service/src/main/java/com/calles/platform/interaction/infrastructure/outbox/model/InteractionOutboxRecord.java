@@ -8,7 +8,7 @@ import java.time.Instant;
  * @param eventId 稳定事件 UUID，重试和重放必须复用
  * @param aggregateId 业务聚合根 ID (如 vid 或 userId:vid)
  * @param eventType 事件类型标识 (固定为 interaction.video-action)
- * @param eventVersion 契约版本号 (固定为 1)
+ * @param eventVersion 契约版本号 (当前为 1)
  * @param payload 符合推荐交互流模板的事件 JSON 载荷
  * @param traceId 链路追踪上下文 ID
  * @param occurredAt 事件发生时间
