@@ -54,6 +54,10 @@ class PublishGatekeeperTest {
     @Mock
     private ContentOutboxDispatchNotifier contentOutboxDispatchNotifier;
 
+    /** 真实 JSON 序列化器。 */
+    @org.mockito.Spy
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+
     /** 待测试的门禁决策器。 */
     @InjectMocks
     private PublishGatekeeper gatekeeper;
@@ -237,10 +241,23 @@ class PublishGatekeeperTest {
         assertThat(records).extracting(ContentOutboxRecord::eventType)
                 .containsExactly("content.video.published", "content.video.metadata");
 
-        // 元数据事件必须携带 duration，供互动服务建立本地时长快照
+        // 验证发布事件载荷契约
+        ContentOutboxRecord pubRecord = records.get(0);
+        assertThat(pubRecord.payload()).contains(
+                "\"eventId\":\"" + pubRecord.eventId() + "\"",
+                "\"traceId\":\"" + pubRecord.traceId() + "\"",
+                "\"eventType\":\"content.video.published\"",
+                "\"videoFileId\":\"" + video.getVideoFileId() + "\"");
+
+        // 元数据事件必须携带 eventId、traceId、duration 等完整契约字段，供互动服务建立本地时长快照并保障消费幂等
         ContentOutboxRecord metadataRecord = records.get(1);
-        assertThat(metadataRecord.payload()).contains("\"duration\"");
-        assertThat(metadataRecord.payload()).contains("\"metadataVersion\":1");
+        assertThat(metadataRecord.payload()).contains(
+                "\"eventId\":\"" + metadataRecord.eventId() + "\"",
+                "\"traceId\":\"" + metadataRecord.traceId() + "\"",
+                "\"eventType\":\"content.video.metadata\"",
+                "\"duration\"",
+                "\"metadataVersion\":1",
+                "\"status\":\"PUBLISHED\"");
         assertThat(metadataRecord.aggregateId()).isEqualTo("v_100");
     }
 

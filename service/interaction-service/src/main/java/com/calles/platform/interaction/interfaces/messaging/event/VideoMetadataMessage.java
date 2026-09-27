@@ -35,4 +35,38 @@ public record VideoMetadataMessage(
         String status,
         Instant updatedAt
 ) {
+
+    /**
+     * 当消息体中的事件唯一标识或链路追踪标识缺失时，使用传输层 AMQP 报头提供的标识安全回填，生成完备的记录副本。
+     *
+     * <p>保护性语义：优先保留消息体内既有的显式标识；仅在消息体内字段为空白时才取兜底值。</p>
+     *
+     * @param fallbackEventId 兜底事件唯一标识 (如 AMQP messageId)
+     * @param fallbackTraceId 兜底全链路追踪 ID (如 AMQP traceId Header)
+     * @return 补全标识后的不可变消息对象副本
+     */
+    public VideoMetadataMessage withFallbackIdentifiers(String fallbackEventId, String fallbackTraceId) {
+        String resolvedEventId = this.eventId;
+        if (resolvedEventId == null || resolvedEventId.isBlank()) {
+            resolvedEventId = fallbackEventId;
+        }
+
+        String resolvedTraceId = this.traceId;
+        if (resolvedTraceId == null || resolvedTraceId.isBlank()) {
+            resolvedTraceId = fallbackTraceId;
+        }
+        return new VideoMetadataMessage(
+                resolvedEventId,
+                this.eventType,
+                this.eventVersion,
+                resolvedTraceId,
+                this.occurredAt,
+                this.videoId,
+                this.vid,
+                this.duration,
+                this.metadataVersion,
+                this.status,
+                this.updatedAt
+        );
+    }
 }

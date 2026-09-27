@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -57,6 +59,9 @@ public class PublishGatekeeper {
 
     /** 事务提交后发件箱快速投递通知器。 */
     private final ContentOutboxDispatchNotifier contentOutboxDispatchNotifier;
+
+    /** JSON 序列化器，用于结构化构建 Outbox 消息载荷。 */
+    private final ObjectMapper objectMapper;
 
     /**
      * 判断当前任务集合是否满足分级就绪公开发布门禁。
@@ -144,11 +149,39 @@ public class PublishGatekeeper {
 
         // 步骤 5：在同一本地事务中写入 Outbox 领域发布事件，通知下游搜索、推荐系统即时上线
         Instant instantNow = Instant.now();
-        ContentOutboxRecord outbox = ContentOutboxRecord.of(
+        String requestTraceId = org.slf4j.MDC.get("traceId");
+
+        String publishedEventId = UUID.randomUUID().toString().replace("-", "");
+        String publishedTraceId = (requestTraceId != null && !requestTraceId.isBlank())
+                ? requestTraceId : publishedEventId;
+        Map<String, Object> publishedPayload = new java.util.LinkedHashMap<>();
+        publishedPayload.put("eventId", publishedEventId);
+        publishedPayload.put("eventType", "content.video.published");
+        publishedPayload.put("eventVersion", 1);
+        publishedPayload.put("traceId", publishedTraceId);
+        publishedPayload.put("occurredAt", instantNow.toString());
+        publishedPayload.put("videoId", video.getId());
+        publishedPayload.put("vid", video.getVid());
+        publishedPayload.put("authorId", video.getAuthorId());
+        publishedPayload.put("videoFileId", video.getVideoFileId());
+        publishedPayload.put("coverFileId", video.getCoverFileId());
+        publishedPayload.put("publishedAt", video.getPublishedAt().toString());
+
+        String publishedPayloadJson;
+        try {
+            publishedPayloadJson = objectMapper.writeValueAsString(publishedPayload);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.error("构建视频公开发布 Outbox 载荷序列化异常: videoId={}", video.getId(), e);
+            throw new IllegalStateException("发布事件构建失败", e);
+        }
+
+        ContentOutboxRecord outbox = new ContentOutboxRecord(
+                publishedEventId,
                 video.getId(),
                 "content.video.published",
-                String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"authorId\":\"%s\",\"videoFileId\":\"%s\",\"coverFileId\":\"%s\",\"publishedAt\":\"%s\"}",
-                        video.getId(), video.getVid(), video.getAuthorId(), video.getVideoFileId(), video.getCoverFileId(), video.getPublishedAt()),
+                1,
+                publishedPayloadJson,
+                publishedTraceId,
                 instantNow
         );
         contentOutboxMapper.insert(outbox, Timestamp.from(instantNow), "PENDING", Timestamp.from(instantNow));
@@ -156,11 +189,38 @@ public class PublishGatekeeper {
 
         // 步骤 6：同一事务内额外发布视频元数据事件，供互动服务建立本地时长快照；
         // 独立事件而不扩展 content.video.published 载荷，避免改变既有发布事件语义与推荐侧入池行为。
-        ContentOutboxRecord metadataOutbox = ContentOutboxRecord.of(
+        // 严格写入 eventId, eventType, eventVersion, traceId 与业务字段，保证下游消费幂等与时效校验闭环。
+        String metadataEventId = UUID.randomUUID().toString().replace("-", "");
+        String metadataTraceId = (requestTraceId != null && !requestTraceId.isBlank())
+                ? requestTraceId : metadataEventId;
+        Map<String, Object> metadataPayload = new java.util.LinkedHashMap<>();
+        metadataPayload.put("eventId", metadataEventId);
+        metadataPayload.put("eventType", "content.video.metadata");
+        metadataPayload.put("eventVersion", 1);
+        metadataPayload.put("traceId", metadataTraceId);
+        metadataPayload.put("occurredAt", instantNow.toString());
+        metadataPayload.put("videoId", video.getId());
+        metadataPayload.put("vid", video.getVid());
+        metadataPayload.put("duration", video.getDuration());
+        metadataPayload.put("metadataVersion", 1);
+        metadataPayload.put("status", "PUBLISHED");
+        metadataPayload.put("updatedAt", instantNow.toString());
+
+        String metadataPayloadJson;
+        try {
+            metadataPayloadJson = objectMapper.writeValueAsString(metadataPayload);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.error("构建视频元数据 Outbox 载荷序列化异常: videoId={}", video.getId(), e);
+            throw new IllegalStateException("元数据事件构建失败", e);
+        }
+
+        ContentOutboxRecord metadataOutbox = new ContentOutboxRecord(
+                metadataEventId,
                 video.getId(),
                 "content.video.metadata",
-                String.format("{\"videoId\":\"%s\",\"vid\":\"%s\",\"duration\":%d,\"metadataVersion\":1,\"status\":\"PUBLISHED\",\"updatedAt\":\"%s\"}",
-                        video.getId(), video.getVid(), video.getDuration(), instantNow),
+                1,
+                metadataPayloadJson,
+                metadataTraceId,
                 instantNow
         );
         contentOutboxMapper.insert(metadataOutbox, Timestamp.from(instantNow), "PENDING", Timestamp.from(instantNow));
