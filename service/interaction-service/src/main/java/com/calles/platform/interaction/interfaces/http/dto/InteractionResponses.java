@@ -119,4 +119,17 @@ public final class InteractionResponses {
             String action,
             boolean active
     ) { }
+
+    /**
+     * 视频点赞明细项响应。
+     *
+     * @param id 点赞主键 UUID
+     * @param vid 视频公开短码
+     * @param createdAt 首次点赞时间
+     */
+    public record LikeVideoItem(
+            String id,
+            String vid,
+            LocalDateTime createdAt
+    ) { }
 }

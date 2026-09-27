@@ -11,6 +11,7 @@ import com.calles.platform.interaction.domain.model.like.LikeStatus;
 import com.calles.platform.interaction.domain.model.like.VideoLike;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoLikeRepository;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -127,9 +128,43 @@ class LikeApplicationServiceTest {
         boolean reactivated = like.reactivate();
         assertThat(reactivated).isTrue();
         assertThat(like.getVersion()).isEqualTo(3L);
+        assertThat(like.getCreatedAt()).isNotNull();
 
         // 重复 reactivate 幂等，版本不增加
         assertThat(like.reactivate()).isFalse();
         assertThat(like.getVersion()).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("分页查询点赞列表：安全处理边界值并按计算后的 offset 和 limit 检索")
+    void shouldQueryLikedVideosWithBoundaryProtection() {
+        VideoLike like = VideoLike.create("vid_01", "user_01");
+        // 当传入 page=-1, size=200 时，经过防御修正应为 page=1, size=100, offset=0, limit=100
+        when(likeRepository.findActivePageByUserId("user_01", 0, 100)).thenReturn(List.of(like));
+
+        List<VideoLike> result = service.getLikedVideos("user_01", -1, 200);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getVid()).isEqualTo("vid_01");
+        verify(likeRepository).findActivePageByUserId("user_01", 0, 100);
+    }
+
+    @Test
+    @DisplayName("超大页码乘积溢出整型上限时直接返回空列表且不查仓储")
+    void shouldReturnEmptyListWhenPageCausesIntegerOverflow() {
+        // page = 214748365, size = 20 时，若用 int 计算会发生溢出变成 -16
+        List<VideoLike> result = service.getLikedVideos("user_01", 214748365, 20);
+
+        assertThat(result).isEmpty();
+        verify(likeRepository, never()).findActivePageByUserId(any(), any(int.class), any(int.class));
+    }
+
+    @Test
+    @DisplayName("用户 ID 为空时直接返回空列表且不查仓储")
+    void shouldReturnEmptyWhenUserIdIsBlank() {
+        List<VideoLike> result = service.getLikedVideos("  ", 1, 20);
+
+        assertThat(result).isEmpty();
+        verify(likeRepository, never()).findActivePageByUserId(any(), any(int.class), any(int.class));
     }
 }

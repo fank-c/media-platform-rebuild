@@ -6,6 +6,7 @@ import com.calles.platform.interaction.domain.model.like.VideoLike;
 import com.calles.platform.interaction.domain.repository.VideoLikeRepository;
 import com.calles.platform.interaction.infrastructure.persistence.entity.VideoLikePO;
 import com.calles.platform.interaction.infrastructure.persistence.mapper.VideoLikeMapper;
+import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -29,6 +30,25 @@ public class VideoLikeRepositoryImpl implements VideoLikeRepository {
                 .eq(VideoLikePO::getVid, vid);
         VideoLikePO po = mapper.selectOne(wrapper);
         return Optional.ofNullable(po).map(VideoLikePO::toDomain);
+    }
+
+    @Override
+    public List<VideoLike> findActivePageByUserId(String userId, int offset, int limit) {
+        if (userId == null || userId.isBlank() || offset < 0 || limit <= 0) {
+            return List.of();
+        }
+        // 构造用户有效点赞查询条件，主排序为点赞时间倒序，次级排序按主键 UUID 倒序保障翻页稳定性
+        LambdaQueryWrapper<VideoLikePO> wrapper = new LambdaQueryWrapper<VideoLikePO>()
+                .eq(VideoLikePO::getUserId, userId)
+                .eq(VideoLikePO::getStatus, LikeStatus.ACTIVE.getValue())
+                .orderByDesc(VideoLikePO::getCreatedAt)
+                .orderByDesc(VideoLikePO::getId)
+                .last("LIMIT " + offset + ", " + limit);
+        List<VideoLikePO> pos = mapper.selectList(wrapper);
+        if (pos == null) {
+            return List.of();
+        }
+        return pos.stream().map(VideoLikePO::toDomain).toList();
     }
 
     @Override

@@ -52,6 +52,7 @@ infrastructure/*       MyBatis/JDBC 持久化、计数增量汇总、Outbox、�
 | :--- | :--- | :--- | :--- | :--- |
 | 点赞 | POST | `/videos/{vid}/like` | 登录 | 点赞；状态变化时计数 +1，并写 `LIKE:ACTIVE` |
 | | DELETE | `/videos/{vid}/like` | 登录 | 取消点赞；状态变化时计数 −1，并写 `LIKE:INACTIVE` |
+| | GET | `/likes` | 登录 | 分页查询本人有效点赞的视频明细（按点赞时间倒序） |
 | 收藏 | POST | `/videos/{vid}/star` | 登录 | 可带 body `folderId`，不带时进默认收藏夹；首次收藏计数 +1，并写 `STAR:ACTIVE` |
 | | DELETE | `/videos/{vid}/star` | 登录 | 可带 query `folderId`，不带时从所有收藏夹移除；彻底移除后计数 −1，并写 `STAR:INACTIVE` |
 | | GET | `/star/folders` | 登录 | 列出收藏夹；纯读不写库，若无则返回空列表 |

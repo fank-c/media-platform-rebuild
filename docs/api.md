@@ -1205,10 +1205,11 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 
 路径前缀 `/api/interactions`，由 `interaction-service` 提供。设计说明见 [互动模块](modules/interaction.md)。
 
-### 8.1 点赞：POST / DELETE /api/interactions/videos/{vid}/like
+### 8.1 点赞：POST / DELETE /api/interactions/videos/{vid}/like 与 GET /api/interactions/likes
 
-- 无请求体。重复点赞或重复取消都是幂等的。
-- 响应 `data`：`{ "vid": "...", "action": "LIKE" | "UNLIKE", "active": true | false }`。
+- POST / DELETE `/api/interactions/videos/{vid}/like`：无请求体。重复点赞或重复取消都是幂等的。响应 `data`：`{ "vid": "...", "action": "LIKE" | "UNLIKE", "active": true | false }`。
+- GET `/api/interactions/likes`：分页查询当前登录用户有效点赞的视频列表，按点赞时间倒序排列。查询参数 `page`（默认 1）、`size`（默认 20，限制 1~100）。未登录返回 `401`。响应 `data` 为数组：`[{ "id": "...", "vid": "...", "createdAt": "..." }]`。
+
 
 ### 8.2 收藏：POST / DELETE /api/interactions/videos/{vid}/star
 

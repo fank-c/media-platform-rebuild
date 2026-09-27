@@ -1,9 +1,11 @@
 package com.calles.platform.interaction.interfaces.http;
 
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,6 +14,8 @@ import com.calles.platform.common.web.context.UserInfo;
 import com.calles.platform.common.web.context.UserContext;
 import com.calles.platform.interaction.application.like.LikeApplicationService;
 import com.calles.platform.interaction.application.security.InteractionAccessPolicy;
+import com.calles.platform.interaction.domain.model.like.VideoLike;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -67,6 +71,37 @@ class InteractionLikeControllerTest {
                 .andExpect(jsonPath("$.data.vid").value("cv_100"))
                 .andExpect(jsonPath("$.data.action").value("UNLIKE"))
                 .andExpect(jsonPath("$.data.active").value(false));
+    }
+
+    @Test
+    @DisplayName("GET /api/interactions/likes 分页查询本人点赞列表成功返回 200")
+    void getLikedVideosSuccessfully() throws Exception {
+        UserInfo sampleUser = new UserInfo("user_001", "USER", "user", "session_001");
+        when(accessPolicy.requireUser()).thenReturn(sampleUser);
+        VideoLike like = VideoLike.create("cv_200", "user_001");
+        when(likeService.getLikedVideos(eq("user_001"), eq(1), eq(20))).thenReturn(List.of(like));
+
+        mockMvc.perform(get("/api/interactions/likes")
+                        .param("page", "1")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data[0].id").value(like.getId()))
+                .andExpect(jsonPath("$.data[0].vid").value("cv_200"));
+    }
+
+    @Test
+    @DisplayName("GET /api/interactions/likes 游客访问返回 401")
+    void anonymousGetLikesMustReturn401() throws Exception {
+        UserContext.clear();
+        MockMvc anonymousMvc = MockMvcBuilders.standaloneSetup(
+                new InteractionLikeController(likeService, new InteractionAccessPolicy()))
+                .setControllerAdvice(new InteractionExceptionHandler()).build();
+
+        anonymousMvc.perform(get("/api/interactions/likes"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(401));
+        verifyNoInteractions(likeService);
     }
 
     /**

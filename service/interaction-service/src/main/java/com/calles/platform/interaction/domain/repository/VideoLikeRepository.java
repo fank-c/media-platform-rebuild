@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.repository;
 
 import com.calles.platform.interaction.domain.model.like.VideoLike;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -16,6 +17,16 @@ public interface VideoLikeRepository {
      * @return 点赞实体 (若存在)
      */
     Optional<VideoLike> findByUserAndVid(String userId, String vid);
+
+    /**
+     * 分页查询用户有效点赞的记录列表（按点赞时间倒序）。
+     *
+     * @param userId 用户账号 ID
+     * @param offset 分页起始偏移量 (>= 0)
+     * @param limit 每页限制条数 (> 0)
+     * @return 有效点赞实体列表
+     */
+    List<VideoLike> findActivePageByUserId(String userId, int offset, int limit);
 
     /**
      * 判断用户是否有效点赞了该视频。

@@ -97,16 +97,21 @@ public class VideoLike {
     /**
      * 重新激活点赞（此前曾取消点赞）。
      *
+     * <p>状态重新置为 ACTIVE，版本号单调递增，并刷新有效点赞建立时间与最近更新时间，
+     * 确保重新点赞的作品按最新点赞时间排列在点赞列表前列（与收藏明细自愈复活保持一致）。</p>
+     *
      * @return true 若状态发生实质变更（原先为 CANCELLED）；false 若已处于点赞状态（幂等）
      */
     public boolean reactivate() {
         if (this.status == LikeStatus.ACTIVE) {
             return false;
         }
+        LocalDateTime now = LocalDateTime.now();
         this.status = LikeStatus.ACTIVE;
         this.deleted = false;
         this.version++;
-        this.updatedAt = LocalDateTime.now();
+        this.createdAt = now;
+        this.updatedAt = now;
         return true;
     }
 

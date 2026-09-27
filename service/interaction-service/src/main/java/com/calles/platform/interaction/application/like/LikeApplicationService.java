@@ -5,6 +5,7 @@ import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.like.VideoLike;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoLikeRepository;
+import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -95,5 +96,26 @@ public class LikeApplicationService {
      */
     public boolean isLiked(String vid, String userId) {
         return likeRepository.isLiked(userId, vid);
+    }
+
+    /**
+     * 分页查询指定用户有效点赞的视频记录。
+     *
+     * @param userId 用户账号 ID
+     * @param page 页码（从 1 起始）
+     * @param size 每页大小（限制 1~100）
+     * @return 有效点赞实体列表
+     */
+    public List<VideoLike> getLikedVideos(String userId, int page, int size) {
+        if (userId == null || userId.isBlank()) {
+            return List.of();
+        }
+        int safePage = Math.max(1, page);
+        int safeSize = Math.min(100, Math.max(1, size));
+        long rawOffset = (long) (safePage - 1) * safeSize;
+        if (rawOffset > Integer.MAX_VALUE) {
+            return List.of();
+        }
+        return likeRepository.findActivePageByUserId(userId.trim(), (int) rawOffset, safeSize);
     }
 }
