@@ -20,12 +20,11 @@
 | [0003](0003-interaction-redisson-distributed-lock.md) | 互动服务引入 Redisson 分布式锁串行化观看心跳 | 已被 [0005](0005-观看能力拆分与视频时长本地快照.md) 取代 |
 | [0004](0004-interaction-counter-deltas.md) | 互动公开计数采用事务内增量与后台汇总 | 已采纳 |
 | [0005](0005-观看能力拆分与视频时长本地快照.md) | 观看能力按进度 / 会话 / 资格 / 凭据拆分，并使用视频时长本地快照 | 已采纳 |
+| [0006](0006-auth-outbox-and-account-created-event.md) | 认证模块自属 Outbox 与账号创建领域事件 | 已采纳（追认） |
+| [0007](0007-user-outbox-and-follow-events.md) | 用户模块自属 Outbox 与关注关系领域事件 | 已采纳（追认） |
+| [0008](0008-video-counter-ownership-to-interaction.md) | 视频公开计数所有权划归互动服务 | 已采纳（追认） |
+| [0009](0009-recommend-qdrant-vector-database.md) | 推荐服务引入 Qdrant 向量数据库与双模向量化引擎 | 已采纳（追认） |
 
 ## 待补
 
-下面这些决策已经在代码里落地，但还没有 ADR：
-
-- 认证 Outbox 与 `auth.account.created` 事件
-- 用户关注事件 `user.relation.*.v1` 与用户 Outbox
-- 视频计数的所有权从 content 移到 interaction
-- 推荐服务引入 Qdrant 向量库
+暂无。
