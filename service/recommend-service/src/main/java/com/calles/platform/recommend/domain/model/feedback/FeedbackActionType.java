@@ -20,7 +20,28 @@ public enum FeedbackActionType {
     SKIP("SKIP", "滑过跳过"),
 
     /** 用户主动点击不感兴趣或减少此类推荐。 */
-    DISLIKE("DISLIKE", "主动负反馈");
+    DISLIKE("DISLIKE", "主动负反馈"),
+
+    /** 用户点赞。 */
+    LIKE("LIKE", "点赞"),
+
+    /** 用户取消点赞，仅记录事实流水，不主动惩罚画像。 */
+    UNLIKE("UNLIKE", "取消点赞"),
+
+    /** 用户收藏视频。 */
+    STAR("STAR", "收藏"),
+
+    /** 用户取消收藏，仅记录事实流水，不主动惩罚画像。 */
+    UNSTAR("UNSTAR", "取消收藏"),
+
+    /** 用户分享视频。 */
+    SHARE("SHARE", "分享"),
+
+    /** 服务端校验通过的有效观看资格。 */
+    WATCH_VIEW_QUALIFIED("WATCH_VIEW_QUALIFIED", "观看量资格"),
+
+    /** 视频完播事件。 */
+    WATCH_COMPLETED("WATCH_COMPLETED", "完播");
 
     /** 动作编码。 */
     private final String code;

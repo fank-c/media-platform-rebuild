@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS `recommend_feedback_log` (
     `id` CHAR(32) NOT NULL COMMENT '主键 UUID 32位',
     `user_id` CHAR(32) NOT NULL COMMENT '用户账号ID',
     `vid` VARCHAR(32) NOT NULL COMMENT '视频业务公开短码',
-    `action_type` VARCHAR(24) NOT NULL COMMENT '行为类型: IMPRESSION(有效曝光), PLAY(播放消费), SKIP(滑过跳过), DISLIKE(主动负反馈)',
+    `action_type` VARCHAR(32) NOT NULL COMMENT '行为类型，允许值见 ck_rfl_action_type',
     `play_duration` INT NOT NULL DEFAULT 0 COMMENT '实际有效播放时长(秒)',
     `video_duration` INT NOT NULL DEFAULT 0 COMMENT '视频总时长(秒)',
     `domain_tag_ids` VARCHAR(255) NULL COMMENT '发生行为时视频领域标签ID快照 (逗号分隔)',
@@ -47,5 +47,9 @@ CREATE TABLE IF NOT EXISTS `recommend_feedback_log` (
     PRIMARY KEY (`id`),
     KEY `idx_rfl_user_occurred` (`user_id`, `occurred_at` DESC),
     KEY `idx_rfl_vid_action` (`vid`, `action_type`),
-    CONSTRAINT `ck_rfl_action_type` CHECK (`action_type` IN ('IMPRESSION', 'PLAY', 'SKIP', 'DISLIKE'))
+    CONSTRAINT `ck_rfl_action_type` CHECK (`action_type` IN (
+        'IMPRESSION', 'PLAY', 'SKIP', 'DISLIKE',
+        'LIKE', 'UNLIKE', 'STAR', 'UNSTAR', 'SHARE',
+        'WATCH_VIEW_QUALIFIED', 'WATCH_COMPLETED'
+    ))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='推荐模块原始行为反馈事实流水表';
