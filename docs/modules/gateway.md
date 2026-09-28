@@ -92,9 +92,16 @@ graph TD
 
 以下端点无需在网关层执行 JWT 签名拦截，直接进入安全清洗通道：
 - **认证开放端点**：`/api/auth/login`、`/api/auth/register`、`/api/auth/refresh`、`/api/auth/ping`；
+- **游客内容浏览（只读）**：`/api/content/videos/**`（视频公开图文详情与转码切片播放流）；
+- **游客公开互动统计（只读）**：`/api/interactions/videos/*/stat`、`/api/interactions/videos/stats`（单条及批量公开计数统计）；
+- **游客推荐流（只读热门榜）**：`/api/recommend/feed`（未登录游客直接穿透召回高热与最新视频列表）；
 - **文件防盗链代理**：`/api/files/assets/**`（通过 URL 内部带时效 HMAC 签名防盗链与 IP 令牌桶协同保护）；
 - **外部 Webhook 回调**：`/api/audit/callback/**`（由审核服务自身校验 SHA-256 签名）；
 - **基础运维端点**：`/actuator/health`、`/actuator/info`。
+
+> **游客访问安全边界与防刷约束**：
+> - 观看心跳 `/api/interactions/videos/{vid}/heartbeat`、点赞/收藏/分享及个人历史记录**严格不在白名单中**，游客无法上报，因此天然杜绝伪造心跳刷量；
+> - 行为反馈 `/api/recommend/feedback` 与屏蔽接口**严格不在白名单中**，游客无法污染个性化推荐画像。
 
 ### 3.3 内部私有端点阻断规则（网关防穿透）
 为了杜绝内部微服务专享的高权限端点被外部网络绕过调用，网关配置了最高优先级拦截器：

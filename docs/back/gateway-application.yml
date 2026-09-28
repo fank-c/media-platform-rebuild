@@ -64,6 +64,12 @@ gateway:
       - /api/auth/login
       - /api/auth/register
       - /api/auth/refresh
+      - /api/content/videos/**
+      - /api/interactions/videos/*/stat
+      - /api/interactions/videos/stats
+      - /api/recommend/feed
+      - /api/files/assets/**
+      - /api/audit/callback/**
       - /actuator/health
       - /actuator/info
 

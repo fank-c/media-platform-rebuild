@@ -69,7 +69,10 @@ infrastructure/*       MyBatis/JDBC 持久化、计数增量汇总、Outbox、�
 | | POST | `/videos/stats` | 可匿名 | 批量查询，body `{"vids":[...]}`，缺失的补 0 |
 | 分享 | POST | `/videos/{vid}/share` | 登录 | 必须带 Header `Idempotency-Key`，同一个键重复请求按幂等处理 |
 
-> **网关现状**：`/api/interactions/**` 不在网关白名单里，经网关访问时游客请求一律 `401`。“可匿名”只是服务内部的行为。是否对游客开放还没定。
+> **网关与游客访问策略（游客只读模式）**：
+> - **公开计数开放**：`/api/interactions/videos/*/stat` 与 `/api/interactions/videos/stats` 已加入网关白名单，未登录游客可直接查询公开计数；
+> - **心跳与写操作严格拦截**：观看心跳 `/videos/{vid}/heartbeat`、点赞/收藏/分享及个人历史记录**严格不在白名单**，经网关时未携带 Token 直接返回 `401`；
+> - **播放量防刷原则**：游客观看视频采用前端暂存断点（localStorage）的只读模式，不调用心跳接口、不计入播放量、不产生服务端观看历史，从根本上杜绝代理池与脚本刷量。
 
 错误语义：没登录返回 `401`（`InteractionException`）；参数非法或缺少幂等键返回 `400`；会话状态冲突返回 `409`（`WATCH_SESSION_ACTIVE` / `WATCH_SESSION_INVALID` / `WATCH_SESSION_EXPIRED`）；未知异常返回 `500`，不暴露内部信息。
 

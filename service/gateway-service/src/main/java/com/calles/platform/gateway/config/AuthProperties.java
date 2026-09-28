@@ -18,12 +18,16 @@ public class AuthProperties {
     /** 验证结果缓存时长，不应超过访问令牌寿命。 */
     private Duration cacheTtl = Duration.ofMinutes(10);
 
-    /** 无需访问令牌的公开端点。 */
+    /** 无需访问令牌的公开端点（支持游客只读浏览与公开接口访问）。 */
     private List<String> whitelist = List.of(
             "/api/auth/ping",
             "/api/auth/login",
             "/api/auth/register",
             "/api/auth/refresh",
+            "/api/content/videos/**",
+            "/api/interactions/videos/*/stat",
+            "/api/interactions/videos/stats",
+            "/api/recommend/feed",
             "/api/files/assets/**",
             "/api/audit/callback/**",
             "/actuator/health",

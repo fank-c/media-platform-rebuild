@@ -112,15 +112,15 @@ Authorization: Bearer <accessToken>
 | POST | `/api/interactions/videos/{vid}/heartbeat` | 已登录 | 上报播放心跳，返回会话与服务端判定结果 |
 | GET | `/api/interactions/videos/{vid}/watch-progress` | 已登录（服务内允许匿名） | 查询断点进度 |
 | GET / DELETE | `/api/interactions/watch/history` | 已登录 | 观看历史分页 / 删除单条或清空 |
-| GET | `/api/interactions/videos/{vid}/my-state` | 已登录（服务内允许匿名） | 播放页互动状态快照 |
-| GET | `/api/interactions/videos/{vid}/stat` | 已登录（服务内允许匿名） | 单视频公开计数 |
-| POST | `/api/interactions/videos/stats` | 已登录（服务内允许匿名） | 批量视频公开计数 |
+| GET | `/api/interactions/videos/{vid}/my-state` | 已登录（服务内允许匿名） | 播放页互动状态快照（未登录返回零值） |
+| GET | `/api/interactions/videos/{vid}/stat` | 匿名 / 已登录 | 单视频公开计数 |
+| POST | `/api/interactions/videos/stats` | 匿名 / 已登录 | 批量视频公开计数 |
 | POST | `/api/interactions/videos/{vid}/share` | 已登录，需 `Idempotency-Key` | 记录分享 |
-| GET | `/api/recommend/feed` | 已登录（服务内允许匿名） | 首页推荐流 |
-| POST | `/api/recommend/feedback` | 已登录（服务内允许匿名） | 上报曝光 / 播放 / 跳过 / 负反馈 |
+| GET | `/api/recommend/feed` | 匿名 / 已登录 | 首页推荐流（游客看高热榜，登录用户个性化） |
+| POST | `/api/recommend/feedback` | 已登录 | 上报曝光 / 播放 / 跳过 / 负反馈（需登录） |
 | GET / POST / DELETE | `/api/recommend/blocks` | 已登录 | 查询 / 新增 / 撤销推荐屏蔽 |
 
-推荐接口与互动接口一样，经网关时全部需要令牌（`/api/recommend/**` 不在白名单）。互动接口经网关时全部需要令牌（`/api/interactions/**` 不在白名单）；标注“服务内允许匿名”的接口仅在绕过网关直连时对游客返回默认值。各微服务内部回调与受控端点（挂载于 `/internal/**`）由网关统一拦截，仅限集群内网受信通信。网关另配置 `/actuator/health`、`/actuator/info` 白名单作为管理探针，不代表所有下游管理端点对外开放。
+网关配置了游客只读模式白名单：`/api/content/videos/**`（视频详情与流切片）、`/api/interactions/videos/*/stat`、`/api/interactions/videos/stats`（公开统计）及 `/api/recommend/feed`（首页推荐流）允许未登录匿名访问。观看心跳 `/api/interactions/videos/{vid}/heartbeat`、点赞/收藏/分享及个人历史记录**严格不在白名单中**，未登录访问直接由网关拦截返回 401，游客观看一律不计入播放量、不产生服务端历史。推荐行为反馈与屏蔽接口亦要求登录态。各微服务内部回调与受控端点（挂载于 `/internal/**`）由网关统一拦截，仅限集群内网受信通信。网关另配置 `/actuator/health`、`/actuator/info` 白名单作为管理探针。
 
 ## 2. 认证接口
 
@@ -1309,9 +1309,9 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 
 ## 9. 推荐模块接口
 
-推荐模块（`recommend-service`）挂载于 `/api/recommend/**`，只返回推荐决策（视频短码），详情由客户端向内容服务获取。实现细节与已知问题见 [推荐模块](modules/recommend.md)。
+推荐模块（`recommend-service`）挂载于 `/api/recommend/**`，只返回推荐决策（视频短码），详情由客户端向内容服务获取。实现细节见 [推荐模块](modules/recommend.md)。
 
-- 经网关访问全部需要令牌；服务内“允许匿名”的分支只在直连服务时生效。
+- 首页推荐流 `/api/recommend/feed` 已加入网关白名单，未登录游客可直接访问获取热度推荐榜；行为流水上报 `/api/recommend/feedback` 与屏蔽接口 `/api/recommend/blocks` 仍必须携带有效登录令牌。
 - 参数非法（未知 `actionType` / `blockType`）或屏蔽接口缺少身份时抛出 `IllegalArgumentException`，服务无统一异常映射，**推断返回 `500`**（未实测）。
 
 ### 首页推荐流：GET /api/recommend/feed
