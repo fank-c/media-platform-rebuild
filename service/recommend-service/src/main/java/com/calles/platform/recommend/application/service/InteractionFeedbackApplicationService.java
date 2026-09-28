@@ -105,7 +105,7 @@ public class InteractionFeedbackApplicationService {
 
         // 步骤 1：利用消费幂等表执行原子防重检查
         boolean isFirstTime = eventConsumedRecordRepository.saveIfAbsent(
-                EventConsumedRecord.create(eventId, message.eventType(), userId, vid, action)
+                EventConsumedRecord.createForVideo(eventId, message.eventType(), userId, vid, action, payload.state())
         );
         if (!isFirstTime) {
             log.debug("互动事件已被消费，幂等忽略: eventId={}, userId={}, vid={}, action={}", eventId, userId, vid, action);

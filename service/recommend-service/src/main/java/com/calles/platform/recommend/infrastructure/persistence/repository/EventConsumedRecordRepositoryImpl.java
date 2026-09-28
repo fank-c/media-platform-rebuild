@@ -73,7 +73,9 @@ public class EventConsumedRecordRepositoryImpl implements EventConsumedRecordRep
                 po.getEventType(),
                 po.getUserId(),
                 po.getVid(),
+                po.getAuthorId(),
                 po.getAction(),
+                po.getState(),
                 po.getConsumedAt()
         );
     }
@@ -84,7 +86,9 @@ public class EventConsumedRecordRepositoryImpl implements EventConsumedRecordRep
         po.setEventType(domain.getEventType());
         po.setUserId(domain.getUserId());
         po.setVid(domain.getVid());
+        po.setAuthorId(domain.getAuthorId());
         po.setAction(domain.getAction());
+        po.setState(domain.getState());
         po.setConsumedAt(domain.getConsumedAt());
         return po;
     }

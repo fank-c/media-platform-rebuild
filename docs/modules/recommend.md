@@ -77,6 +77,7 @@ graph TD
     MQ[["RabbitMQ 交换机 media.platform.events"]]
     Content["content-service"]
     Interaction["interaction-service"]
+    User["user-service"]
     RS["recommend-service"]
     Qdrant[("Qdrant video_vectors")]
     DB[("MySQL recommend_*")]
@@ -87,14 +88,15 @@ graph TD
     Content -.->|"content.video.unbanned（推荐侧未消费，见 10.2）"| MQ
     Content -.->|"content.video.offline（与推荐侧绑定键不一致，见 10.2）"| MQ
     Interaction -->|interaction.video-action| MQ
+    User -->|interaction.author-action.v1| MQ
 
     MQ -->|recommend-service.video-submitted.v1| RS
     MQ -->|recommend-service.video-published.v1| RS
     MQ -->|"recommend-service.video-lifecycle.v1（绑定 offlined / banned）"| RS
-    MQ -->|recommend-service.interaction-video-action.v1| RS
+    MQ -->|"recommend-service.interaction-action.v1（绑定 video-action / author-action.v1）"| RS
 
     RS -->|写入向量 Point| Qdrant
-    RS -->|向量记录 / 候选池状态 / 幂等记录 / 画像| DB
+    RS -->|向量记录 / 候选池状态 / 幂等记录 / 画像 / 流水| DB
     RS -->|"Feign task-callback（VECTOR_EMBEDDING=SUCCESS）"| Content
 ```
 
@@ -182,11 +184,142 @@ graph TD
 | `recommend-service.video-submitted.v1` | `content.video.submitted` | `VideoSubmittedConsumer` | 虚拟线程异步计算向量 → 写 Qdrant 与 `recommend_video_vector` → Feign 回调 `task-callback` |
 | `recommend-service.video-published.v1` | `content.video.published` | `VideoPublishedConsumer` | 幂等写入 `recommend_candidate_video`，状态 `ACTIVE` |
 | `recommend-service.video-lifecycle.v1` | `content.video.offlined`、`content.video.banned` | `VideoLifecycleConsumer` | `banned` 置 `BANNED`，其他类型按下架置 `OFFLINE` |
-| `recommend-service.interaction-video-action.v1` | `interaction.video-action` | `InteractionVideoActionConsumer` | 幂等表防重消费行为事件 → 写入 `recommend_feedback_log` 流水 → 按行为类型（点赞/收藏/分享/有效完播等）加权演进用户画像 |
+| `recommend-service.interaction-action.v1` | `interaction.video-action`、`interaction.author-action.v1` | `InteractionEventConsumer` | 统一入口信封解析与 MDC 注入 → `InteractionEventDispatcher` 按 `eventType` 分发：<br>1. `interaction.video-action` 委托 `InteractionFeedbackApplicationService` 演进向量画像与行为流水；<br>2. `interaction.author-action` 委托 `AuthorInteractionApplicationService` 记录幂等防重与作者关注流水。 |
 
-- 反序列化失败或缺少关键字段（如 `videoId`、`action`、`userId` 等）的消息直接丢弃并记警告日志，**当前没有死信队列**。
+- 反序列化失败、格式畸形、未知事件类型或缺少关键字段（如 `eventId`、`userId` 等）的消息直接丢弃并记警告日志（安全 ACK 防毒丸），**当前没有死信队列**。
 - 本服务**不发布**任何领域事件。
-- 已消费 `interaction.video-action`，记录行为日志并驱动画像；互动计数值仍归 `interaction-service` 所有。
+- 交互事件只由 `InteractionEventConsumer` 消费；统一队列仅绑定两个生产端当前使用的路由，不保留旧消费者、队列别名或预留版本路由。
+- 关注事件在同一本地事务内写入 `recommend_event_consumed` 与 `recommend_feedback_log`，两表的 `vid` 均允许为空；当前仅记录关注/取关事实，不更新作者兴趣画像，也不参与关注召回。
+- 空库以 `db/init/schema.sql` 初始化，结构与本模块 `db/schema/` 保持一致；当前设计直接替换，不设置兼容期或增量升级前置条件。
+- 视频互动计数值归 `interaction-service` 所有；作者关注关系聚合根归 `user-service` 所有，推荐侧仅消费事实事件用于交互反馈与画像演进，不镜像关注列表。
+
+### 5.1 统一交互事件分发
+
+两个服务分别发布自己持有的行为事实，通过同一个队列进入推荐侧。路由键负责送达队列，消息体中的 `eventType` 负责选择业务处理器；作者路由键带 `.v1`，其 `eventType` 不带该后缀。
+
+```mermaid
+flowchart TD
+    VideoSource["interaction-service<br/>视频行为 + interaction_outbox"]
+    AuthorSource["user-service<br/>关注状态变更 + user_outbox"]
+    Exchange["Topic 交换机<br/>media.platform.events"]
+    Queue["唯一交互消费队列<br/>recommend-service.interaction-action.v1"]
+    Consumer["InteractionEventConsumer<br/>信封校验、eventVersion = 1、MDC 追踪"]
+    Dispatcher{"InteractionEventDispatcher<br/>按 eventType 分发"}
+    VideoHandler["InteractionFeedbackApplicationService<br/>视频行为幂等、流水及适用的画像更新"]
+    AuthorHandler["AuthorInteractionApplicationService<br/>关注 / 取关幂等与事实流水"]
+    Drop["记录日志并正常返回<br/>不进入业务处理"]
+
+    VideoSource -->|"interaction.video-action"| Exchange
+    AuthorSource -->|"interaction.author-action.v1"| Exchange
+    Exchange -->|"仅绑定上述两个路由"| Queue
+    Queue --> Consumer
+    Consumer -->|"有效信封"| Dispatcher
+    Consumer -->|"格式或信封校验失败"| Drop
+    Dispatcher -->|"interaction.video-action"| VideoHandler
+    Dispatcher -->|"interaction.author-action"| AuthorHandler
+    Dispatcher -->|"未知类型或载荷解析失败"| Drop
+```
+
+- 两个业务处理器分别在本地事务中执行幂等与持久化；幂等记录不是在分发前单独提交。
+- 当前关注处理只记录事实。关注作者列表获取、`FollowingRecallChannel` 召回与本消费链路独立。
+- 数据库等业务异常向监听容器传播；当前代码未配置死信队列或有界消费重试，图中的正常返回不代表异常已经得到补偿。
+
+### 5.2 关注事件的幂等与事务时序
+
+下图从合法信封进入作者处理器开始。重复投递通过 `event_id` 主键防重；首次处理的幂等记录和反馈流水必须一同提交，避免流水失败后事件被误判为已消费。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant MQ as RabbitMQ
+    participant Entry as 统一消费者 / 分发器
+    participant App as AuthorInteractionApplicationService
+    participant DB as MySQL recommend_* 表
+
+    MQ->>Entry: 投递 interaction.author-action 事件
+    Entry->>Entry: 校验信封、绑定 traceId、解析作者载荷
+    Entry->>App: handleAuthorAction(message)
+    Note over App,DB: Spring 本地事务开始
+    App->>App: 校验 userId、authorId、FOLLOW 与 state
+    alt 作者载荷非法
+        App-->>Entry: 正常返回，不写数据库
+    else 作者载荷有效
+        App->>DB: INSERT recommend_event_consumed，主键 event_id
+        alt event_id 已存在
+            DB-->>App: 主键冲突，仓储返回 false
+            App-->>Entry: 幂等忽略，不再写反馈流水
+        else 首次消费
+            DB-->>App: 插入成功，尚未提交
+            App->>App: ACTIVE 映射 FOLLOW，INACTIVE 映射 UNFOLLOW
+            App->>DB: INSERT recommend_feedback_log，vid = NULL
+            alt 流水写入成功
+                App->>DB: 提交事务，两条记录同时生效
+                App-->>Entry: 处理成功
+            else 流水写入失败
+                App->>DB: 回滚事务，撤销本次幂等记录
+                App-->>Entry: 抛出异常
+            end
+        end
+    end
+    Entry->>Entry: finally 清理 MDC
+    Note over MQ,Entry: 正常返回由监听容器确认消息；异常交由容器处理，本方法不手动 ACK
+```
+
+若幂等记录插入时发生非主键冲突的数据库异常，同样回滚并向上传播。业务成功提交后若消息再次投递，仍由同一 `eventId` 拦截；关注再取关属于不同事件，各自独立记录。
+
+### 5.3 MQ 发布确认与消费确认
+
+MQ 链路有两段独立确认：生产端根据 **Broker Confirm + 无 returned 消息** 标记 Outbox 发布成功；推荐端则在本地事务结束、监听方法正常返回后，由监听容器确认消费。生产端不等待推荐业务执行结果。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Biz as user / interaction 业务服务
+    participant Outbox as 生产端自属数据库
+    participant Sender as Outbox 派发器
+    participant MQ as RabbitMQ
+    participant Rec as 推荐监听器与业务处理器
+    participant DB as 推荐数据库
+
+    Biz->>Outbox: 本地事务写业务事实与 PENDING 事件
+    Note over Biz,Outbox: 同一事务提交后，事件才可被派发
+    Outbox-->>Biz: 提交成功
+    Note over Sender,Outbox: 定时扫描或已启用的 afterCommit 快速唤醒
+    Sender->>Outbox: CAS 认领，PROCESSING + claimToken
+    Outbox-->>Sender: 当前租约下的事件快照
+    Sender->>MQ: 发布到 media.platform.events，mandatory = true
+    alt Confirm ACK 且无 returned
+        MQ-->>Sender: 发布确认
+        Sender->>Outbox: 按 claimToken 标记 PUBLISHED
+    else 无匹配队列、NACK、超时或发送异常
+        MQ-->>Sender: returned / NACK，或未及时收到确认
+        Sender->>Outbox: 未耗尽则 PENDING 退避；耗尽则 FAILED
+    end
+
+    opt 消息已进入推荐统一交互队列
+        MQ->>Rec: 投递或重新投递同一 eventId
+        Rec->>DB: 幂等记录与业务写入，同一本地事务
+        alt 提交成功或确认已消费
+            DB-->>Rec: 成功
+            Rec-->>MQ: 监听方法返回，由容器确认消费
+        else 数据库等业务异常
+            DB-->>Rec: 回滚并抛出异常
+            Rec-->>MQ: 异常传播至容器，按消费配置处理
+        end
+    end
+```
+
+图中上下两段用于区分职责，实际消费可以早于生产端完成 `PUBLISHED` 回写。若消息已入队但发布确认丢失，Outbox 会再次投递同一 `eventId`，由推荐侧幂等处理。
+
+| 机制 | 所在端 | 当前含义与边界 |
+| :--- | :--- | :--- |
+| Publisher Confirm | 用户 / 互动发布端 | Broker 发布确认；代码同时检查 `returned`，不能只看 ACK |
+| `mandatory` 与 returned | 用户 / 互动发布端 | 消息没有匹配队列时退回，发布端按失败登记 |
+| Outbox 退避与尝试上限 | 用户 / 互动发布端 | 默认最多尝试 20 次，耗尽后保留 `FAILED`；不是推荐消费重试次数 |
+| 消费确认 | 推荐监听容器 | 正常返回包含成功、重复事件忽略，以及不可处理消息的日志丢弃 |
+| 消费失败重试 / 死信 | 推荐端 | 当前仓库未配置有界重试和死信出口；不能套用生产端的 20 次尝试策略 |
+
+配置默认值也有区别：用户 Outbox 与快速派发默认开启；互动 Outbox 默认记录事件，但 `dispatch-enabled` 与 `fast-dispatch-enabled` 默认关闭。图示表示启用派发后的路径，不表示当前环境已经连通。发布端细节分别见[用户模块 MQ](user.md#51-发布的领域事件interactionauthor-action-关注与取关)与[互动模块投递链路](interaction.md#52-投递链路)。
 
 ---
 
@@ -266,19 +399,46 @@ graph TD
 - **Qdrant**：集合 `video_vectors`（Cosine 距离），Point ID 为视频 ID，Payload 含 `vid`、`authorId`、`title`、`modelName`。
 - **向量引擎**：`recommend.embedding.type` 可选 `remote`（OpenAI 兼容接口，默认）/ `local`（本地特征哈希）/ `mock`；远程异常或未配 Key 时按 `fallback-to-local` 回退本地算法。
 
+### 8.1 交互事件与两张记录表的映射
+
+`recommend_event_consumed` 回答“这个事件是否已经处理”，`recommend_feedback_log` 回答“用户发生了什么行为”。两张表承担不同职责，共用视频和作者两类交互；作者事件没有视频目标，所以 `vid` 为 `NULL`。
+
+```mermaid
+flowchart LR
+    Video["视频事件示例<br/>vid = cv100<br/>action = LIKE<br/>state = ACTIVE"]
+    Author["作者事件示例<br/>authorId = u200<br/>action = FOLLOW<br/>state = ACTIVE / INACTIVE"]
+
+    subgraph Consumed["recommend_event_consumed：event_id 主键防重"]
+        VideoRecord["视频消费记录<br/>vid = cv100，author_id = NULL<br/>action = LIKE，state = ACTIVE"]
+        AuthorRecord["作者消费记录<br/>vid = NULL，author_id = u200<br/>action = FOLLOW，保留原 state"]
+    end
+
+    subgraph Feedback["recommend_feedback_log：id 主键，追加事实流水"]
+        VideoLog["视频反馈示例<br/>vid = cv100，action_type = LIKE<br/>作者与标签取自候选视频快照"]
+        AuthorLog["作者反馈<br/>vid = NULL，author_id = u200<br/>action_type = FOLLOW / UNFOLLOW"]
+    end
+
+    Video -->|"eventId、userId 与目标字段"| VideoRecord
+    Author -->|"eventId、userId 与目标字段"| AuthorRecord
+    VideoRecord -->|"首次消费，同一事务"| VideoLog
+    AuthorRecord -->|"首次消费，同一事务"| AuthorLog
+```
+
+这里的连线表示写入顺序，不表示表间外键。反馈表当前不保存 `event_id`；重复消息由消费表拦截，事务回滚保证两次写入不会只成功一次。视频图例仅展示 `LIKE + ACTIVE`，其他视频行为按各自规则处理；作者事件的 `state` 则映射为反馈流水中的 `FOLLOW` 或 `UNFOLLOW`。
+
 ---
 
 ## 9. 核心源码入口
 
 - **启动类**：[`RecommendApplication.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/RecommendApplication.java)
 - **本地配置**：[`application.yml`](../../service/recommend-service/src/main/resources/application.yml)
-- **MQ 消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)、[`VideoPublishedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoPublishedConsumer.java)、[`VideoLifecycleConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoLifecycleConsumer.java)、[`InteractionVideoActionConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/InteractionVideoActionConsumer.java)
-- **消息拓扑**：[`RecommendMessagingConfiguration.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/config/RecommendMessagingConfiguration.java)
+- **MQ 消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)、[`VideoPublishedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoPublishedConsumer.java)、[`VideoLifecycleConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoLifecycleConsumer.java)、[`InteractionEventConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/InteractionEventConsumer.java)
+- **消息拓扑与分发**：[`RecommendMessagingConfiguration.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/config/RecommendMessagingConfiguration.java)、[`InteractionEventDispatcher.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/dispatcher/InteractionEventDispatcher.java)
 - **Web 控制器**：[`RecommendFeedController.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/web/RecommendFeedController.java)
 - **缓冲队列门面**：[`RecommendFeedBufferService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedBufferService.java)
 - **推荐编排**：[`RecommendFeedApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedApplicationService.java)
 - **召回通道**：[`channel/impl/`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/channel/impl/)（`PersonalizedRecallChannel`、`ExploreRecallChannel`、`TrendingRecallChannel`、`FollowingRecallChannel`）
-- **行为反馈**：[`FeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/FeedbackApplicationService.java)、[`InteractionFeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/InteractionFeedbackApplicationService.java)
+- **行为反馈与画像**：[`FeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/FeedbackApplicationService.java)、[`InteractionFeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/InteractionFeedbackApplicationService.java)、[`AuthorInteractionApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/AuthorInteractionApplicationService.java)
 - **用户屏蔽**：[`UserBlockApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/UserBlockApplicationService.java)
 - **向量编排**：[`VideoVectorApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/VideoVectorApplicationService.java)
 - **候选池编排**：[`CandidateVideoApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/CandidateVideoApplicationService.java)

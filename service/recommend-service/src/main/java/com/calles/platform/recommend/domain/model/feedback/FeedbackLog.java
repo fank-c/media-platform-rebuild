@@ -59,7 +59,7 @@ public class FeedbackLog {
                        String authorId, String traceId, LocalDateTime occurredAt, LocalDateTime createdAt) {
         this.id = Objects.requireNonNull(id, "流水ID不能为空");
         this.userId = Objects.requireNonNull(userId, "用户ID不能为空");
-        this.vid = Objects.requireNonNull(vid, "视频短码不能为空");
+        this.vid = vid;
         this.actionType = Objects.requireNonNull(actionType, "行为类型不能为空");
         this.playDuration = Math.max(0, playDuration);
         this.videoDuration = Math.max(0, videoDuration);
@@ -87,6 +87,29 @@ public class FeedbackLog {
                 videoDuration,
                 domainTagIds,
                 topicTagIds,
+                authorId,
+                traceId,
+                occurredAt != null ? occurredAt : LocalDateTime.now(),
+                LocalDateTime.now()
+        );
+    }
+
+    /**
+     * 工厂方法：新建一笔作者维度行为反馈事实记录 (如关注/取消关注)。
+     */
+    public static FeedbackLog recordAuthorAction(String userId, String authorId,
+                                                FeedbackActionType actionType,
+                                                String traceId, LocalDateTime occurredAt) {
+        String generatedId = UUID.randomUUID().toString().replace("-", "");
+        return new FeedbackLog(
+                generatedId,
+                userId,
+                null,
+                actionType,
+                0,
+                0,
+                null,
+                null,
                 authorId,
                 traceId,
                 occurredAt != null ? occurredAt : LocalDateTime.now(),

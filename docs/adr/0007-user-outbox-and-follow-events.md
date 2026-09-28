@@ -20,15 +20,16 @@
 2. **对齐推荐互动流标准契约**
    - Exchange：`media.platform.events`（Topic 类型，持久化）。
    - Routing Key：`interaction.author-action.v1`，事件类型为 `interaction.author-action`，版本为 1。
-   - 采用标准事件信封（包含 `eventId`、`eventType`、`eventVersion`、`traceId`、`occurredAt`、`aggregateId`），载荷 `AuthorActionPayload` 仅包含结构化行为事实：
+   - 采用交互事件信封（包含 `eventId`、`eventType`、`eventVersion`、`traceId`、`occurredAt`），载荷 `AuthorActionPayload` 仅包含结构化行为事实：
      ```json
      {
        "userId": "u10001",
-       "targetUserId": "u20002",
-       "action": "FOLLOW"
+       "authorId": "u20002",
+       "action": "FOLLOW",
+       "state": "ACTIVE"
      }
      ```
-     取值范围为 `FOLLOW`（关注）与 `UNFOLLOW`（取消关注）。
+     `action` 固定为 `FOLLOW`；`state` 为 `ACTIVE`（关注）或 `INACTIVE`（取消关注）。
 3. **仅在状态真实跃迁时记录事件**
    - 在 `UserFollowApplicationService` 中，先依据数据库原子条件更新（`updateStatusConditionally`）判定状态是否发生有效跃迁（`0 -> 1` 或 `1 -> 0`）。
    - 对已处于关注状态的重复关注请求，或对已处于未关注状态的重复取关请求，直接幂等放行，绝不修改双方计数器，也绝不向 `user_outbox` 插入事件，从源头上遏制噪音。
@@ -38,6 +39,12 @@
    - **CAS 租约防重**：快速通道与扫描通道均通过 `UserOutboxRepository.markClaimedIfEligible` 执行原子抢占并生成唯一 `claimToken`，在 Broker Confirm ACK 且无 returned 异常后由 `markPublished` 跃迁为 `PUBLISHED`。
 5. **有界指数退避与终态收敛**
    - 投递失败时按指数退避递增等待时间（最多重试 20 次），超限后原子置为 `FAILED`，保留 `eventId` 用于后续人工对账与手动重放。
+
+6. **推荐侧统一交互消费入口**
+   - 视频互动与作者互动共用 `recommend-service.interaction-action.v1` 队列及 `InteractionEventConsumer`，分别绑定当前生产端路由 `interaction.video-action` 与 `interaction.author-action.v1`。
+   - 仅依据 `eventType` 分发到视频、作者处理器，不保留旧消费者、队列别名或额外版本路由。现有版本标识不代表并行维护多个契约。
+   - 作者事件在本地事务内写入消费幂等记录与反馈流水；`vid` 为空，`author_id` 指向作者。当前只记录事实，不维护关注关系副本，不参与关注召回，也不执行作者画像更新。
+   - 直接维护空库建表脚本，不因本次开发中的设计替换增加兼容期或数据库升级流程。
 
 ## 备选方案
 
@@ -55,7 +62,7 @@
   - 遵循统一信封规范，事件具备完整的溯源、重放与幂等消费基础。
 - **代价与约束**：
   - 每次有效关注/取关均增加一次数据库 Outbox 写入，需要制定定时清理机制回收终态历史记录；
-  - **当前消费端状态**：截至本文档追认时，推荐服务侧尚未正式绑定 `interaction.author-action.v1` 队列消费关注事件。在此期间，若开启派发，未路由消息将触发发布失败退避重试；建议在推荐消费队列正式就绪后全面启用投递。
+  - **当前消费端状态**：推荐侧已通过统一交互队列消费关注事件；发布端以 Broker Confirm 和 returned 状态判断投递结果。
 - **与其他 ADR 的关系**：
   - 与 [ADR 0001](0001-interaction-outbox-and-video-action-events.md)（互动 Outbox）：互动 Outbox 针对视频维度行为（`interaction.video-action`，vid 聚合）；用户 Outbox 针对创作者社交维度行为（`interaction.author-action`，targetUserId 聚合），两者同构互补，共同构成推荐互动行为输入。
   - 与 [ADR 0006](0006-auth-outbox-and-account-created-event.md)（认证 Outbox）：认证 Outbox 驱动一对一的用户资料初始建档，而用户 Outbox 驱动高频多对多的推荐与社交图谱演进。

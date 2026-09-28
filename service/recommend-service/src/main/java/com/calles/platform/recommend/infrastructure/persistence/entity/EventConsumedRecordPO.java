@@ -37,9 +37,17 @@ public class EventConsumedRecordPO {
     @TableField("vid")
     private String vid;
 
-    /** 行为动作类型字面量 (如 LIKE/STAR/SHARE 等)。 */
+    /** 目标作者账号 ID。 */
+    @TableField("author_id")
+    private String authorId;
+
+    /** 行为动作类型字面量 (如 LIKE/STAR/SHARE/FOLLOW 等)。 */
     @TableField("action")
     private String action;
+
+    /** 动作生效状态 (ACTIVE/INACTIVE)。 */
+    @TableField("state")
+    private String state;
 
     /** 消费入库时间戳。 */
     @TableField("consumed_at")

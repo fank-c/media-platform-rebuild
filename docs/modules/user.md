@@ -132,7 +132,7 @@ sequenceDiagram
 
     Note over Svc,MQ: 步骤 5：事务提交后 (afterCommit) 快速派发 + 定时扫描兜底
     Svc->>MQ: 尝试发布 interaction.author-action.v1
-    Note right of MQ: 推荐消费端尚未接入，当前无该路由键的队列绑定
+    Note right of MQ: 推荐统一交互队列按 eventType 分发作者关注事件
 
     Svc-->>Ctrl: 返回 FollowResponses.Action
     Ctrl-->>Client: 200 OK { targetUserId, followStatus: 1, mutual: true/false }
@@ -226,7 +226,7 @@ sequenceDiagram
 ## 5. 第二套件：MQ 消息链路（事件发布与消费）
 
 ### 5.1 发布的领域事件：`interaction.author-action` (关注与取关)
-- **当前阶段**：仅 `user-service` Outbox 写入与发布端已实现；推荐服务尚未绑定 `interaction.author-action.v1` 或实现消费。无匹配队列时发布端按不可路由处理并重试。
+- **当前阶段**：`user-service` Outbox 写入与发布端已实现；推荐侧通过 `recommend-service.interaction-action.v1` 队列绑定 `interaction.author-action.v1`，统一入口按 `eventType` 分发关注事件。无匹配队列时发布端按不可路由处理并重试。
 - **交换机与路由键**：
   - Exchange：`media.platform.events`
   - RoutingKey：`interaction.author-action.v1`
@@ -250,6 +250,23 @@ sequenceDiagram
   }
   ```
 
+关注事件发布状态如下。所有成功或失败回写都需要匹配当前 `claimToken`，避免租约失效的派发线程覆盖新一轮结果。
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: 关注事务提交，Outbox 事件可见
+    PENDING --> PROCESSING: 到达重试时间且未耗尽，CAS 认领
+    PROCESSING --> PUBLISHED: Confirm ACK 且无 returned，令牌匹配
+    PROCESSING --> PENDING: 投递失败且未耗尽，记录退避时间
+    PROCESSING --> PROCESSING: 租约超时且未耗尽，重新认领
+    PROCESSING --> FAILED: 失败达到上限，或超时后扫描发现耗尽
+    PENDING --> FAILED: 扫描发现尝试次数耗尽
+    PUBLISHED --> [*]
+    FAILED --> [*]
+```
+
+`PUBLISHED` 仅表示发布确认成功，不代表推荐已完成消费。`FAILED` 表示停止自动尝试，记录保留供排查，不存在图外自动恢复的承诺。若确认丢失或发布成功回写失败，消息可能重复投递；推荐侧使用 `eventId` 防重，详见[推荐模块的 MQ 两段确认](recommend.md#53-mq-发布确认与消费确认)。
+
 ### 5.2 消费的领域事件：`auth.account.created`
 
 - **队列绑定配置**：
@@ -265,6 +282,7 @@ sequenceDiagram
   3. 即使极端异常下外部发送了相同 `accountId` 但不同 `eventId` 的脏消息，`user_profile` 主键约束亦可完成终极兜底，绝不重置用户已有资料。
 
 ### 5.3 死信分流与重试机制
+- 以下重试与死信机制用于本模块接收的 `auth.account.created`，不适用于推荐侧的关注事件消费。
 - 消费出现数据库瞬时抖动异常时，利用 RabbitMQ 指数退避重试（最大重试 3 次）；
 - 重试耗尽或捕获不可恢复的契约反序列化异常时，路由转移至死信交换机进入 `user.account-created.dlq`，不阻断主队列正常消费。
 
@@ -277,7 +295,7 @@ sequenceDiagram
 - **自愈机制**：
   - 定向扫描 `user_outbox` 表中处于 `PENDING` 状态到达允许重试时间、或 `PROCESSING` 状态租约超期的记录；
   - 基于 CAS 原子租约抢占防多实例并发重试风暴，指数退避重试上限 20 次；
-  - 保证社交关注与取关领域事件 **At-least-once 绝对不丢**。
+  - 重试沿用同一 `eventId`，允许重复投递；耗尽后保留 `FAILED` 记录供排查，不能将有界自动重试视为无条件送达保证。
 
 ### 6.2 容灾与并发补偿机制
 1. **乐观锁冲突处理**：当前端提交更新遇到 `409 CONFLICT` 时，提示用户当前资料已被修改，前端重新拉取最新资料与新 `revision` 供用户确认覆盖；

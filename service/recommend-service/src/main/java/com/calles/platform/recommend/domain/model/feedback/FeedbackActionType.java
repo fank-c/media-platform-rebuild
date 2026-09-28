@@ -41,7 +41,13 @@ public enum FeedbackActionType {
     WATCH_VIEW_QUALIFIED("WATCH_VIEW_QUALIFIED", "观看量资格"),
 
     /** 视频完播事件。 */
-    WATCH_COMPLETED("WATCH_COMPLETED", "完播");
+    WATCH_COMPLETED("WATCH_COMPLETED", "完播"),
+
+    /** 用户关注作者。 */
+    FOLLOW("FOLLOW", "关注作者"),
+
+    /** 用户取消关注作者，仅记录事实流水，不主动惩罚画像。 */
+    UNFOLLOW("UNFOLLOW", "取消关注作者");
 
     /** 动作编码。 */
     private final String code;

@@ -77,20 +77,20 @@ public class RecommendMessagingConfiguration {
     public static final String VIDEO_BANNED_ROUTING_KEY = "content.video.banned";
 
     /**
-     * 推荐微服务互动视频行为专属消费队列名称。
-     * <p>下游设计目标：用于异步监听互动行为，驱动热度召回通道与更新用户即时画像快照。</p>
+     * 推荐微服务统一交互行为消费队列名称 (涵盖视频互动与作者关注两类交互事件)。
+     * <p>下游由统一事件消费者 {@code InteractionEventConsumer} 监听并依据 eventType 进行业务分发。</p>
      */
-    public static final String INTERACTION_VIDEO_ACTION_QUEUE = "recommend-service.interaction-video-action.v1";
+    public static final String INTERACTION_ACTION_QUEUE = "recommend-service.interaction-action.v1";
 
     /**
-     * 互动视频行为领域事件路由键。
-     * <p>发布方：{@code interaction-service} 事务性发件箱 Outbox。
-     * 载荷涵盖点赞 (LIKE)、收藏 (STAR)、分享 (SHARE)、合格观看 (WATCH_VIEW_QUALIFIED) 与完播 (WATCH_COMPLETED)。
-     * <br><b>协同指明</b>：推荐侧已落地幂等消费者 {@code InteractionVideoActionConsumer}
-     * （基于消费防重表 {@code recommend_event_consumed} 记录幂等消费，落反馈流水并加权推进用户画像模型）；
-     * 互动服务侧发件箱投递开关 {@code interaction.outbox.dispatch-enabled} 可在多服务联调与切流演练时按需开启。</p>
+     * 互动视频行为领域事件路由键 (由 interaction-service 事务性发件箱 Outbox 当前发出)。
      */
     public static final String INTERACTION_VIDEO_ACTION_ROUTING_KEY = "interaction.video-action";
+
+    /**
+     * 互动作者行为版本化领域事件路由键 (由 user-service 事务性发件箱 Outbox 发出)。
+     */
+    public static final String INTERACTION_AUTHOR_ACTION_V1_ROUTING_KEY = "interaction.author-action.v1";
 
     /**
      * 声明视频提审持久化消费队列。
@@ -123,13 +123,13 @@ public class RecommendMessagingConfiguration {
     }
 
     /**
-     * 声明互动视频行为持久化消费队列。
+     * 声明推荐微服务统一交互行为持久化消费队列。
      *
      * @return 持久化队列实例
      */
     @Bean
-    public Queue recommendInteractionVideoActionQueue() {
-        return new Queue(INTERACTION_VIDEO_ACTION_QUEUE, true);
+    public Queue recommendInteractionActionQueue() {
+        return new Queue(INTERACTION_ACTION_QUEUE, true);
     }
 
     /**
@@ -199,18 +199,34 @@ public class RecommendMessagingConfiguration {
     }
 
     /**
-     * 绑定互动行为事件至互动行为消费队列 (RoutingKey: interaction.video-action)。
+     * 绑定当前视频交互契约至统一交互消费队列 (RoutingKey: interaction.video-action)。
      *
-     * @param recommendInteractionVideoActionQueue 互动行为消费队列
+     * @param recommendInteractionActionQueue 统一交互消费队列
      * @param recommendMediaEventsExchange 领域事件交换机
      * @return 绑定实例
      */
     @Bean
     public Binding recommendInteractionVideoActionBinding(
-            Queue recommendInteractionVideoActionQueue,
+            Queue recommendInteractionActionQueue,
             TopicExchange recommendMediaEventsExchange) {
-        return BindingBuilder.bind(recommendInteractionVideoActionQueue)
+        return BindingBuilder.bind(recommendInteractionActionQueue)
                 .to(recommendMediaEventsExchange)
                 .with(INTERACTION_VIDEO_ACTION_ROUTING_KEY);
+    }
+
+    /**
+     * 绑定作者关注互动版本化事件至统一交互消费队列 (RoutingKey: interaction.author-action.v1)。
+     *
+     * @param recommendInteractionActionQueue 统一交互消费队列
+     * @param recommendMediaEventsExchange 领域事件交换机
+     * @return 绑定实例
+     */
+    @Bean
+    public Binding recommendInteractionAuthorActionV1Binding(
+            Queue recommendInteractionActionQueue,
+            TopicExchange recommendMediaEventsExchange) {
+        return BindingBuilder.bind(recommendInteractionActionQueue)
+                .to(recommendMediaEventsExchange)
+                .with(INTERACTION_AUTHOR_ACTION_V1_ROUTING_KEY);
     }
 }

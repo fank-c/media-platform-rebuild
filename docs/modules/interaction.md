@@ -304,7 +304,35 @@ flowchart LR
 3. 成功记为 `PUBLISHED`；失败按指数退避重试，超过 `max-attempts` 记为 `FAILED`（需要告警出口）。重试沿用同一个 `eventId`。
 4. 可以开启事务提交后立即唤醒派发（`fast-dispatch-enabled`，默认关闭）。
 
-**现状**：`dispatch-enabled` 默认是 `false`，事件只落库不投递，等推荐侧消费者上线后再打开。目前没有清理 `PUBLISHED` 记录的任务。
+**现状**：`dispatch-enabled` 默认是 `false`，事件只落库不投递；推荐统一交互消费者已实现，是否启用投递由环境配置决定。目前没有清理 `PUBLISHED` 记录的任务。
+
+```mermaid
+flowchart TD
+    Business["视频行为本地事务"]
+    Outbox["interaction_outbox<br/>PENDING，与业务数据一同提交"]
+    Trigger["定时扫描 / 已启用的提交后快速唤醒"]
+    Gate{"enabled 与 dispatch-enabled<br/>是否均开启？"}
+    Wait["保留记录，暂不派发"]
+    Claim["CAS 认领符合条件的事件<br/>PROCESSING + claimToken"]
+    Publish["发布到 media.platform.events<br/>Routing Key: interaction.video-action"]
+    Confirm{"Confirm ACK<br/>且无 returned？"}
+    Published["按当前令牌标记 PUBLISHED"]
+    Failure["未耗尽：PENDING + 退避<br/>耗尽：FAILED，保留记录"]
+    Queue["recommend-service.interaction-action.v1<br/>推荐统一交互队列"]
+
+    Business --> Outbox
+    Outbox --> Trigger
+    Trigger --> Gate
+    Gate -->|"否"| Wait
+    Gate -->|"是"| Claim
+    Claim -->|"认领成功"| Publish
+    Publish --> Confirm
+    Confirm -->|"是"| Published
+    Confirm -->|"否或超时 / 异常"| Failure
+    Publish -.->|"绑定匹配，Broker 入队"| Queue
+```
+
+图中 `PUBLISHED` 与推荐队列是两个观察点：前者是生产端发布状态，后者进入独立消费流程；消费失败不会把生产端状态改回 `PENDING`。两端的确认关系见[推荐模块 MQ 时序](recommend.md#53-mq-发布确认与消费确认)。本模块下面的视频元数据死信配置仅用于入站元数据队列，不会自动应用到推荐交互队列。
 
 ### 5.3 入站事件（视频元数据）
 
