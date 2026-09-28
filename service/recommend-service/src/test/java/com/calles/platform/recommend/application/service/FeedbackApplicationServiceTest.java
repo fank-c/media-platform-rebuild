@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
@@ -57,6 +58,29 @@ class FeedbackApplicationServiceTest {
 
     private CandidateVideo mockCandidate(String vid, String authorId, String domain, String topic) {
         return CandidateVideo.createPublished("c1", "video_id_1", vid, authorId, domain, topic, LocalDateTime.now());
+    }
+
+    @Test
+    @DisplayName("防御拦截：客户端接口尝试直接上报服务端核验专有行为 (如 LIKE、WATCH_COMPLETED) 时抛出异常")
+    void shouldRejectNonClientReportableAction() {
+        String userId = "user_hack";
+        String vid = "vid_hack_01";
+
+        assertThatThrownBy(() ->
+                feedbackApplicationService.recordFeedback(
+                        userId, vid, FeedbackActionType.LIKE, 0, 0, null, "trace_hack", LocalDateTime.now()
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+         .hasMessageContaining("仅支持服务端核验事件");
+
+        assertThatThrownBy(() ->
+                feedbackApplicationService.recordFeedback(
+                        userId, vid, FeedbackActionType.WATCH_COMPLETED, 60, 60, null, "trace_hack", LocalDateTime.now()
+                )
+        ).isInstanceOf(IllegalArgumentException.class)
+         .hasMessageContaining("仅支持服务端核验事件");
+
+        verifyNoInteractions(feedbackLogRepository, userProfileRepository, candidateVideoRepository);
     }
 
     @Test

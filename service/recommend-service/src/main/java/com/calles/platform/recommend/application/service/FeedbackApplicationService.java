@@ -69,6 +69,11 @@ public class FeedbackApplicationService {
             return;
         }
 
+        // 步骤 0：防腐与信任边界校验，仅允许客户端合法行为上报 (杜绝服务端核验行为如 LIKE/WATCH_COMPLETED 穿透)
+        if (!actionType.isClientReportable()) {
+            throw new IllegalArgumentException("行为类型 " + actionType + " 仅支持服务端核验事件，不允许通过客户端接口上报");
+        }
+
         // 步骤 1：查询当前物料快照 (领域、主题、作者)
         Optional<CandidateVideo> candidateOpt = candidateVideoRepository.findByVid(vid.trim());
         String domainTagIds = candidateOpt.map(CandidateVideo::getDomainTagIds).orElse(null);

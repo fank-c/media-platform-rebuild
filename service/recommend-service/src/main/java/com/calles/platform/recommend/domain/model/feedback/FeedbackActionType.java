@@ -68,4 +68,16 @@ public enum FeedbackActionType {
         }
         throw new IllegalArgumentException("未知的行为类型编码: " + code);
     }
+
+    /**
+     * 判断当前行为是否允许通过客户端 HTTP 接口直接上报。
+     *
+     * <p>仅视口曝光 (IMPRESSION)、播放消费 (PLAY)、滑过跳过 (SKIP) 和主动负反馈 (DISLIKE) 允许由客户端直接上报；
+     * 其余点赞、收藏、分享、完播等必须由服务端互动模块经过核验后通过领域事件异步接入。</p>
+     *
+     * @return true 若允许客户端直接上报；false 若仅限服务端核验事件
+     */
+    public boolean isClientReportable() {
+        return this == IMPRESSION || this == PLAY || this == SKIP || this == DISLIKE;
+    }
 }

@@ -26,8 +26,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /**
  * RecommendFeedController 推荐控制器单元测试。
@@ -81,6 +80,32 @@ class RecommendFeedControllerTest {
                 eq("user_fb_01"), eq("vid_fb_01"), eq(FeedbackActionType.PLAY),
                 eq(15), eq(30), isNull(), eq("trace_001"), any()
         );
+    }
+
+    @Test
+    @DisplayName("POST /api/recommend/feedback：客户端尝试伪造上报 LIKE 服务端核验行为被拒绝")
+    void shouldRejectSubmitFeedbackWhenActionIsLike() {
+        FeedbackSubmitRequest request = new FeedbackSubmitRequest(
+                "vid_fb_01", "LIKE", 0, 0, null, LocalDateTime.now()
+        );
+
+        assertThatThrownBy(() -> controller.submitFeedback("user_fb_01", "trace_001", request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("未知的客户端行为类型: LIKE");
+        verifyNoInteractions(feedbackApplicationService);
+    }
+
+    @Test
+    @DisplayName("POST /api/recommend/feedback：客户端尝试伪造上报 WATCH_COMPLETED 完播行为被拒绝")
+    void shouldRejectSubmitFeedbackWhenActionIsWatchCompleted() {
+        FeedbackSubmitRequest request = new FeedbackSubmitRequest(
+                "vid_fb_01", "WATCH_COMPLETED", 60, 60, null, LocalDateTime.now()
+        );
+
+        assertThatThrownBy(() -> controller.submitFeedback("user_fb_01", "trace_001", request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("未知的客户端行为类型: WATCH_COMPLETED");
+        verifyNoInteractions(feedbackApplicationService);
     }
 
     @Test

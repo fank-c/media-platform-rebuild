@@ -92,19 +92,19 @@ public class RecommendFeedController {
                 ? headerTraceId.trim()
                 : MDC.get("traceId");
 
-        // 步骤 2：转换行为动作类型枚举
-        FeedbackActionType actionType;
+        // 步骤 2：校验并转换客户端合法行为动作类型枚举 (杜绝客户端伪造点赞、完播等服务端核验行为)
+        ClientFeedbackAction clientAction;
         try {
-            actionType = FeedbackActionType.valueOf(request.getActionType().trim().toUpperCase());
+            clientAction = ClientFeedbackAction.valueOf(request.getActionType().trim().toUpperCase());
         } catch (IllegalArgumentException ex) {
-            throw new IllegalArgumentException("未知的行为类型: " + request.getActionType());
+            throw new IllegalArgumentException("未知的客户端行为类型: " + request.getActionType());
         }
 
         // 步骤 3：调用应用服务记录事实日志并分流更新画像
         feedbackApplicationService.recordFeedback(
                 userId,
                 request.getVid(),
-                actionType,
+                clientAction.toDomainType(),
                 request.getPlayDuration() != null ? request.getPlayDuration() : 0,
                 request.getVideoDuration() != null ? request.getVideoDuration() : 0,
                 request.getReason(),

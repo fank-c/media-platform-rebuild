@@ -162,6 +162,8 @@ graph TD
 | `IMPRESSION` | 无 | 只记流水 |
 
 > 注意：播放时长、视频时长都来自客户端，服务端不做校验。
+>
+> **边界隔离说明**：HTTP 接口仅接受客户端直接视口/手势行为（`IMPRESSION`、`PLAY`、`SKIP`、`DISLIKE`），由 `ClientFeedbackAction` 强类型约束；点赞（`LIKE`）、收藏（`STAR`）、分享（`SHARE`）、完播（`WATCH_COMPLETED`）等行为严格限定由 `interaction-service` 服务端核验后经 RabbitMQ 异步接入，客户端直接上报将被拦截并返回错误。
 
 ### 4.3 用户屏蔽：`/api/recommend/blocks`
 
