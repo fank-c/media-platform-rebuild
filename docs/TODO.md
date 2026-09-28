@@ -259,7 +259,7 @@
 
 - [x] 统一事件 `interaction.video-action`（`LIKE / STAR / SHARE / WATCH_VIEW_QUALIFIED / WATCH_COMPLETED`），只记录真实状态变化。
 - [x] 自属 `interaction_outbox`：同事务落库、租约抢占、Broker Confirm、有限重试；投递默认关闭。
-- [ ] `recommend-service` 消费 `interaction.video-action`（幂等，按 `action` 分支），之后才打开 `dispatch-enabled`。
+- [x] `recommend-service` 消费 `interaction.video-action`（幂等消费已实现并验证），待按需打开 `dispatch-enabled`。
 - [ ] Outbox 已发布记录的保留期清理。
 
 ### 后续规划
@@ -309,7 +309,8 @@
 - [x] 四道硬过滤（状态、本人作品、屏蔽、近期已看）、槽位交织、冷启动补齐、同作者间隔 >= 2 打散。
 - [x] Redis 待看缓冲队列：大包预生成、低水位异步补水、Redis 异常回退实时计算。
 - [ ] 关注召回：`FollowingRecallChannel` 当前恒返回空，需接入 `user-service` 内部关注清单接口（含超时与降级）。
-- [ ] 消费 `interaction.video-action`（幂等，按 `action` 分支），热度召回接入互动数据。
+- [x] 消费 `interaction.video-action`（幂等落库防重、记录反馈流水并加权推进用户画像）。
+- [ ] 热度召回接入互动计数字段或互动事件聚合。
 - [ ] 缓冲队列弹出时复核屏蔽与候选状态（REC-02）。
 - [ ] 参数校验与未登录错误映射为 `400 / 401`（REC-03，当前推断为 `500`）。
 - [ ] 确定游客是否可访问推荐流（需调整网关白名单）。

@@ -76,6 +76,7 @@ sequenceDiagram
 graph TD
     MQ[["RabbitMQ 交换机 media.platform.events"]]
     Content["content-service"]
+    Interaction["interaction-service"]
     RS["recommend-service"]
     Qdrant[("Qdrant video_vectors")]
     DB[("MySQL recommend_*")]
@@ -85,13 +86,15 @@ graph TD
     Content -->|content.video.banned| MQ
     Content -.->|"content.video.unbanned（推荐侧未消费，见 10.2）"| MQ
     Content -.->|"content.video.offline（与推荐侧绑定键不一致，见 10.2）"| MQ
+    Interaction -->|interaction.video-action| MQ
 
     MQ -->|recommend-service.video-submitted.v1| RS
     MQ -->|recommend-service.video-published.v1| RS
     MQ -->|"recommend-service.video-lifecycle.v1（绑定 offlined / banned）"| RS
+    MQ -->|recommend-service.interaction-video-action.v1| RS
 
     RS -->|写入向量 Point| Qdrant
-    RS -->|向量记录 / 候选池状态| DB
+    RS -->|向量记录 / 候选池状态 / 幂等记录 / 画像| DB
     RS -->|"Feign task-callback（VECTOR_EMBEDDING=SUCCESS）"| Content
 ```
 
@@ -177,10 +180,11 @@ graph TD
 | `recommend-service.video-submitted.v1` | `content.video.submitted` | `VideoSubmittedConsumer` | 虚拟线程异步计算向量 → 写 Qdrant 与 `recommend_video_vector` → Feign 回调 `task-callback` |
 | `recommend-service.video-published.v1` | `content.video.published` | `VideoPublishedConsumer` | 幂等写入 `recommend_candidate_video`，状态 `ACTIVE` |
 | `recommend-service.video-lifecycle.v1` | `content.video.offlined`、`content.video.banned` | `VideoLifecycleConsumer` | `banned` 置 `BANNED`，其他类型按下架置 `OFFLINE` |
+| `recommend-service.interaction-video-action.v1` | `interaction.video-action` | `InteractionVideoActionConsumer` | 幂等表防重消费行为事件 → 写入 `recommend_feedback_log` 流水 → 按行为类型（点赞/收藏/分享/有效完播等）加权演进用户画像 |
 
-- 反序列化失败或缺少 `videoId` 的消息直接丢弃并记日志，**当前没有死信队列**。
+- 反序列化失败或缺少关键字段（如 `videoId`、`action`、`userId` 等）的消息直接丢弃并记警告日志，**当前没有死信队列**。
 - 本服务**不发布**任何领域事件。
-- 未消费 `interaction.video-action`，见第 10 节。
+- 已消费 `interaction.video-action`，记录行为日志并驱动画像；互动计数值仍归 `interaction-service` 所有。
 
 ---
 
@@ -255,7 +259,8 @@ graph TD
   - [`recommend_candidate_video`](../../service/recommend-service/db/schema/recommend-candidate-video.sql)：候选池元数据，含 `author_id`、`domain_tag_ids` / `topic_tag_ids` 与状态 `ACTIVE/OFFLINE/BANNED`；
   - [`recommend_user_profile`](../../service/recommend-service/db/schema/recommend-user-model.sql)：用户向量、主题偏好、粗领域状态、近期已看序列与乐观锁版本；
   - [`recommend_user_block`](../../service/recommend-service/db/schema/recommend-user-model.sql)：视频、作者、主题屏蔽；
-  - [`recommend_feedback_log`](../../service/recommend-service/db/schema/recommend-user-model.sql)：行为反馈流水，只追加。
+  - [`recommend_feedback_log`](../../service/recommend-service/db/schema/recommend-user-model.sql)：行为反馈流水，只追加；
+  - [`recommend_event_consumed`](../../service/recommend-service/db/schema/recommend-event-consumed.sql)：MQ 消费事件幂等防重表，主键为 `event_id`。
 - **Qdrant**：集合 `video_vectors`（Cosine 距离），Point ID 为视频 ID，Payload 含 `vid`、`authorId`、`title`、`modelName`。
 - **向量引擎**：`recommend.embedding.type` 可选 `remote`（OpenAI 兼容接口，默认）/ `local`（本地特征哈希）/ `mock`；远程异常或未配 Key 时按 `fallback-to-local` 回退本地算法。
 
@@ -265,17 +270,17 @@ graph TD
 
 - **启动类**：[`RecommendApplication.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/RecommendApplication.java)
 - **本地配置**：[`application.yml`](../../service/recommend-service/src/main/resources/application.yml)
-- **MQ 消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)、[`VideoPublishedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoPublishedConsumer.java)、[`VideoLifecycleConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoLifecycleConsumer.java)
+- **MQ 消费**：[`VideoSubmittedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoSubmittedConsumer.java)、[`VideoPublishedConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoPublishedConsumer.java)、[`VideoLifecycleConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/VideoLifecycleConsumer.java)、[`InteractionVideoActionConsumer.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/messaging/consumer/InteractionVideoActionConsumer.java)
 - **消息拓扑**：[`RecommendMessagingConfiguration.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/config/RecommendMessagingConfiguration.java)
 - **Web 控制器**：[`RecommendFeedController.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/interfaces/web/RecommendFeedController.java)
 - **缓冲队列门面**：[`RecommendFeedBufferService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedBufferService.java)
 - **推荐编排**：[`RecommendFeedApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedApplicationService.java)
 - **召回通道**：[`channel/impl/`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/channel/impl/)（`PersonalizedRecallChannel`、`ExploreRecallChannel`、`TrendingRecallChannel`、`FollowingRecallChannel`）
-- **行为反馈**：[`FeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/FeedbackApplicationService.java)
+- **行为反馈**：[`FeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/FeedbackApplicationService.java)、[`InteractionFeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/InteractionFeedbackApplicationService.java)
 - **用户屏蔽**：[`UserBlockApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/UserBlockApplicationService.java)
 - **向量编排**：[`VideoVectorApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/VideoVectorApplicationService.java)
 - **候选池编排**：[`CandidateVideoApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/CandidateVideoApplicationService.java)
-- **用户模型**：[`UserProfile.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserProfile.java)、[`UserVector.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserVector.java)、[`UserBlock.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/block/UserBlock.java)、[`FeedbackLog.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/feedback/FeedbackLog.java)
+- **用户模型与幂等**：[`UserProfile.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserProfile.java)、[`UserVector.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/profile/UserVector.java)、[`UserBlock.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/block/UserBlock.java)、[`FeedbackLog.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/feedback/FeedbackLog.java)、[`EventConsumedRecord.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/domain/model/event/EventConsumedRecord.java)
 - **向量引擎与 Qdrant**：[`VectorEmbeddingEngineRouter.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/engine/VectorEmbeddingEngineRouter.java)、[`QdrantClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/infrastructure/qdrant/QdrantClient.java)
 - **内容门禁回调**：[`ContentServiceClient.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/client/ContentServiceClient.java)
 
@@ -288,11 +293,11 @@ graph TD
 | 能力 | 现状 | 依赖 / 下一步 |
 | :--- | :--- | :--- |
 | 关注召回 | `FollowingRecallChannel` 恒返回空 | `user-service` 已提供 `GET /api/users/internal/{accountId}/following-ids`，需补 Feign 调用并声明超时与降级 |
-| 互动事件消费 | 未消费 `interaction.video-action` | 幂等消费后，互动 Outbox 才能打开 `dispatch-enabled` |
-| 热度榜接入互动计数 | 热度只基于本服务反馈流水 | 依赖互动事件消费 |
+| 互动事件消费 | 已实现消费与幂等 | recommend-service 消费者就绪，待开启 `interaction-service` 的 Outbox `dispatch-enabled` |
+| 热度榜接入互动计数 | 热度只基于本服务反馈流水 | 待接入 `interaction_video_counter` 汇总数据或互动事件聚合 |
 | 相关推荐 `GET /api/recommend/videos/{vid}/related` | 无接口 | 可复用 Qdrant 按锚点视频检索 |
-| 游客推荐 | 网关拦截，游客拿不到推荐 | 需确认是否把 `/api/recommend/feed` 加入网关白名单 |
-| 协同过滤、热度衰减等离线任务 | 无 | 待互动数据接入后再评估 |
+| 游客推荐 | 已加入白名单，按高热榜与最新候选推荐 | 已就绪 |
+| 协同过滤、热度衰减等离线任务 | 无 | 待互动数据沉淀后再评估 |
 | 消费失败死信 | 非法消息直接丢弃 | 补死信队列与告警 |
 
 ### 10.2 已知问题
