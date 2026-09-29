@@ -304,7 +304,9 @@ flowchart LR
 3. 成功记为 `PUBLISHED`；失败按指数退避重试，超过 `max-attempts` 记为 `FAILED`（需要告警出口）。重试沿用同一个 `eventId`。
 4. 可以开启事务提交后立即唤醒派发（`fast-dispatch-enabled`，默认关闭）。
 
-**现状**：`dispatch-enabled` 默认是 `false`，事件只落库不投递；推荐统一交互消费者已实现，是否启用投递由环境配置决定。目前没有清理 `PUBLISHED` 记录的任务。
+**现状**：`dispatch-enabled` 默认是 `false`，事件只落库不投递；推荐统一交互消费者已实现，是否启用投递由环境配置决定。
+
+`cleanup-enabled` 默认关闭；启用后独立任务按 `published_at` 分批清理超期的 `PUBLISHED` 记录，不删除其他状态或发布时间为空的记录。详见[实施方案](../plans/interaction-outbox-retention-cleanup-implementation.md)。
 
 ```mermaid
 flowchart TD
@@ -357,6 +359,8 @@ flowchart TD
 | `CounterDeltaScheduler.aggregate` | `interaction.counter.flush-rate-ms`（5000ms） | 增量批量汇总到公开快照表 | 常开 |
 | `CounterDeltaScheduler.cleanup` | `interaction.counter.cleanup-rate-ms`（3600000ms） | 清理超期已汇总历史增量记录 | 常开 |
 | `InteractionOutboxScanJob.scanAndDispatch` | `interaction.outbox.poll-interval`（5s） | Outbox 扫描投递 | 受 `enabled && dispatch-enabled` 控制，否则直接返回 |
+| `InteractionOutboxCleanupJob.cleanupPublished` | `interaction.outbox.cleanup-interval`（1h） | 按发布时间分批清理已发布记录 | `cleanup-enabled` 默认关闭 |
+| `InteractionOutboxBacklogMetrics.sample` | `interaction.outbox.poll-interval`（5s） | 采样待投递、处理中、失败状态积压与最老年龄 | 独立运行，不执行派发或清理 |
 | `WatchRetentionScheduler.cleanup` | `interaction.watch.cleanup-rate-ms`（3600000ms） | 按保留期清理观看会话、事件凭据、已隐藏进度 | 常开 |
 
 观看保留期清理的执行顺序固定为：解除长期无心跳的活跃会话引用（按 `last_watch_at ASC` 排序） → 删除超期会话（带 `NOT EXISTS` 引用防护，防止超期会话量大于批大小时两步批次错位造成悬空活跃引用） → 删除超期凭据 → 删除超期隐藏进度。
@@ -380,7 +384,7 @@ DDL 以 [`db/init/schema.sql`](../../db/init/schema.sql) 为准，增量迁移�
 | `interaction_watch_session` | `session_id` / `uk_watch_session_start_key` | `start_request_key`、`view_counted_at`、`duration_snapshot`、`qualification_threshold`、`credited_duration`、`last_sequence`、`last_position`、`qualified`、`started_at`、`last_heartbeat_at`、`closed_at` | 会话级有效观看时长、起播播放量标记与门槛，创建时固定不可漂移 |
 | `interaction_watch_event_claim` | `id` / `uk_watch_event_claim` | `user_id`、`vid`、`session_id`、`event_type`、`outbox_event_id`、`claimed_at` | 合格观看与完播事件的最终防重凭据 |
 | `interaction_share_record` | `uk_share_user_idempotency` | `user_id`、`idempotency_key`、`vid` | 分享幂等（用户联合唯一键：`user_id + idempotency_key`） |
-| `interaction_outbox` | `event_id` | `status`、`attempts`、`next_attempt_at`、租约字段 | 发件箱 |
+| `interaction_outbox` | `event_id` / `idx_interaction_outbox_cleanup(status, published_at, event_id)` | `status`、`attempts`、`next_attempt_at`、`published_at`、租约字段 | 发件箱与成功发布记录保留清理 |
 
 所有实体表都使用 `deleted` 逻辑删除（`@TableLogic`）。
 
@@ -432,6 +436,7 @@ DDL 以 [`db/init/schema.sql`](../../db/init/schema.sql) 为准，增量迁移�
 | `interaction.outbox.dispatch-enabled` | `INTERACTION_OUTBOX_DISPATCH_ENABLED` | false | 是否投递到 MQ |
 | `interaction.outbox.fast-dispatch-enabled` | `INTERACTION_OUTBOX_FAST_DISPATCH_ENABLED` | false | 事务提交后立即唤醒派发 |
 | `interaction.outbox.batch-size` / `max-attempts` / `confirm-timeout` / `lease` / `poll-interval` / `shutdown-await` | 同名大写 | 100 / 20 / 5s / 30s / 5s / 10s | 派发参数 |
+| `interaction.outbox.cleanup-enabled` / `retention` / `cleanup-batch-size` / `cleanup-max-batches` / `cleanup-interval` | `INTERACTION_OUTBOX_CLEANUP_ENABLED` / `INTERACTION_OUTBOX_RETENTION` / `INTERACTION_OUTBOX_CLEANUP_BATCH_SIZE` / `INTERACTION_OUTBOX_CLEANUP_MAX_BATCHES` / `INTERACTION_OUTBOX_CLEANUP_INTERVAL` | false / 30d / 500 / 10 / 1h | 仅清理 `PUBLISHED` 且 `published_at` 超过保留期的记录 |
 
 代码里全部阈值都通过 `interaction.watch.*` 与 `interaction.outbox.*` 配置，不再硬编码。
 

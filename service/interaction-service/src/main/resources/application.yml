@@ -94,6 +94,16 @@ interaction:
     poll-interval: ${INTERACTION_OUTBOX_POLL_INTERVAL:5s}
     # 停机等待派发任务优雅终止的最大等待时间
     shutdown-await: ${INTERACTION_OUTBOX_SHUTDOWN_AWAIT:10s}
+    # 是否清理超过保留期的已发布记录，默认关闭以便先完成环境验证
+    cleanup-enabled: ${INTERACTION_OUTBOX_CLEANUP_ENABLED:false}
+    # 已发布记录保留期，以 published_at 为起点
+    retention: ${INTERACTION_OUTBOX_RETENTION:30d}
+    # 单批清理上限
+    cleanup-batch-size: ${INTERACTION_OUTBOX_CLEANUP_BATCH_SIZE:500}
+    # 单次调度最多清理批次数
+    cleanup-max-batches: ${INTERACTION_OUTBOX_CLEANUP_MAX_BATCHES:10}
+    # 清理任务间隔
+    cleanup-interval: ${INTERACTION_OUTBOX_CLEANUP_INTERVAL:1h}
 
 management:
   endpoints:

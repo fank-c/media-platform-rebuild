@@ -34,6 +34,40 @@ public class InteractionOutboxRepository {
     }
 
     /**
+     * 获取指定状态的积压数量。
+     *
+     * @param status 发件箱状态
+     * @return 记录数
+     */
+    public long countByStatus(InteractionOutboxStatus status) {
+        return outboxMapper.countByStatus(status.databaseValue());
+    }
+
+    /**
+     * 获取指定状态最老记录的事件时间。
+     *
+     * @param status 发件箱状态
+     * @return 最老事件时间，空状态返回 null
+     */
+    public Instant oldestOccurredAt(InteractionOutboxStatus status) {
+        Timestamp timestamp = outboxMapper.oldestOccurredAt(status.databaseValue());
+        return timestamp == null ? null : timestamp.toInstant();
+    }
+
+    /**
+     * 删除超过保留期的已发布记录，单批独立事务执行以限制锁持有时间。
+     *
+     * @param cutoff 清理截止时间（不含边界）
+     * @param limit 单批上限
+     * @return 实际删除行数
+     */
+    @Transactional
+    public int deletePublishedBefore(Instant cutoff, int limit) {
+        return outboxMapper.deletePublishedBefore(
+                InteractionOutboxStatus.PUBLISHED.databaseValue(), Timestamp.from(cutoff), limit);
+    }
+
+    /**
      * 将领域事件记录插入当前调用方本地事务中。
      *
      * @param record 待落库事件记录

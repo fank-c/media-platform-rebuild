@@ -26,7 +26,7 @@ public class InteractionOutboxScanJob {
     /**
      * 固定间隔触发一轮扫描。
      */
-    @Scheduled(fixedDelayString = "${interaction.outbox.poll-interval:5s}")
+    @Scheduled(fixedDelayString = "#{T(org.springframework.boot.convert.DurationStyle).detectAndParse('${interaction.outbox.poll-interval:5s}').toMillis()}")
     public void scanAndDispatch() {
         try {
             dispatcher.dispatchScanBatch();

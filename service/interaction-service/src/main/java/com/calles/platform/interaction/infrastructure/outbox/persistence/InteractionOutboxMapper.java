@@ -7,6 +7,7 @@ import java.util.List;
 import org.apache.ibatis.annotations.Arg;
 import org.apache.ibatis.annotations.ConstructorArgs;
 import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -161,6 +162,33 @@ public interface InteractionOutboxMapper {
                       @Param("publishedAt") Timestamp publishedAt,
                       @Param("processingStatus") String processingStatus,
                       @Param("claimToken") String claimToken);
+
+    /**
+     * 查询指定状态的积压数量。
+     */
+    @Select("SELECT COUNT(*) FROM interaction_outbox WHERE status = #{status}")
+    long countByStatus(@Param("status") String status);
+
+    /**
+     * 查询指定状态最早发生的事件时间，空状态返回 null。
+     */
+    @Select("SELECT MIN(occurred_at) FROM interaction_outbox WHERE status = #{status}")
+    Timestamp oldestOccurredAt(@Param("status") String status);
+
+    /**
+     * 分批删除已成功发布且超过保留期的记录；published_at 为空的异常记录不会匹配。
+     */
+    @Delete("""
+            DELETE FROM interaction_outbox
+            WHERE status = #{publishedStatus}
+              AND published_at IS NOT NULL
+              AND published_at < #{cutoff}
+            ORDER BY published_at, event_id
+            LIMIT #{limit}
+            """)
+    int deletePublishedBefore(@Param("publishedStatus") String publishedStatus,
+                              @Param("cutoff") Timestamp cutoff,
+                              @Param("limit") int limit);
 
     /**
      * 投递失败时回写退避时间并释放租约。

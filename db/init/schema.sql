@@ -728,6 +728,7 @@ CREATE TABLE IF NOT EXISTS `interaction_outbox` (
     `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`event_id`),
     KEY `idx_interaction_outbox_dispatch` (`status`, `next_attempt_at`, `lease_until`),
+    KEY `idx_interaction_outbox_cleanup` (`status`, `published_at`, `event_id`),
     KEY `idx_interaction_outbox_aggregate` (`aggregate_id`),
     CONSTRAINT `ck_interaction_outbox_status` CHECK (`status` IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='interaction-service 领域事件 Outbox 发件箱表';

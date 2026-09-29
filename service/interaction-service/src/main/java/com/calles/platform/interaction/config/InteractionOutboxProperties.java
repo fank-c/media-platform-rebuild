@@ -36,6 +36,21 @@ public class InteractionOutboxProperties {
     /** 正常优雅停机最多等待在途快速任务完成的时长。 */
     private Duration shutdownAwait = Duration.ofSeconds(10);
 
+    /** 是否启用已发布 Outbox 记录清理。 */
+    private boolean cleanupEnabled = false;
+
+    /** 已发布记录的保留时长，起点为 published_at。 */
+    private Duration retention = Duration.ofDays(30);
+
+    /** 清理任务单批最多删除的记录数。 */
+    private int cleanupBatchSize = 500;
+
+    /** 单次调度最多执行的删除批次数。 */
+    private int cleanupMaxBatches = 10;
+
+    /** 清理任务固定执行间隔。 */
+    private Duration cleanupInterval = Duration.ofHours(1);
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -116,12 +131,56 @@ public class InteractionOutboxProperties {
             throw new IllegalStateException("Interaction Outbox batchSize 必须在 1..1000 之间且 maxAttempts 必须大于 0");
         }
         if (isZeroOrNegative(confirmTimeout) || isZeroOrNegative(lease)
-                || isZeroOrNegative(pollInterval) || isZeroOrNegative(shutdownAwait)) {
+                || isZeroOrNegative(pollInterval) || isZeroOrNegative(shutdownAwait)
+                || isZeroOrNegative(retention) || isZeroOrNegative(cleanupInterval)) {
             throw new IllegalStateException("Interaction Outbox 相关时长配置必须为大于 0 的正数");
+        }
+        if (cleanupBatchSize < 1 || cleanupBatchSize > 1_000 || cleanupMaxBatches < 1) {
+            throw new IllegalStateException("Interaction Outbox 清理批次配置必须为正数且 cleanupBatchSize 不得超过 1000");
         }
         if (lease.compareTo(confirmTimeout) <= 0) {
             throw new IllegalStateException("Interaction Outbox 租约时长 lease 必须严格大于确认超时时长 confirmTimeout");
         }
+    }
+
+    public boolean isCleanupEnabled() {
+        return cleanupEnabled;
+    }
+
+    public void setCleanupEnabled(boolean cleanupEnabled) {
+        this.cleanupEnabled = cleanupEnabled;
+    }
+
+    public Duration getRetention() {
+        return retention;
+    }
+
+    public void setRetention(Duration retention) {
+        this.retention = retention;
+    }
+
+    public int getCleanupBatchSize() {
+        return cleanupBatchSize;
+    }
+
+    public void setCleanupBatchSize(int cleanupBatchSize) {
+        this.cleanupBatchSize = cleanupBatchSize;
+    }
+
+    public int getCleanupMaxBatches() {
+        return cleanupMaxBatches;
+    }
+
+    public void setCleanupMaxBatches(int cleanupMaxBatches) {
+        this.cleanupMaxBatches = cleanupMaxBatches;
+    }
+
+    public Duration getCleanupInterval() {
+        return cleanupInterval;
+    }
+
+    public void setCleanupInterval(Duration cleanupInterval) {
+        this.cleanupInterval = cleanupInterval;
     }
 
     private boolean isZeroOrNegative(Duration duration) {
