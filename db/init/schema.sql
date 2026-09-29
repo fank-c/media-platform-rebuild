@@ -408,6 +408,7 @@ CREATE TABLE IF NOT EXISTS `recommend_candidate_video` (
     KEY `idx_rcv_vid` (`vid`),
     KEY `idx_rcv_author` (`author_id`),
     KEY `idx_rcv_status_published` (`status`, `published_at` DESC),
+    KEY `idx_rcv_author_status_published` (`author_id`, `status`, `published_at` DESC, `video_id`),
     CONSTRAINT `ck_rcv_status` CHECK (`status` IN ('ACTIVE', 'OFFLINE', 'BANNED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='推荐候选池视频元数据表';
 
@@ -682,8 +683,8 @@ CREATE TABLE IF NOT EXISTS `interaction_share_record` (
     `deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '0=未删除，1=逻辑删除',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_share_idempotency` (`idempotency_key`),
-    KEY `idx_share_user_vid` (`user_id`, `vid`),
+    UNIQUE KEY `uk_share_user_idempotency` (`user_id`, `idempotency_key`),
+    KEY `idx_share_vid` (`vid`),
     CONSTRAINT `ck_share_record_deleted` CHECK (`deleted` IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='视频分享请求幂等防重记录表';
 

@@ -250,16 +250,16 @@ public class UserFollowApplicationService {
     }
 
     /**
-     * 内部微服务端点：拉取用户关注的所有作者ID列表（供推荐通道使用）。
+     * 内部微服务端点：拉取最近关注的、最多 1000 个有效作者 ID（供推荐通道使用）。
      *
      * @param accountId 目标用户ID
-     * @return 关注的创作者ID列表
+     * @return 有界的关注作者账号 ID 列表
      */
-    public List<String> getAllFollowingIds(String accountId) {
+    public List<String> getRecentFollowingIds(String accountId) {
         if (accountId == null || accountId.trim().isEmpty()) {
             return Collections.emptyList();
         }
-        return followMapper.selectAllFolloweeIds(accountId, 1000);
+        return followMapper.selectRecentFolloweeIds(accountId, 1000);
     }
 
     private boolean isFollowing(String fromUserId, String toUserId) {

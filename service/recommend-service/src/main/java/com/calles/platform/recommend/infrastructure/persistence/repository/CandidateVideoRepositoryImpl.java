@@ -72,6 +72,36 @@ public class CandidateVideoRepositoryImpl implements CandidateVideoRepository {
     }
 
     @Override
+    public java.util.List<CandidateVideo> findRecentActiveByAuthorIds(
+            java.util.List<String> authorIds,
+            java.time.LocalDateTime windowStart,
+            java.time.LocalDateTime anchorTime,
+            int limit) {
+        if (authorIds == null || authorIds.isEmpty()
+                || windowStart == null || anchorTime == null || windowStart.isAfter(anchorTime)) {
+            return java.util.Collections.emptyList();
+        }
+        java.util.List<String> validAuthorIds = authorIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+        if (validAuthorIds.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        int validLimit = limit > 0 ? Math.min(limit, 100) : 0;
+        if (validLimit == 0) {
+            return java.util.Collections.emptyList();
+        }
+        java.util.List<CandidateVideoPO> pos = candidateVideoMapper.selectRecentActiveByAuthorIds(
+                validAuthorIds, windowStart, anchorTime, validLimit);
+        if (pos == null || pos.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        return pos.stream().map(CandidateVideoPO::toDomain).collect(java.util.stream.Collectors.toList());
+    }
+
+    @Override
     public java.util.List<CandidateVideo> findByVids(java.util.List<String> vids) {
         if (vids == null || vids.isEmpty()) {
             return java.util.Collections.emptyList();

@@ -395,7 +395,7 @@ ID、状态及文本字段为字符串，`revision` 为非负整数，`gender` �
 
 ### 内部关注清单：GET /api/users/internal/{accountId}/following-ids
 
-仅供内部微服务协同，返回目标用户关注的所有博主 ID 列表。规划由推荐服务 `FollowingRecallChannel` 调用；**当前推荐侧尚未接入**，关注召回恒为空。
+仅供内部微服务协同，返回目标用户最近关注的最多 1000 个有效作者 ID，按 `updated_at DESC, follow_id ASC` 稳定排序。推荐服务每轮以固定时间锚点查询窗口内候选作品，不维护关注关系副本。
 
 ## 4. 文件接口
 
@@ -1304,7 +1304,10 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 ### 8.10 分享：POST /api/interactions/videos/{vid}/share
 
 - 必须带 Header `Idempotency-Key`，缺失时返回 `400`。
-- 同一个键重复请求：幂等成功，不重复计数。同一个键被别的用户或别的视频用过：当前返回 `500`（已知问题，计划改为 `409`）。
+- 幂等机制基于用户隔离（`userId + key`）：
+  - 同一用户针对相同视频重复请求：幂等成功，直接返回且不重复增加计数与领域事件；
+  - 同一用户复用相同幂等键请求不同视频：返回 `409 Conflict`（`"幂等键已被用于其他分享请求"`）；
+  - 不同用户使用相同幂等键互不干扰，各自独立记账。
 - 响应 `data`：`{ vid, action: "SHARE", active: true }`。
 
 ## 9. 推荐模块接口

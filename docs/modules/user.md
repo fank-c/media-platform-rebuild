@@ -191,7 +191,7 @@ sequenceDiagram
 | `GET` | `/api/users/{accountId}/following` | `requireAuthenticated` | 关注列表分页 ➔ 关联公开名片与关注时间 ➔ 标记互关状态 | `200` 成功 |
 | `GET` | `/api/users/{accountId}/followers` | `requireAuthenticated` | 粉丝列表分页 ➔ 关联公开名片与粉丝时间 ➔ 标记互关状态 | `200` 成功 |
 | `GET` | `/api/users/{accountId}/stats` | `requireAuthenticated` | 用户关系统计快照查询（关注数、粉丝数） | `200` 成功 |
-| `GET` | `/api/users/internal/{accountId}/following-ids` | 内部微服务 | 内部提取关注博主ID列表，赋能 `recommend-service` 关注流召回 | `200` 成功 |
+| `GET` | `/api/users/internal/{accountId}/following-ids` | 内部微服务 | 拉取最近最多 1000 个有效关注作者 ID，按 `updated_at DESC, follow_id ASC` 稳定排序 | `200` 成功 |
 
 ### 4.1 接口响应报文契约
 

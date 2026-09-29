@@ -17,6 +17,7 @@ import com.calles.platform.recommend.domain.repository.CandidateVideoRepository;
 import com.calles.platform.recommend.domain.repository.UserBlockRepository;
 import com.calles.platform.recommend.domain.repository.UserProfileRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -240,14 +241,20 @@ public class RecommendFeedApplicationService {
             int expectedCount = Math.max(1, (int) Math.round(targetSize * (ratio / 100.0)));
             int fetchQuota = Math.max(expectedCount * 2, 4);
 
+            String traceId = MDC.get("traceId");
             CompletableFuture<List<RecalledCandidate>> future = CompletableFuture.supplyAsync(
                     () -> {
                         try {
+                            if (traceId != null && !traceId.isBlank()) {
+                                MDC.put("traceId", traceId);
+                            }
                             List<RecalledCandidate> candidates = channel.recall(context, fetchQuota);
                             return candidates != null ? candidates : Collections.<RecalledCandidate>emptyList();
                         } catch (Exception ex) {
                             log.warn("召回通道执行异常，降级为空列表: channel={}, error={}", channelName, ex.getMessage(), ex);
                             return Collections.<RecalledCandidate>emptyList();
+                        } finally {
+                            MDC.remove("traceId");
                         }
                     },
                     recallExecutor

@@ -14,30 +14,15 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface CandidateVideoMapper extends BaseMapper<CandidateVideoPO> {
 
-    /**
-     * 按视频内部全局 ID 查询单条记录。
-     *
-     * @param videoId 视频内部 ID
-     * @return 匹配的 PO，未匹配返回 null
-     */
+    /** 按视频内部全局 ID 查询单条记录。 */
     @Select("SELECT * FROM recommend_candidate_video WHERE video_id = #{videoId} LIMIT 1")
     CandidateVideoPO selectByVideoId(@Param("videoId") String videoId);
 
-    /**
-     * 按业务公开短码 vid 查询单条记录。
-     *
-     * @param vid 视频业务短码
-     * @return 匹配的 PO，未匹配返回 null
-     */
+    /** 按业务公开短码查询单条记录。 */
     @Select("SELECT * FROM recommend_candidate_video WHERE vid = #{vid} LIMIT 1")
     CandidateVideoPO selectByVid(@Param("vid") String vid);
 
-    /**
-     * 幂等插入候选视频；若已存在唯一键冲突 (uk_rcv_video_id) 则安全忽略。
-     *
-     * @param po 候选持久化对象
-     * @return 影响行数
-     */
+    /** 幂等插入候选视频。 */
     @Insert("""
             INSERT IGNORE INTO recommend_candidate_video
             (id, video_id, vid, author_id, domain_tag_ids, topic_tag_ids, status, published_at, created_at, updated_at)
@@ -46,13 +31,7 @@ public interface CandidateVideoMapper extends BaseMapper<CandidateVideoPO> {
             """)
     int insertIgnore(CandidateVideoPO po);
 
-    /**
-     * 原子更新指定视频的生命周期状态。
-     *
-     * @param videoId 视频内部 ID
-     * @param status 目标状态字符串 (ACTIVE, OFFLINE, BANNED)
-     * @return 影响行数
-     */
+    /** 原子更新指定视频生命周期状态。 */
     @Update("""
             UPDATE recommend_candidate_video
             SET status = #{status}, updated_at = CURRENT_TIMESTAMP(3)
@@ -60,17 +39,45 @@ public interface CandidateVideoMapper extends BaseMapper<CandidateVideoPO> {
             """)
     int updateStatusByVideoId(@Param("videoId") String videoId, @Param("status") String status);
 
-    /**
-     * 查询最新发布的有效推荐候选列表 (按发布时间倒序，用于冷启动或候选池补齐)。
-     *
-     * @param limit 最大返回条数
-     * @return 候选 PO 列表
-     */
+    /** 查询最新 ACTIVE 候选，用于冷启动与候选池补齐。 */
     @Select("""
-            SELECT * FROM recommend_candidate_video
+            SELECT id, video_id, vid, author_id, domain_tag_ids, topic_tag_ids,
+                   status, published_at, created_at, updated_at
+            FROM recommend_candidate_video
             WHERE status = 'ACTIVE'
-            ORDER BY published_at DESC
+            ORDER BY published_at DESC, video_id ASC
             LIMIT #{limit}
             """)
     java.util.List<CandidateVideoPO> selectRecentActive(@Param("limit") int limit);
+
+    /**
+     * 按作者、状态和固定时间窗口查询候选。
+     *
+     * @param authorIds 作者账号 ID 集合
+     * @param windowStart 发布时间下界（包含）
+     * @param anchorTime 发布时间上界（包含）
+     * @param limit 返回上限
+     * @return 匹配的候选 PO 列表
+     */
+    @Select("""
+            <script>
+            SELECT id, video_id, vid, author_id, domain_tag_ids, topic_tag_ids,
+                   status, published_at, created_at, updated_at
+            FROM recommend_candidate_video
+            WHERE author_id IN
+              <foreach collection="authorIds" item="authorId" open="(" separator="," close=")">
+                  #{authorId}
+              </foreach>
+              AND status = 'ACTIVE'
+              AND published_at >= #{windowStart}
+              AND published_at <= #{anchorTime}
+            ORDER BY published_at DESC, video_id ASC
+            LIMIT #{limit}
+            </script>
+            """)
+    java.util.List<CandidateVideoPO> selectRecentActiveByAuthorIds(
+            @Param("authorIds") java.util.List<String> authorIds,
+            @Param("windowStart") java.time.LocalDateTime windowStart,
+            @Param("anchorTime") java.time.LocalDateTime anchorTime,
+            @Param("limit") int limit);
 }

@@ -109,13 +109,13 @@ public interface UserFollowMapper extends BaseMapper<UserFollow> {
     long countFollowers(@Param("followId") String followId);
 
     /**
-     * 提取指定用户关注的所有博主ID集合（供推荐通道高效批量召回）。
+     * 提取指定用户最近关注的、最多 1000 个有效作者 ID（供推荐通道批量召回）。
      *
      * @param userId 用户ID
      * @param maxLimit 最大拉取上限
-     * @return 关注的博主账号ID列表
+     * @return 按关注更新时间倒序、关注关系主键升序排列的作者账号 ID
      */
     @Select("SELECT follow_id FROM user_follow WHERE user_id = #{userId} AND follow_status = 1 "
-            + "ORDER BY updated_at DESC LIMIT #{maxLimit}")
-    List<String> selectAllFolloweeIds(@Param("userId") String userId, @Param("maxLimit") int maxLimit);
+            + "ORDER BY updated_at DESC, follow_id ASC LIMIT #{maxLimit}")
+    List<String> selectRecentFolloweeIds(@Param("userId") String userId, @Param("maxLimit") int maxLimit);
 }

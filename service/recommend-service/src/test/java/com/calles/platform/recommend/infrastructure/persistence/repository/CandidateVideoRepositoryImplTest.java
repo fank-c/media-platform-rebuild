@@ -84,6 +84,46 @@ class CandidateVideoRepositoryImplTest {
     }
 
     @Test
+    @DisplayName("findRecentActiveByAuthorIds：空作者集合不访问 Mapper")
+    void shouldShortCircuitEmptyAuthorIds() {
+        assertThat(repository.findRecentActiveByAuthorIds(
+                java.util.Collections.emptyList(),
+                LocalDateTime.now().minusDays(1),
+                LocalDateTime.now(),
+                10)).isEmpty();
+        org.mockito.Mockito.verifyNoInteractions(candidateVideoMapper);
+    }
+
+    @Test
+    @DisplayName("findRecentActiveByAuthorIds：非法参数不访问 Mapper")
+    void shouldShortCircuitInvalidBoundsAndLimit() {
+        LocalDateTime anchor = LocalDateTime.now();
+        assertThat(repository.findRecentActiveByAuthorIds(
+                java.util.List.of("author-1"), anchor, anchor.minusHours(1), 10)).isEmpty();
+        assertThat(repository.findRecentActiveByAuthorIds(
+                java.util.List.of("author-1"), anchor.minusHours(1), anchor, 0)).isEmpty();
+        org.mockito.Mockito.verifyNoInteractions(candidateVideoMapper);
+    }
+
+    @Test
+    @DisplayName("findRecentActiveByAuthorIds：清洗作者并限制最多 100 条")
+    void shouldNormalizeAuthorsAndLimit() {
+        LocalDateTime start = LocalDateTime.now().minusDays(1);
+        LocalDateTime anchor = LocalDateTime.now();
+        when(candidateVideoMapper.selectRecentActiveByAuthorIds(
+                java.util.List.of("author-1", "author-2"), start, anchor, 100))
+                .thenReturn(java.util.List.of(CandidateVideoPO.builder()
+                        .id("c-1").videoId("v-1").vid("cv-1").authorId("author-1")
+                        .status("ACTIVE").publishedAt(anchor).build()));
+
+        assertThat(repository.findRecentActiveByAuthorIds(
+                java.util.List.of(" author-1 ", "author-1", "author-2"), start, anchor, 1000))
+                .singleElement().extracting(CandidateVideo::getVid).isEqualTo("cv-1");
+        verify(candidateVideoMapper).selectRecentActiveByAuthorIds(
+                java.util.List.of("author-1", "author-2"), start, anchor, 100);
+    }
+
+    @Test
     @DisplayName("updateStatusByVideoId：原子调用状态更新")
     void shouldUpdateStatusByVideoId() {
         when(candidateVideoMapper.updateStatusByVideoId(eq("vid_100"), eq("OFFLINE"))).thenReturn(1);

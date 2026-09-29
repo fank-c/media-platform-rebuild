@@ -16,5 +16,6 @@ CREATE TABLE IF NOT EXISTS `recommend_candidate_video` (
     KEY `idx_rcv_vid` (`vid`),
     KEY `idx_rcv_author` (`author_id`),
     KEY `idx_rcv_status_published` (`status`, `published_at` DESC),
+    KEY `idx_rcv_author_status_published` (`author_id`, `status`, `published_at` DESC, `video_id`),
     CONSTRAINT `ck_rcv_status` CHECK (`status` IN ('ACTIVE', 'OFFLINE', 'BANNED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='推荐候选池视频元数据表';

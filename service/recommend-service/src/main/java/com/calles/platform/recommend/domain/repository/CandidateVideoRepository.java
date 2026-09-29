@@ -59,6 +59,21 @@ public interface CandidateVideoRepository {
     java.util.List<CandidateVideo> findRecentActive(int limit);
 
     /**
+     * 按作者集合查询时间窗口内最新的 ACTIVE 候选视频。
+     *
+     * @param authorIds 关注作者账号 ID，不能为空集合
+     * @param windowStart 发布时间下界（包含）
+     * @param anchorTime 发布时间上界（包含）
+     * @param limit 本轮候选上限，范围为 1—100
+     * @return 按发布时间倒序、视频短码升序排列的候选视频
+     */
+    java.util.List<CandidateVideo> findRecentActiveByAuthorIds(
+            java.util.List<String> authorIds,
+            java.time.LocalDateTime windowStart,
+            java.time.LocalDateTime anchorTime,
+            int limit);
+
+    /**
      * 批量根据公开业务短码列表查询候选实体列表。
      *
      * @param vids 视频业务短码列表

@@ -24,13 +24,13 @@ public class UserFollowInternalController {
     }
 
     /**
-     * 全量提取指定用户关注的博主账号ID清单（用于个性化关注召回通道）。
+     * 提取指定用户最近关注的有界作者账号 ID 清单（用于关注召回通道）。
      *
-     * @param accountId 用户账号ID
-     * @return 关注的创作者ID列表
+     * @param accountId 用户账号 ID
+     * @return 最多 1000 个有效关注作者 ID
      */
     @GetMapping("/{accountId}/following-ids")
     public ApiResponse<List<String>> getFollowingIds(@PathVariable String accountId) {
-        return ApiResponse.ok(followService.getAllFollowingIds(accountId));
+        return ApiResponse.ok(followService.getRecentFollowingIds(accountId));
     }
 }

@@ -227,6 +227,16 @@ class UserFollowApplicationServiceTest {
     }
 
     @Test
+    @DisplayName("内部关注作者查询：固定最多 1000 个最近有效关注")
+    void getRecentFollowingIds() {
+        when(followMapper.selectRecentFolloweeIds(USER_A, 1000))
+                .thenReturn(java.util.List.of(USER_B));
+
+        assertEquals(java.util.List.of(USER_B), service.getRecentFollowingIds(USER_A));
+        verify(followMapper).selectRecentFolloweeIds(USER_A, 1000);
+    }
+
+    @Test
     @DisplayName("查询用户关系统计数据")
     void getStats() {
         UserCounter counter = UserCounter.builder()

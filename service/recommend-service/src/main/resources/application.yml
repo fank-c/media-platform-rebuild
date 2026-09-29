@@ -9,6 +9,19 @@ spring:
   config:
     import: "optional:nacos:application.yml"
   cloud:
+    openfeign:
+      client:
+        config:
+          userFollowingClient:
+            connectTimeout: 50
+            readTimeout: 100
+            loggerLevel: none
+          interactionStatsClient:
+            connectTimeout: 50
+            readTimeout: 100
+            loggerLevel: none
+      okhttp:
+        enabled: true
     nacos:
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
@@ -67,6 +80,11 @@ recommend:
       max-buffer-capacity: ${RECOMMEND_FEED_BUFFER_MAX_CAPACITY:60}
       buffer-ttl-seconds: ${RECOMMEND_FEED_BUFFER_TTL_SECONDS:3600}
       refill-lock-timeout-seconds: ${RECOMMEND_FEED_BUFFER_REFILL_LOCK_TIMEOUT_SECONDS:30}
+  # 关注召回参数
+  following:
+    window-hours: ${RECOMMEND_FOLLOWING_WINDOW_HOURS:168}
+    candidate-limit: ${RECOMMEND_FOLLOWING_CANDIDATE_LIMIT:100}
+    half-life-hours: ${RECOMMEND_FOLLOWING_HALF_LIFE_HOURS:24}
   # 回调内容服务参数
   callback:
     max-retries: 5

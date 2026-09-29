@@ -24,6 +24,7 @@
 | [0007](0007-user-outbox-and-follow-events.md) | 用户模块自属 Outbox 与关注关系领域事件 | 已采纳（追认） |
 | [0008](0008-video-counter-ownership-to-interaction.md) | 视频公开计数所有权划归互动服务 | 已采纳（追认） |
 | [0009](0009-recommend-qdrant-vector-database.md) | 推荐服务引入 Qdrant 向量数据库与双模向量化引擎 | 已采纳（追认） |
+| [0010](0010-following-recall-query-and-ranking.md) | 关注召回采用查询式两阶段召回与本地排序 | 已采纳（追认） |
 
 ## 待补
 
