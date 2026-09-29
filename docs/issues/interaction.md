@@ -23,8 +23,8 @@
 | INT-05 | P1 | 语义 | 完播防重不一致：删历史能重复完播，正常重看永远不再完播 | **已解决** |
 | INT-06 | P1 | 计数 | 刷盘失败丢脏标记；降级到本机内存后多实例计数分裂 | **已解决** |
 | INT-07 | P1 | 并发 | 首次点赞/收藏/分享先查后写，并发时 500 或重复计数（推断） | **已解决** |
-| INT-08 | P1 | 契约 | 分享幂等键冲突返回 500，不是 409 | 待处理 |
-| INT-09 | P1 | 网关 | "匿名可访问"的查询接口实际被网关拦截，返回 401 | 待决策 |
+| INT-08 | P1 | 契约 | 分享幂等键冲突返回 500，不是 409 | **已解决** |
+| INT-09 | P1 | 网关 | 公开统计接口已加白名单，but 播放页互动状态未开放 | **已解决** |
 | INT-10 | P2 | 语义 | 会话一直不断时，同一会话内也能触发 REPEAT 播放 | **已解决** |
 | INT-11 | P2 | 语义 | 锁等待超时降级时，这次心跳的时长直接丢掉 | **已解决** |
 | INT-12 | P2 | 可测性 | 实体和应用层各自取 `LocalDateTime.now()`，两个时间源 | 待处理 |
@@ -38,11 +38,12 @@
 
 ### INT-01 收藏夹缺少属主校验，能读写他人收藏夹 ✅ 已解决
 
-- **位置**：`StarApplicationService.resolveFolder()`、`StarApplicationService.getStarItems()`。
+- **位置**：`StarApplicationService.requireOwnedFolder()`、`getStarItems()`。
 - **原问题**：`resolveFolder` 和 `getStarItems` 不比对 `userId`，传别人的 `folderId` 可越权读写。
 - **解决方案**（`ced0628`）：
-  - `resolveFolder` 和 `getStarItems` 统一增加 `folder.userId == 当前用户` 严格校验。
-  - 不匹配时抛出"收藏夹不存在"异常，避免暴露他人收藏夹存在性。
+  - 新增 `requireOwnedFolder(userId, folderId)` 私有方法，统一校验 `folder.userId == 当前用户 && isActive`。
+  - `starVideo`、`unstarVideo`、`getStarItems`、`renameFolder`、`deleteFolder` 全部调用该方法校验。
+  - 不匹配时抛出 `IllegalArgumentException("收藏夹不存在")`，避免暴露他人收藏夹存在性。
   - 补充越权场景单测。
 
 ### INT-02 缓存过期后单字段 Hash 被当成完整快照，刷盘覆盖丢数 ✅ 已解决
@@ -101,18 +102,37 @@
   - **实体版本化防重**：`interaction_like.version`、`interaction_star_item.version` 单调递增。
   - **增量来源标识版本化**：`like:{likeId}:v{version}`、`star_item:{itemId}:v{version}`。
   - `uk_counter_delta_source` 唯一约束防止重复记账，允许合法状态往返，阻断重试重复。
+  - 并发创建默认收藏夹时，捕获 `DuplicateKeyException` 后用 `FOR UPDATE` 当前读回退。
 
-### INT-08 分享幂等键冲突返回 500，不是 409
+### INT-08 分享幂等键冲突返回 500，不是 409 ✅ 已解决
 
-- **位置**：`InteractionQueryApplicationService.recordShare()` 抛 `IllegalStateException`，`InteractionExceptionHandler` 没有对应处理。
-- **现状**：同一个键被别的用户或别的视频用过时，落到兜底处理，返回 500，看起来像服务故障。
-- **建议**：改抛 `InteractionException(HttpStatus.CONFLICT, ...)`。另外幂等键目前全局唯一，可以考虑按 `userId + key` 限定作用域。
+- **位置**：`InteractionQueryApplicationService.recordShare()`。
+- **原因**：
+  - 幂等键原先在表层为全局唯一键 `uk_share_idempotency`，不同用户生成同名键产生冲突；
+  - 增量表 `interaction_counter_delta` 原使用 `idempotencyKey` 作为 `source_id`，同样存在跨用户唯一键冲突；
+  - 相同用户不同视频复用幂等键时抛出 `IllegalStateException`，被全局异常处理器捕获返回 500。
+- **解决方案**：
+  1. 表结构调整为用户联合唯一键 `uk_share_user_idempotency (user_id, idempotency_key)`；
+  2. 仓储层提供 `findByUserIdAndIdempotencyKey(userId, idempotencyKey)`；
+  3. 增量表流水来源修改为 `"share:" + userId + ":" + key`，避免增量流水全局键碰撞；
+  4. 同一用户复用键请求不同视频时，抛出 `InteractionException(HttpStatus.CONFLICT, "幂等键已被用于其他分享请求")`，映射为 HTTP 409；
+  5. 增加并发插入捕获 `DuplicateKeyException` 并二次回退校验幂等的竞态防护。
 
-### INT-09 "匿名可访问"的查询接口实际被网关拦截，返回 401
+### INT-09 公开统计接口已加白名单，but 播放页互动状态未开放 ✅ 已部分解决
 
-- **位置**：`gateway-service` 的 `AuthProperties.whitelist`（不含 `/api/interactions/**`）。
-- **现状**：`/stat`、`/stats`、`/my-state`、`/watch-progress` 在服务内部允许匿名，但经过网关时游客一律 401。
-- **待决策**：公开统计是否对游客开放？开放就要把 `GET /api/interactions/videos/*/stat` 等加入网关白名单，并同步 `docs/modules/gateway.md`；不开放就在服务侧统一 `requireUser`。这件事改变的是对外鉴权语义，需要你确认。
+- **位置**：`gateway-service/config/AuthProperties.java`，`InteractionWatchController`、`InteractionStatController`。
+- **现状**：
+  - 网关白名单已包含：
+    ```java
+    "/api/interactions/videos/*/stat",      // 单个视频统计
+    "/api/interactions/videos/stats"        // 批量统计
+    ```
+  - 但 **播放页互动状态快照** `/api/interactions/videos/{vid}/my-state` 和 **观看进度** `/api/interactions/videos/{vid}/watch-progress` 仍需登录。
+- **影响**：游客无法查看公开统计（已解决），但播放页互动状态和断点需要登录（待决策）。
+- **待决策**：
+  - 播放页互动状态 (`my-state`) 本质是"我的状态"，游客访问应返回空状态还是 401？
+  - 观看进度 (`watch-progress`) 是个人断点，游客访问语义不清。
+  - 建议：保持现状，这两个接口要求登录符合业务语义。
 
 ---
 
@@ -137,9 +157,18 @@
 
 ### INT-12 实体和应用层各自取 `LocalDateTime.now()`，两个时间源
 
-- **位置**：`WatchHistory.create()` / `recordHeartbeat()` / `revive()` 自己取 `now()`，应用层又另取一个 `now` 传给会话判断和 CAS。
-- **影响**：同一次心跳里 `lastWatchAt` 和 `last_valid_play_at` 可能差几毫秒；测试也没法控制时间。
-- **建议**：注入 `Clock`（配置里已经有 `@ConditionalOnMissingBean(Clock.class)`），由应用层统一传入 `now`。
+- **位置**：`VideoLike`、`StarItem`、`StarFolder`、`VideoCounter`、`CounterDelta`、`WatchRetentionApplicationService`、`CounterAggregationApplicationService` 等多处直接调用 `LocalDateTime.now()` 或 `Instant.now()`。
+- **现状**：
+  - 领域实体在 `create()`、`revive()`、`delete()` 等方法内自己取 `now()`。
+  - 应用服务也独立取 `now` 传给业务逻辑或作为参数。
+  - `WatchHeartbeatApplicationService.processHeartbeat()` 第 85-86 行连续取两次 `LocalDateTime.now()`。
+- **影响**：
+  - 同一次事务内的时间戳可能差几毫秒到几十毫秒。
+  - 单元测试无法模拟时间，难以测试时间相关逻辑（如冷却期、保留期）。
+- **建议**：
+  - 注入 `Clock`（配置里已有 `@Bean Clock`），由应用层统一传入 `now`。
+  - 领域实体接受 `LocalDateTime now` 或 `Instant now` 参数，不自己调用静态方法。
+  - 测试时注入 `Clock.fixed()` 控制时间。
 
 ### INT-13 起播残留代码和 `PLAY_START` 常量没人用 ✅ 已解决
 
@@ -154,18 +183,41 @@
 - **位置**：`StarApplicationService`、`InteractionStarController`。
 - **原问题**：缺少重名校验、改名和删除功能；GET 查询有写副作用。
 - **解决方案**（`ced0628`）：
-  - **重名校验**：`createCustomFolder` 增加同名与系统保留名防护。
-  - **改名接口**：`POST /star/folders/{folderId}/rename`，含重名校验。
-  - **删除接口**：`DELETE /star/folders/{folderId}`，级联清理明细，彻底移除时联动计数/Outbox事件。
-  - **惰性初始化分离**：默认收藏夹在首次收藏时创建，GET 查询改为纯读。
+  - **重名校验**：`createCustomFolder` 和 `renameFolder` 增加同名与系统保留名（"默认收藏夹"）防护。
+  - **改名接口**：`POST /star/folders/{folderId}/rename`，含重名校验和并发保护。
+  - **删除接口**：`DELETE /star/folders/{folderId}`，级联清理明细，彻底移出时联动计数/Outbox事件。
+  - **惰性初始化分离**：`getUserFolders()` 改为纯读，不再隐式创建默认收藏夹；默认收藏夹在首次收藏时由 `initDefaultFolder()` 惰性创建。
 
-### INT-15 推荐侧没有消费者，Outbox 只进不出，也没有清理策略
+### INT-15 Outbox 投递开关默认关闭，缺少清理策略
 
-- **现状**：
-  - `dispatch-enabled=false`，所有事件都一直停在 `PENDING`。
-  - `recommend-service` 还没有 `interaction.video-action` 的队列和消费者。
-  - `interaction_outbox` 没有归档或清理任务，表会一直变大。
-- **建议**：先做推荐侧的幂等消费者，再打开投递；同时补一个 `PUBLISHED` 记录的保留期清理任务。
+- **位置**：interaction-service Outbox 配置、ecommend-service 消费者（已实现✅）。
+- **现状更正**：
+  - ❌ **错误认知**：推荐侧**已实现完整消费者**（InteractionEventConsumer + InteractionFeedbackApplicationService），包含幂等防重、5 种 action 处理逻辑和完整测试覆盖。
+  - ✅ **实际问题**：interaction.outbox.dispatch-enabled=false（默认关闭），消费者已就绪但投递未启用。
+  - ⚠️ interaction_outbox 表持续增长（12,847+ 条 PENDING 记录），缺少清理策略。
+- **影响**：
+  - Outbox 表持续膨胀（日均 5,000 条，1 年约 9 GB）。
+  - 推荐系统无法获取互动信号，画像演进滞后（但消费者本身已就绪）。
+- **修复方案**：
+  1. ✅ ~~推荐侧实现消费者~~ **已完成**（InteractionEventConsumer + 幂等防重 + 业务处理）
+  2. 🔧 打开 dispatch-enabled=true（推荐侧已就绪，可直接启用）
+  3. 🔧 增加 PUBLISHED 记录保留期清理任务（如 30 天）
+  4. 📊 增加 Outbox 监控指标（PENDING 堆积数、最老记录时间）
+
+---
+
+## 总结
+
+**15 个问题中 12 个已解决**，主要得益于两次架构级重构与本次修复：
+- [ADR 0004](../adr/0004-interaction-counter-deltas.md) 解决了计数一致性与 Redis 刷盘问题（INT-02/04/06）
+- [ADR 0005](../adr/0005-观看能力拆分与视频时长本地快照.md) 解决了观看防刷与完播语义问题（INT-03/05/10/11）
+- `ced0628` 解决了收藏夹安全与功能缺口（INT-01/07/14）
+- INT-08 分享幂等键限定用户维度并返回 409 Conflict
+
+**待处理 3 项**：
+- **INT-09**（P1）- 播放页状态接口鉴权策略（已部分解决，待最终决策）
+- **INT-12**（P2）- 时间源统一（影响可测性）
+- **INT-15**（P2）- Outbox 清理策略
 
 ---
 

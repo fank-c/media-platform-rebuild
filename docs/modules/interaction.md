@@ -379,7 +379,7 @@ DDL 以 [`db/init/schema.sql`](../../db/init/schema.sql) 为准，增量迁移�
 | `interaction_watch_progress` | `id` / `uk_watch_progress_user_vid` | `active_session_id`、`last_position`、`watched_duration`、`first_watch_at`、`last_watch_at`、`last_view_claimed_at`、`deleted` | 断点、历史展示与播放量冷却依据；删除仅隐藏展示 |
 | `interaction_watch_session` | `session_id` / `uk_watch_session_start_key` | `start_request_key`、`view_counted_at`、`duration_snapshot`、`qualification_threshold`、`credited_duration`、`last_sequence`、`last_position`、`qualified`、`started_at`、`last_heartbeat_at`、`closed_at` | 会话级有效观看时长、起播播放量标记与门槛，创建时固定不可漂移 |
 | `interaction_watch_event_claim` | `id` / `uk_watch_event_claim` | `user_id`、`vid`、`session_id`、`event_type`、`outbox_event_id`、`claimed_at` | 合格观看与完播事件的最终防重凭据 |
-| `interaction_share_record` | `uk_share_idempotency` | `idempotency_key`、`user_id`、`vid` | 分享幂等（全局唯一键） |
+| `interaction_share_record` | `uk_share_user_idempotency` | `user_id`、`idempotency_key`、`vid` | 分享幂等（用户联合唯一键：`user_id + idempotency_key`） |
 | `interaction_outbox` | `event_id` | `status`、`attempts`、`next_attempt_at`、租约字段 | 发件箱 |
 
 所有实体表都使用 `deleted` 逻辑删除（`@TableLogic`）。

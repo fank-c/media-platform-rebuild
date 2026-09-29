@@ -13,6 +13,8 @@ import com.calles.platform.common.web.context.UserContext;
 import com.calles.platform.common.web.context.UserInfo;
 import com.calles.platform.interaction.application.query.InteractionQueryApplicationService;
 import com.calles.platform.interaction.application.security.InteractionAccessPolicy;
+import com.calles.platform.interaction.exception.InteractionException;
+import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -95,6 +97,28 @@ class InteractionStatControllerTest {
                     .andExpect(jsonPath("$.code").value(400))
                     .andExpect(jsonPath("$.message").value("分享请求必须在 Header 中携带有效的 Idempotency-Key"));
             verifyNoInteractions(queryService);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    /**
+     * 相同用户复用幂等键分享不同视频返回 409 Conflict。
+     */
+    @Test
+    @DisplayName("复用幂等键冲突返回 409 Conflict")
+    void shareConflictReturns409() throws Exception {
+        UserContext.set(new UserInfo("user_001", "USER", "user", "session_001"));
+        try {
+            doThrow(new InteractionException(HttpStatus.CONFLICT, "幂等键已被用于其他分享请求"))
+                    .when(queryService).recordShare("cv_100", "user_001", "idem_test_key_1");
+
+            mockMvc.perform(post("/api/interactions/videos/cv_100/share")
+                            .header("Idempotency-Key", "idem_test_key_1"))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.code").value(409))
+                    .andExpect(jsonPath("$.message").value("幂等键已被用于其他分享请求"));
+            verify(queryService).recordShare("cv_100", "user_001", "idem_test_key_1");
         } finally {
             UserContext.clear();
         }

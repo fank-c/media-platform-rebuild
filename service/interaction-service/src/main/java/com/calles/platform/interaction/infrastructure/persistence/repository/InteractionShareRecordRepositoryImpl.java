@@ -19,11 +19,12 @@ public class InteractionShareRecordRepositoryImpl implements InteractionShareRec
     private final InteractionShareRecordMapper mapper;
 
     @Override
-    public Optional<InteractionShareRecord> findByIdempotencyKey(String idempotencyKey) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+    public Optional<InteractionShareRecord> findByUserIdAndIdempotencyKey(String userId, String idempotencyKey) {
+        if (userId == null || userId.isBlank() || idempotencyKey == null || idempotencyKey.isBlank()) {
             return Optional.empty();
         }
         LambdaQueryWrapper<InteractionShareRecordPO> wrapper = new LambdaQueryWrapper<InteractionShareRecordPO>()
+                .eq(InteractionShareRecordPO::getUserId, userId.trim())
                 .eq(InteractionShareRecordPO::getIdempotencyKey, idempotencyKey.trim());
         InteractionShareRecordPO po = mapper.selectOne(wrapper);
         return Optional.ofNullable(po).map(InteractionShareRecordPO::toDomain);
@@ -35,5 +36,14 @@ public class InteractionShareRecordRepositoryImpl implements InteractionShareRec
             return;
         }
         mapper.insert(InteractionShareRecordPO.fromDomain(record));
+    }
+
+    @Override
+    public Optional<InteractionShareRecord> findByUserIdAndIdempotencyKeyForUpdate(String userId, String idempotencyKey) {
+        if (userId == null || userId.isBlank() || idempotencyKey == null || idempotencyKey.isBlank()) {
+            return Optional.empty();
+        }
+        InteractionShareRecordPO po = mapper.selectByUserIdAndIdempotencyKeyForUpdate(userId.trim(), idempotencyKey.trim());
+        return Optional.ofNullable(po).map(InteractionShareRecordPO::toDomain);
     }
 }
