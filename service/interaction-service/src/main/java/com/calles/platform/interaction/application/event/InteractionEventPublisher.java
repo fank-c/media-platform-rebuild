@@ -8,7 +8,6 @@ import com.calles.platform.interaction.infrastructure.outbox.model.InteractionOu
 import com.calles.platform.interaction.infrastructure.outbox.persistence.InteractionOutboxRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.time.Clock;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
@@ -43,18 +42,15 @@ public class InteractionEventPublisher {
     private final InteractionOutboxDispatchNotifier dispatchNotifier;
     private final InteractionOutboxProperties outboxProperties;
     private final ObjectMapper objectMapper;
-    private final Clock clock;
 
     public InteractionEventPublisher(InteractionOutboxRepository outboxRepository,
                                      InteractionOutboxDispatchNotifier dispatchNotifier,
                                      InteractionOutboxProperties outboxProperties,
-                                     ObjectMapper objectMapper,
-                                     Clock clock) {
+                                     ObjectMapper objectMapper) {
         this.outboxRepository = outboxRepository;
         this.dispatchNotifier = dispatchNotifier;
         this.outboxProperties = outboxProperties;
         this.objectMapper = objectMapper;
-        this.clock = clock;
     }
 
     /**
@@ -64,9 +60,11 @@ public class InteractionEventPublisher {
      * 观看事件凭据唯一键都是各自的防线。本方法本身不做去重。</p>
      *
      * @param payload 视频交互载荷
+     * @param now 用例入口取得的 UTC 事件发生时刻
      * @return 已落库的事件 ID；发件箱总开关关闭时返回 null
      */
-    public String publishVideoAction(VideoActionPayload payload) {
+    public String publishVideoAction(VideoActionPayload payload, Instant now) {
+        java.util.Objects.requireNonNull(now, "事件业务时间不能为空");
         if (!outboxProperties.isEnabled()) {
             LOGGER.debug("Interaction Outbox 总开关未开启，跳过事件生成");
             return null;
@@ -75,7 +73,6 @@ public class InteractionEventPublisher {
         // 步骤 1: 生成全局唯一事件 ID 与链路追踪 ID
         String eventId = UUID.randomUUID().toString().replace("-", "");
         String traceId = resolveCurrentTraceId();
-        Instant now = clock.instant();
         String occurredAtStr = DateTimeFormatter.ISO_INSTANT.format(now);
 
         // 步骤 2: 组装统一契约信封

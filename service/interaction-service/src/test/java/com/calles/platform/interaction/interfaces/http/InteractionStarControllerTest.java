@@ -1,5 +1,10 @@
 package com.calles.platform.interaction.interfaces.http;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -32,6 +37,10 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
  */
 @ExtendWith(MockitoExtension.class)
 class InteractionStarControllerTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-27T12:00:00Z");
+    private static final Clock TEST_CLOCK = Clock.fixed(TEST_INSTANT, ZoneOffset.UTC);
+    private static final LocalDateTime TEST_TIME = LocalDateTime.ofInstant(TEST_INSTANT, ZoneOffset.UTC);
+
 
     private MockMvc mockMvc;
 
@@ -55,7 +64,7 @@ class InteractionStarControllerTest {
     @DisplayName("GET /api/interactions/star/folders 获取收藏夹列表成功")
     void shouldGetFoldersSuccessfully() throws Exception {
         when(accessPolicy.requireUser()).thenReturn(sampleUser);
-        StarFolder defaultFolder = StarFolder.createDefault("user_001");
+        StarFolder defaultFolder = StarFolder.createDefault("user_001", TEST_TIME);
         when(starService.getUserFolders("user_001")).thenReturn(List.of(defaultFolder));
 
         mockMvc.perform(get("/api/interactions/star/folders"))
@@ -70,7 +79,7 @@ class InteractionStarControllerTest {
     @DisplayName("POST /api/interactions/star/folders 创建自定义收藏夹成功")
     void shouldCreateFolderSuccessfully() throws Exception {
         when(accessPolicy.requireUser()).thenReturn(sampleUser);
-        StarFolder folder = StarFolder.createCustom("user_001", "技术分享");
+        StarFolder folder = StarFolder.createCustom("user_001", "技术分享", TEST_TIME);
         when(starService.createCustomFolder("user_001", "技术分享")).thenReturn(folder);
 
         mockMvc.perform(post("/api/interactions/star/folders")
@@ -97,7 +106,7 @@ class InteractionStarControllerTest {
     @DisplayName("PUT /api/interactions/star/folders/{folderId} 修改收藏夹标题成功")
     void shouldUpdateFolderSuccessfully() throws Exception {
         when(accessPolicy.requireUser()).thenReturn(sampleUser);
-        StarFolder folder = StarFolder.createCustom("user_001", "新标题");
+        StarFolder folder = StarFolder.createCustom("user_001", "新标题", TEST_TIME);
         when(starService.renameFolder(eq("f_123"), eq("user_001"), eq("新标题"))).thenReturn(folder);
 
         mockMvc.perform(put("/api/interactions/star/folders/f_123")
@@ -124,7 +133,7 @@ class InteractionStarControllerTest {
     @DisplayName("GET /api/interactions/star/items 分页获取明细成功")
     void shouldGetStarItemsSuccessfully() throws Exception {
         when(accessPolicy.requireUser()).thenReturn(sampleUser);
-        StarItem item = StarItem.create("f_123", "vid_999", "user_001");
+        StarItem item = StarItem.create("f_123", "vid_999", "user_001", TEST_TIME);
         when(starService.getStarItems(eq("f_123"), eq("user_001"), anyInt(), anyInt()))
                 .thenReturn(List.of(item));
 

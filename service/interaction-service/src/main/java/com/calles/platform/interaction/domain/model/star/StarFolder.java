@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.model.star;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -50,13 +51,14 @@ public class StarFolder {
      * 工厂方法：为用户创建默认收藏夹。
      *
      * @param userId 所属用户 ID
+     * @param now 应用层传入的 UTC 业务时间
      * @return 初始化的默认收藏夹实体
      */
-    public static StarFolder createDefault(String userId) {
+    public static StarFolder createDefault(String userId, LocalDateTime now) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("用户账号ID不能为空");
         }
-        LocalDateTime now = LocalDateTime.now();
+        Objects.requireNonNull(now, "业务时间不能为空");
         return StarFolder.builder()
                 .id(UUID.randomUUID().toString().replace("-", ""))
                 .userId(userId.trim())
@@ -74,9 +76,10 @@ public class StarFolder {
      *
      * @param userId 所属用户 ID
      * @param title 收藏夹名称
+     * @param now 应用层传入的 UTC 业务时间
      * @return 初始化的自定义收藏夹实体
      */
-    public static StarFolder createCustom(String userId, String title) {
+    public static StarFolder createCustom(String userId, String title, LocalDateTime now) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("用户账号ID不能为空");
         }
@@ -87,7 +90,7 @@ public class StarFolder {
         if (trimmedTitle.length() > 64) {
             throw new IllegalArgumentException("收藏夹标题长度不能超过64字符");
         }
-        LocalDateTime now = LocalDateTime.now();
+        Objects.requireNonNull(now, "业务时间不能为空");
         return StarFolder.builder()
                 .id(UUID.randomUUID().toString().replace("-", ""))
                 .userId(userId.trim())
@@ -104,8 +107,10 @@ public class StarFolder {
      * 修改收藏夹标题（默认收藏夹不可更名）。
      *
      * @param newTitle 新标题名称
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void rename(String newTitle) {
+    public void rename(String newTitle, LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (this.isDefault) {
             throw new IllegalStateException("默认收藏夹不可更名");
         }
@@ -117,19 +122,21 @@ public class StarFolder {
             throw new IllegalArgumentException("收藏夹标题长度不能超过64字符");
         }
         this.title = trimmedTitle;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = now;
     }
 
     /**
      * 逻辑删除收藏夹（默认收藏夹不可删除）。
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void delete() {
+    public void delete(LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (this.isDefault) {
             throw new IllegalStateException("默认收藏夹不可删除");
         }
         this.status = 0;
         this.deleted = true;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = now;
     }
 
     /**

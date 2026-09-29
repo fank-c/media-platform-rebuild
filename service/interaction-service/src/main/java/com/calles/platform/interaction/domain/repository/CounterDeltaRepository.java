@@ -25,9 +25,10 @@ public interface CounterDeltaRepository {
      * @param vid 视频业务编码
      * @param sourceId 播放事实唯一标识（约定格式 watch_session:{sessionId}）
      * @param delta 播放增量（必须严格大于 0）
+     * @param now 应用层传入的 UTC 业务时间
      */
-    default void incrementViewCount(String vid, String sourceId, long delta) {
-        append(CounterDelta.create(vid, CounterType.VIEW, delta, "WATCH_PLAY", sourceId));
+    default void incrementViewCount(String vid, String sourceId, long delta, LocalDateTime now) {
+        append(CounterDelta.create(vid, CounterType.VIEW, delta, "WATCH_PLAY", sourceId, now));
     }
 
     /**
@@ -36,9 +37,10 @@ public interface CounterDeltaRepository {
      * @param vid 视频业务编码
      * @param sourceId 点赞记录标识与状态版本
      * @param delta 点赞变动量 (+1 或 -1)
+     * @param now 应用层传入的 UTC 业务时间
      */
-    default void adjustLikeCount(String vid, String sourceId, long delta) {
-        append(CounterDelta.create(vid, CounterType.LIKE, delta, delta > 0 ? "LIKE_ACTIVE" : "LIKE_INACTIVE", sourceId));
+    default void adjustLikeCount(String vid, String sourceId, long delta, LocalDateTime now) {
+        append(CounterDelta.create(vid, CounterType.LIKE, delta, delta > 0 ? "LIKE_ACTIVE" : "LIKE_INACTIVE", sourceId, now));
     }
 
     /**
@@ -48,9 +50,10 @@ public interface CounterDeltaRepository {
      * @param sourceType 收藏事实类型（如 STAR_ACTIVE / STAR_INACTIVE）
      * @param sourceId 收藏明细标识或取消动作标识
      * @param delta 收藏变动量 (+1 或 -1)
+     * @param now 应用层传入的 UTC 业务时间
      */
-    default void adjustStarCount(String vid, String sourceType, String sourceId, long delta) {
-        append(CounterDelta.create(vid, CounterType.STAR, delta, sourceType, sourceId));
+    default void adjustStarCount(String vid, String sourceType, String sourceId, long delta, LocalDateTime now) {
+        append(CounterDelta.create(vid, CounterType.STAR, delta, sourceType, sourceId, now));
     }
 
     /**
@@ -59,9 +62,10 @@ public interface CounterDeltaRepository {
      * @param vid 视频业务编码
      * @param sourceId 分享请求幂等键或记录标识
      * @param delta 分享增量（必须严格大于 0）
+     * @param now 应用层传入的 UTC 业务时间
      */
-    default void incrementShareCount(String vid, String sourceId, long delta) {
-        append(CounterDelta.create(vid, CounterType.SHARE, delta, "SHARE", sourceId));
+    default void incrementShareCount(String vid, String sourceId, long delta, LocalDateTime now) {
+        append(CounterDelta.create(vid, CounterType.SHARE, delta, "SHARE", sourceId, now));
     }
 
     /**

@@ -5,7 +5,9 @@ import com.calles.platform.interaction.domain.model.star.StarItem;
 import com.calles.platform.interaction.domain.repository.StarItemRepository;
 import com.calles.platform.interaction.infrastructure.persistence.entity.StarItemPO;
 import com.calles.platform.interaction.infrastructure.persistence.mapper.StarItemMapper;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -101,11 +103,13 @@ public class StarItemRepositoryImpl implements StarItemRepository {
     }
 
     @Override
-    public void revive(String id) {
+    public void revive(String id, LocalDateTime now) {
+        Objects.requireNonNull(now, "收藏明细复活时间不能为空");
         if (id == null || id.isBlank()) {
             return;
         }
-        mapper.reviveById(id.trim());
+        // 将领域实体的时间快照原样写入，避免数据库时钟覆盖复活时间。
+        mapper.reviveById(id.trim(), now);
     }
 
     @Override

@@ -18,7 +18,10 @@ import com.calles.platform.interaction.domain.repository.WatchSessionRepository;
 import com.calles.platform.interaction.exception.WatchSessionActiveException;
 import com.calles.platform.interaction.exception.WatchSessionExpiredException;
 import com.calles.platform.interaction.exception.WatchSessionInvalidException;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
@@ -33,7 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>核心架构与职责：
  * <ul>
  *   <li><b>并发控制</b>：以 {@code SELECT ... FOR UPDATE} 锁定 {@code interaction_watch_progress} 行作为唯一串行化入口，
- *       锁后以统一 Clock 取 now；首次心跳并发插入由唯一键兜底退化为行锁；</li>
+ *       用例入口读取统一 Clock 的时间快照；首次心跳并发插入由唯一键兜底退化为行锁；</li>
  *   <li><b>起播计数</b>：新会话创建时，若视频已发布且已满冷却窗口，立即在本地事务写入 {@code WATCH_PLAY} 增量 (+1)
  *       并记录会话 {@code view_counted_at} 与进度 {@code last_view_claimed_at}；退出仍保留，不要求 5 秒或 30% 时长；</li>
  *   <li><b>合格观看事件</b>：后续心跳中会话有效时长达到 30% / 5 秒门槛时发出，不触碰播放量、不读冷却、不改冷却时间；</li>
@@ -55,6 +58,8 @@ public class WatchHeartbeatApplicationService {
     private final CounterDeltaRepository counterDeltaRepository;
     private final InteractionEventPublisher eventPublisher;
     private final InteractionWatchProperties properties;
+    /** 本次心跳统一时间来源。 */
+    private final Clock clock;
 
     /**
      * 处理一次观看心跳（区分起播与后续心跳）。
@@ -81,9 +86,10 @@ public class WatchHeartbeatApplicationService {
                 : new WatchHeartbeatCommand(null, 0L, 0, 0, null);
 
         // 步骤 1：以行级排他锁取得观看进度，作为同一用户同一视频心跳的串行化入口
-        // 获得行锁后统一取当前业务时间 now，确保事务内领域判定时间基准一致
-        WatchProgress progress = lockOrCreateProgress(cleanUserId, cleanVid, LocalDateTime.now());
-        LocalDateTime now = LocalDateTime.now();
+        // 入口仅取一次 UTC 时间并传给建档、计数和事件，确保事务内判定时间基准一致
+        Instant instant = clock.instant();
+        LocalDateTime now = LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+        WatchProgress progress = lockOrCreateProgress(cleanUserId, cleanVid, now);
 
         // 步骤 2：读取本地视频元数据快照，区分为内容准入 (isPublished) 与时长可用 (isUsable)
         VideoSnapshot snapshot = videoSnapshotRepository.findByVid(cleanVid).orElse(null);
@@ -156,7 +162,7 @@ public class WatchHeartbeatApplicationService {
                 progress.getLastViewClaimedAt(), now, properties.getRepeatWindow());
         if (contentUsable && cooldownElapsed) {
             // 在同一业务事务内写入播放量增量，并更新会话的 viewCountedAt 与进度的 lastViewClaimedAt
-            counterDeltaRepository.incrementViewCount(vid, "watch_session:" + newSession.getSessionId(), 1L);
+            counterDeltaRepository.incrementViewCount(vid, "watch_session:" + newSession.getSessionId(), 1L, now);
             newSession.markViewCounted(now);
             progress.markViewClaimed(now);
             progressRepository.markViewClaimed(progress.getId(), now);
@@ -304,7 +310,7 @@ public class WatchHeartbeatApplicationService {
         }
 
         String outboxEventId = eventPublisher.publishVideoAction(VideoActionPayload.watchViewQualified(
-                userId, vid, session.getSessionId(), session.getCreditedDuration(), session.getDurationSnapshot()));
+                userId, vid, session.getSessionId(), session.getCreditedDuration(), session.getDurationSnapshot()), now.toInstant(ZoneOffset.UTC));
         claimRepository.attachOutboxEventId(claim.getId(), outboxEventId);
         log.info("观看会话达成合格观看门槛并发出合格事件: userId={}, vid={}, sessionId={}, creditedDuration={}",
                 userId, vid, session.getSessionId(), session.getCreditedDuration());
@@ -341,7 +347,7 @@ public class WatchHeartbeatApplicationService {
         }
 
         String outboxEventId = eventPublisher.publishVideoAction(VideoActionPayload.watchCompleted(
-                userId, vid, session.getSessionId(), session.getCreditedDuration(), session.getDurationSnapshot()));
+                userId, vid, session.getSessionId(), session.getCreditedDuration(), session.getDurationSnapshot()), now.toInstant(ZoneOffset.UTC));
         claimRepository.attachOutboxEventId(claim.getId(), outboxEventId);
         log.info("观看会话达成完播并记为一次完播: userId={}, vid={}, sessionId={}, position={}, creditedDuration={}",
                 userId, vid, session.getSessionId(), position, session.getCreditedDuration());

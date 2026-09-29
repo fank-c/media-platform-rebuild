@@ -1,5 +1,10 @@
 package com.calles.platform.interaction.application.video;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.calles.platform.interaction.application.video.VideoMetadataApplicationService.SnapshotApplyResult;
@@ -31,6 +36,10 @@ import org.junit.jupiter.api.Test;
  */
 @DisplayName("跨模块视频元数据事件契约集成测试")
 class VideoMetadataCrossModuleContractTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-27T12:00:00Z");
+    private static final Clock TEST_CLOCK = Clock.fixed(TEST_INSTANT, ZoneOffset.UTC);
+    private static final LocalDateTime TEST_TIME = LocalDateTime.ofInstant(TEST_INSTANT, ZoneOffset.UTC);
+
 
     private InMemorySnapshotRepository snapshotRepository;
     private VideoMetadataApplicationService applicationService;
@@ -40,7 +49,7 @@ class VideoMetadataCrossModuleContractTest {
     @BeforeEach
     void setUp() {
         snapshotRepository = new InMemorySnapshotRepository();
-        applicationService = new VideoMetadataApplicationService(snapshotRepository);
+        applicationService = new VideoMetadataApplicationService(snapshotRepository, TEST_CLOCK);
         objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
         consumer = new VideoMetadataConsumer(applicationService, objectMapper);

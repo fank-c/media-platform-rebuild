@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.model.counter;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -46,9 +47,11 @@ public class VideoCounter {
      * 工厂方法：初始化视频全新的互动统计计数器。
      *
      * @param vid 视频公开短码
+     * @param now 应用层传入的 UTC 业务时间
      * @return 初始计数值均为 0 的计数器实例
      */
-    public static VideoCounter createDefault(String vid) {
+    public static VideoCounter createDefault(String vid, LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (vid == null || vid.isBlank()) {
             throw new IllegalArgumentException("视频业务短码不能为空");
         }
@@ -59,8 +62,8 @@ public class VideoCounter {
                 .starCount(0L)
                 .shareCount(0L)
                 .commentCount(0L)
-                .createdAt(LocalDateTime.now())
-                .updatedAt(LocalDateTime.now())
+                .createdAt(now)
+                .updatedAt(now)
                 .build();
     }
 
@@ -68,11 +71,13 @@ public class VideoCounter {
      * 原子增加播放量。
      *
      * @param delta 播放量增量 (通常为 1)
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void incrementViewCount(long delta) {
+    public void incrementViewCount(long delta, LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (delta > 0) {
             this.viewCount += delta;
-            this.updatedAt = LocalDateTime.now();
+            this.updatedAt = now;
         }
     }
 
@@ -80,38 +85,43 @@ public class VideoCounter {
      * 调整点赞计数。
      *
      * @param delta 点赞变动量 (+1 或 -1)
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void adjustLikeCount(long delta) {
+    public void adjustLikeCount(long delta, LocalDateTime now) {
         this.likeCount = Math.max(0L, this.likeCount + delta);
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = Objects.requireNonNull(now, "业务时间不能为空");
     }
 
     /**
      * 调整收藏计数。
      *
      * @param delta 收藏变动量 (+1 或 -1)
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void adjustStarCount(long delta) {
+    public void adjustStarCount(long delta, LocalDateTime now) {
         this.starCount = Math.max(0L, this.starCount + delta);
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = Objects.requireNonNull(now, "业务时间不能为空");
     }
 
     /**
      * 原子增加分享统计计数值。
      *
      * @param delta 分享增量值（必须大于 0，非正数将被忽略）
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void incrementShareCount(long delta) {
+    public void incrementShareCount(long delta, LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (delta > 0) {
             this.shareCount += delta;
-            this.updatedAt = LocalDateTime.now();
+            this.updatedAt = now;
         }
     }
 
     /**
      * 原子增加单次分享统计计数值（便捷重载，增量固定为 1）。
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void incrementShareCount() {
-        incrementShareCount(1L);
+    public void incrementShareCount(LocalDateTime now) {
+        incrementShareCount(1L, now);
     }
 }

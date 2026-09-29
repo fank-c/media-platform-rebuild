@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.model.star;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -44,9 +45,11 @@ public class StarItem {
      * @param folderId 收藏夹 ID
      * @param vid 视频业务公开短码
      * @param userId 用户账号 ID
+     * @param now 应用层传入的 UTC 业务时间
      * @return 收藏明细项
      */
-    public static StarItem create(String folderId, String vid, String userId) {
+    public static StarItem create(String folderId, String vid, String userId, LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (folderId == null || folderId.isBlank()) {
             throw new IllegalArgumentException("收藏夹ID不能为空");
         }
@@ -63,7 +66,7 @@ public class StarItem {
                 .vid(vid.trim())
                 .userId(userId.trim())
                 .version(1L)
-                .createdAt(LocalDateTime.now())
+                .createdAt(now)
                 .deleted(false)
                 .build();
     }
@@ -77,10 +80,12 @@ public class StarItem {
 
     /**
      * 自愈复活已逻辑删除的收藏条目。
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void revive() {
+    public void revive(LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         this.deleted = false;
         this.version++;
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = now;
     }
 }

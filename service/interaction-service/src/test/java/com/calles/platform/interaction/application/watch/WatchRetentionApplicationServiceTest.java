@@ -47,7 +47,7 @@ class WatchRetentionApplicationServiceTest {
         properties.setRetention(Duration.ofDays(30));
         properties.setCleanupBatchSize(200);
         service = new WatchRetentionApplicationService(
-                progressRepository, sessionRepository, claimRepository, properties);
+                progressRepository, sessionRepository, claimRepository, properties, java.time.Clock.fixed(java.time.Instant.parse("2026-09-27T12:00:00Z"), java.time.ZoneOffset.UTC));
     }
 
     @Test
@@ -66,7 +66,7 @@ class WatchRetentionApplicationServiceTest {
         verify(claimRepository).deleteBefore(thresholdCaptor.capture(), eq(200));
         verify(progressRepository).deleteHiddenBefore(thresholdCaptor.capture(), eq(200));
 
-        LocalDateTime expected = LocalDateTime.now().minusDays(30);
+        LocalDateTime expected = LocalDateTime.ofInstant(java.time.Instant.parse("2026-09-27T12:00:00Z"), java.time.ZoneOffset.UTC).minusDays(30);
         for (LocalDateTime actual : thresholdCaptor.getAllValues()) {
             assertThat(Duration.between(expected, actual).abs()).isLessThan(Duration.ofMinutes(1));
         }
@@ -109,7 +109,7 @@ class WatchRetentionApplicationServiceTest {
 
         ArgumentCaptor<LocalDateTime> thresholdCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(progressRepository).detachStaleActiveSessions(thresholdCaptor.capture(), eq(200));
-        LocalDateTime expected = LocalDateTime.now().minusDays(30);
+        LocalDateTime expected = LocalDateTime.ofInstant(java.time.Instant.parse("2026-09-27T12:00:00Z"), java.time.ZoneOffset.UTC).minusDays(30);
         assertThat(Duration.between(expected, thresholdCaptor.getValue()).abs())
                 .isLessThan(Duration.ofMinutes(1));
     }

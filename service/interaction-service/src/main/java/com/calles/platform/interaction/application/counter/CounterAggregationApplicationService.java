@@ -4,7 +4,9 @@ import com.calles.platform.interaction.domain.model.counter.CounterDelta;
 import com.calles.platform.interaction.domain.model.counter.CounterType;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
+import java.time.Clock;
 import java.time.LocalDateTime;
+import com.calles.platform.interaction.application.InteractionTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +28,8 @@ public class CounterAggregationApplicationService {
 
     private final CounterDeltaRepository deltaRepository;
     private final VideoCounterRepository counterRepository;
+    /** 汇总和清理共用的 UTC 时钟。 */
+    private final Clock clock;
 
     /**
      * 批量汇总一批计数增量。
@@ -35,6 +39,8 @@ public class CounterAggregationApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public int aggregate(int batchSize) {
+        // 批内只使用一个 UTC 截止时刻，防止逐条处理时边界漂移。
+        LocalDateTime now = InteractionTime.utcNow(clock);
         // 步骤 1: 悲观锁顺序认领一批待处理增量（行级锁防多实例重复领取）
         List<CounterDelta> batch = deltaRepository.lockPendingForUpdate(batchSize);
         if (batch == null || batch.isEmpty()) {
@@ -50,13 +56,13 @@ public class CounterAggregationApplicationService {
         // 步骤 3: 逐一原子更新公开计数快照
         for (Map.Entry<Key, Long> entry : totals.entrySet()) {
             if (entry.getValue() != 0) {
-                counterRepository.applyDelta(entry.getKey().vid(), entry.getKey().type(), entry.getValue());
+                counterRepository.applyDelta(entry.getKey().vid(), entry.getKey().type(), entry.getValue(), now);
             }
         }
 
         // 步骤 4: 同事务标记增量记录为已处理
         List<Long> ids = batch.stream().map(CounterDelta::getId).toList();
-        deltaRepository.markProcessed(ids, LocalDateTime.now());
+        deltaRepository.markProcessed(ids, now);
 
         log.debug("成功批量汇总 [{}] 条计数增量，合并更新 [{}] 个快照维度", batch.size(), totals.size());
         return batch.size();
@@ -77,7 +83,7 @@ public class CounterAggregationApplicationService {
         }
 
         // 步骤 2: 计算超期时间阈值并委托仓储执行清理
-        LocalDateTime threshold = LocalDateTime.now().minusDays(retentionDays);
+        LocalDateTime threshold = InteractionTime.utcNow(clock).minusDays(retentionDays);
         int deleted = deltaRepository.deleteProcessedBefore(threshold, batchSize);
         if (deleted > 0) {
             log.info("成功清理超过 [{}] 天的已汇总历史计数增量 [{}] 条", retentionDays, deleted);

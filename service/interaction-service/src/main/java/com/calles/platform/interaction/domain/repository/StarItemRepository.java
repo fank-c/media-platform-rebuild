@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.repository;
 
 import com.calles.platform.interaction.domain.model.star.StarItem;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -74,8 +75,9 @@ public interface StarItemRepository {
      * 自愈复活已逻辑删除的收藏明细条目。
      *
      * @param id 条目主键 UUID
+     * @param now 应用层提供的 UTC 业务时间，用于刷新创建时间
      */
-    void revive(String id);
+    void revive(String id, LocalDateTime now);
 
     /**
      * 从收藏夹移除单条视频明细。

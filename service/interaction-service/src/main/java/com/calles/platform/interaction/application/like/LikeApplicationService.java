@@ -5,6 +5,10 @@ import com.calles.platform.interaction.domain.model.event.VideoActionPayload;
 import com.calles.platform.interaction.domain.model.like.VideoLike;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoLikeRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +29,8 @@ public class LikeApplicationService {
     private final VideoLikeRepository likeRepository;
     private final CounterDeltaRepository counterDeltaRepository;
     private final InteractionEventPublisher eventPublisher;
+    /** 用例统一 UTC 时间来源。 */
+    private final Clock clock;
 
     /**
      * 点赞视频（严格幂等）。
@@ -35,25 +41,28 @@ public class LikeApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public boolean likeVideo(String vid, String userId) {
+        // 本次状态、增量与事件共用一个时间快照。
+        Instant instant = clock.instant();
+        LocalDateTime now = LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
         // 步骤 1: 检索既有历史点赞记录
         Optional<VideoLike> opt = likeRepository.findByUserAndVid(userId, vid);
 
         if (opt.isEmpty()) {
             // 步骤 2: 首次点赞，持久化新记录并递增计数增量，同事务写 Outbox
-            VideoLike newLike = VideoLike.create(vid, userId);
+            VideoLike newLike = VideoLike.create(vid, userId, now);
             likeRepository.save(newLike);
-            counterDeltaRepository.adjustLikeCount(vid, "like:" + newLike.getId() + ":v" + newLike.getVersion(), 1L);
-            eventPublisher.publishVideoAction(VideoActionPayload.like(userId, vid));
+            counterDeltaRepository.adjustLikeCount(vid, "like:" + newLike.getId() + ":v" + newLike.getVersion(), 1L, now);
+            eventPublisher.publishVideoAction(VideoActionPayload.like(userId, vid), instant);
             log.info("用户 [{}] 首次点赞视频 [{}]，写入 Outbox 与计数增量 (version={})", userId, vid, newLike.getVersion());
             return true;
         }
 
         VideoLike existing = opt.get();
-        if (existing.reactivate()) {
+        if (existing.reactivate(now)) {
             // 步骤 3: 从已取消状态重新激活点赞，递增计数增量，同事务写 Outbox
             likeRepository.update(existing);
-            counterDeltaRepository.adjustLikeCount(vid, "like:" + existing.getId() + ":v" + existing.getVersion(), 1L);
-            eventPublisher.publishVideoAction(VideoActionPayload.like(userId, vid));
+            counterDeltaRepository.adjustLikeCount(vid, "like:" + existing.getId() + ":v" + existing.getVersion(), 1L, now);
+            eventPublisher.publishVideoAction(VideoActionPayload.like(userId, vid), instant);
             log.info("用户 [{}] 重新点赞视频 [{}]，写入 Outbox 与计数增量 (version={})", userId, vid, existing.getVersion());
         } else {
             // 步骤 4: 重复点赞幂等忽略，不写 Outbox 与增量
@@ -71,16 +80,18 @@ public class LikeApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public boolean unlikeVideo(String vid, String userId) {
+        Instant instant = clock.instant();
+        LocalDateTime now = LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
         // 步骤 1: 检索既有点赞记录
         Optional<VideoLike> opt = likeRepository.findByUserAndVid(userId, vid);
 
         if (opt.isPresent()) {
             VideoLike existing = opt.get();
-            if (existing.cancel()) {
+            if (existing.cancel(now)) {
                 // 步骤 2: 状态由有效反转为取消，扣减计数增量，同事务写 Outbox
                 likeRepository.update(existing);
-                counterDeltaRepository.adjustLikeCount(vid, "like:" + existing.getId() + ":v" + existing.getVersion(), -1L);
-                eventPublisher.publishVideoAction(VideoActionPayload.unlike(userId, vid));
+                counterDeltaRepository.adjustLikeCount(vid, "like:" + existing.getId() + ":v" + existing.getVersion(), -1L, now);
+                eventPublisher.publishVideoAction(VideoActionPayload.unlike(userId, vid), instant);
                 log.info("用户 [{}] 取消点赞视频 [{}]，写入 Outbox 与计数增量 (version={})", userId, vid, existing.getVersion());
             }
         }

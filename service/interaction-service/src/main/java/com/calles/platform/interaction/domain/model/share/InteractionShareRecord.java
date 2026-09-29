@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.model.share;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.Getter;
 
@@ -49,10 +50,12 @@ public class InteractionShareRecord {
      * @param idempotencyKey 幂等键
      * @param userId 用户 ID
      * @param vid 视频短码
+     * @param now 应用层传入的 UTC 业务时间
      * @return 新建实体
      */
-    public static InteractionShareRecord create(String idempotencyKey, String userId, String vid) {
+    public static InteractionShareRecord create(String idempotencyKey, String userId, String vid, Instant now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         String id = UUID.randomUUID().toString().replace("-", "");
-        return new InteractionShareRecord(id, idempotencyKey, userId, vid, Instant.now(), false);
+        return new InteractionShareRecord(id, idempotencyKey, userId, vid, now, false);
     }
 }

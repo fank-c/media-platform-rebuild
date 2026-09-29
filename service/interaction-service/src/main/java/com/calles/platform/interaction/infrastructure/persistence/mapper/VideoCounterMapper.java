@@ -2,6 +2,7 @@ package com.calles.platform.interaction.infrastructure.persistence.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.calles.platform.interaction.infrastructure.persistence.entity.VideoCounterPO;
+import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
@@ -19,62 +20,66 @@ public interface VideoCounterMapper extends BaseMapper<VideoCounterPO> {
      *
      * @param vid 视频公开短码
      * @param delta 播放量变动量
+     * @param now 本批次统一的 UTC 汇总时间
      * @return 数据库影响行数
      */
     @Update("""
             INSERT INTO interaction_video_counter (vid, view_count, created_at, updated_at)
-            VALUES (#{vid}, GREATEST(0, #{delta}), CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
+            VALUES (#{vid}, GREATEST(0, #{delta}), #{now}, #{now})
             ON DUPLICATE KEY UPDATE
                 view_count = GREATEST(0, view_count + #{delta}),
-                updated_at = CURRENT_TIMESTAMP(3)
+                updated_at = #{now}
             """)
-    int applyViewDelta(@Param("vid") String vid, @Param("delta") long delta);
+    int applyViewDelta(@Param("vid") String vid, @Param("delta") long delta, @Param("now") LocalDateTime now);
 
     /**
      * 原子累加点赞数快照（非负防护）。
      *
      * @param vid 视频公开短码
      * @param delta 点赞变动量
+     * @param now 本批次统一的 UTC 汇总时间
      * @return 数据库影响行数
      */
     @Update("""
             INSERT INTO interaction_video_counter (vid, like_count, created_at, updated_at)
-            VALUES (#{vid}, GREATEST(0, #{delta}), CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
+            VALUES (#{vid}, GREATEST(0, #{delta}), #{now}, #{now})
             ON DUPLICATE KEY UPDATE
                 like_count = GREATEST(0, like_count + #{delta}),
-                updated_at = CURRENT_TIMESTAMP(3)
+                updated_at = #{now}
             """)
-    int applyLikeDelta(@Param("vid") String vid, @Param("delta") long delta);
+    int applyLikeDelta(@Param("vid") String vid, @Param("delta") long delta, @Param("now") LocalDateTime now);
 
     /**
      * 原子累加收藏数快照（非负防护）。
      *
      * @param vid 视频公开短码
      * @param delta 收藏变动量
+     * @param now 本批次统一的 UTC 汇总时间
      * @return 数据库影响行数
      */
     @Update("""
             INSERT INTO interaction_video_counter (vid, star_count, created_at, updated_at)
-            VALUES (#{vid}, GREATEST(0, #{delta}), CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
+            VALUES (#{vid}, GREATEST(0, #{delta}), #{now}, #{now})
             ON DUPLICATE KEY UPDATE
                 star_count = GREATEST(0, star_count + #{delta}),
-                updated_at = CURRENT_TIMESTAMP(3)
+                updated_at = #{now}
             """)
-    int applyStarDelta(@Param("vid") String vid, @Param("delta") long delta);
+    int applyStarDelta(@Param("vid") String vid, @Param("delta") long delta, @Param("now") LocalDateTime now);
 
     /**
      * 原子累加分享数快照（非负防护）。
      *
      * @param vid 视频公开短码
      * @param delta 分享变动量
+     * @param now 本批次统一的 UTC 汇总时间
      * @return 数据库影响行数
      */
     @Update("""
             INSERT INTO interaction_video_counter (vid, share_count, created_at, updated_at)
-            VALUES (#{vid}, GREATEST(0, #{delta}), CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
+            VALUES (#{vid}, GREATEST(0, #{delta}), #{now}, #{now})
             ON DUPLICATE KEY UPDATE
                 share_count = GREATEST(0, share_count + #{delta}),
-                updated_at = CURRENT_TIMESTAMP(3)
+                updated_at = #{now}
             """)
-    int applyShareDelta(@Param("vid") String vid, @Param("delta") long delta);
+    int applyShareDelta(@Param("vid") String vid, @Param("delta") long delta, @Param("now") LocalDateTime now);
 }

@@ -2,6 +2,7 @@ package com.calles.platform.interaction.infrastructure.persistence.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.calles.platform.interaction.infrastructure.persistence.entity.StarItemPO;
+import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -27,10 +28,11 @@ public interface StarItemMapper extends BaseMapper<StarItemPO> {
      * 重新激活自愈已伪删除的收藏明细条目，置位 deleted = 0、递增版本号并刷新创建时间。
      *
      * @param id 条目主键 UUID
+     * @param now 应用层提供的 UTC 业务时间
      * @return 影响行数
      */
-    @Update("UPDATE interaction_star_item SET deleted = 0, version = version + 1, created_at = CURRENT_TIMESTAMP(3) WHERE id = #{id}")
-    int reviveById(@Param("id") String id);
+    @Update("UPDATE interaction_star_item SET deleted = 0, version = version + 1, created_at = #{now} WHERE id = #{id}")
+    int reviveById(@Param("id") String id, @Param("now") LocalDateTime now);
 
     /**
      * 逻辑删除指定收藏夹下的所有明细条目。

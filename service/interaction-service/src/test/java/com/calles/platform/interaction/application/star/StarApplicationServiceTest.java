@@ -1,5 +1,10 @@
 package com.calles.platform.interaction.application.star;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -22,6 +27,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class StarApplicationServiceTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-27T12:00:00Z");
+    private static final Clock TEST_CLOCK = Clock.fixed(TEST_INSTANT, ZoneOffset.UTC);
+    private static final LocalDateTime TEST_TIME = LocalDateTime.ofInstant(TEST_INSTANT, ZoneOffset.UTC);
+
 
     @Mock
     private StarFolderRepository folderRepository;
@@ -39,7 +48,7 @@ class StarApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new StarApplicationService(folderRepository, itemRepository, counterDeltaRepository, eventPublisher);
+        service = new StarApplicationService(folderRepository, itemRepository, counterDeltaRepository, eventPublisher, TEST_CLOCK);
     }
 
     @Test
@@ -54,15 +63,15 @@ class StarApplicationServiceTest {
         assertThat(itemId).isNotBlank();
         verify(folderRepository).save(any(StarFolder.class));
         verify(itemRepository).save(any(StarItem.class));
-        verify(counterDeltaRepository).adjustStarCount(eq("vid_100"), eq("STAR_ACTIVE"), org.mockito.ArgumentMatchers.argThat(s -> s.startsWith("star_item:") && s.endsWith(":v1")), eq(1L));
-        verify(eventPublisher).publishVideoAction(any());
+        verify(counterDeltaRepository).adjustStarCount(eq("vid_100"), eq("STAR_ACTIVE"), org.mockito.ArgumentMatchers.argThat(s -> s.startsWith("star_item:") && s.endsWith(":v1")), eq(1L), eq(TEST_TIME));
+        verify(eventPublisher).publishVideoAction(any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
     }
 
     @Test
     @DisplayName("同一收藏夹重复收藏幂等且不重复自增计数与发布事件")
     void shouldBeIdempotentWhenAlreadyStarredInFolder() {
-        StarFolder folder = StarFolder.createDefault("user_01");
-        StarItem existing = StarItem.create(folder.getId(), "vid_100", "user_01");
+        StarFolder folder = StarFolder.createDefault("user_01", TEST_TIME);
+        StarItem existing = StarItem.create(folder.getId(), "vid_100", "user_01", TEST_TIME);
 
         when(folderRepository.findDefaultByUserId("user_01")).thenReturn(Optional.of(folder));
         when(itemRepository.findPhysicalByFolderAndVid(folder.getId(), "vid_100")).thenReturn(Optional.of(existing));
@@ -71,15 +80,15 @@ class StarApplicationServiceTest {
 
         assertThat(itemId).isEqualTo(existing.getId());
         verify(itemRepository, never()).save(any());
-        verify(counterDeltaRepository, never()).adjustStarCount(any(), any(), any(), eq(1L));
-        verify(eventPublisher, never()).publishVideoAction(any());
+        verify(counterDeltaRepository, never()).adjustStarCount(any(), any(), any(), eq(1L), eq(TEST_TIME));
+        verify(eventPublisher, never()).publishVideoAction(any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
     }
 
     @Test
     @DisplayName("此前伪删除的收藏条目重新收藏时自愈复活并正常触发计数与事件")
     void shouldReviveSoftDeletedStarItemWhenReStarred() {
-        StarFolder folder = StarFolder.createDefault("user_01");
-        StarItem deletedItem = StarItem.create(folder.getId(), "vid_100", "user_01");
+        StarFolder folder = StarFolder.createDefault("user_01", TEST_TIME);
+        StarItem deletedItem = StarItem.create(folder.getId(), "vid_100", "user_01", TEST_TIME);
         deletedItem.markDeleted(); // 标记伪删除
         assertThat(deletedItem.isDeleted()).isTrue();
 
@@ -90,38 +99,39 @@ class StarApplicationServiceTest {
         String itemId = service.starVideo("vid_100", "user_01", null);
 
         assertThat(itemId).isEqualTo(deletedItem.getId());
-        verify(itemRepository).revive(deletedItem.getId()); // 调用自愈复活
+        assertThat(deletedItem.getCreatedAt()).isEqualTo(TEST_TIME);
+        verify(itemRepository).revive(deletedItem.getId(), TEST_TIME); // 领域与持久化复活时间一致
         verify(itemRepository, never()).save(any()); // 避免重复 INSERT 触发唯一索引冲突
-        verify(counterDeltaRepository).adjustStarCount(eq("vid_100"), eq("STAR_ACTIVE"), eq("star_item:" + deletedItem.getId() + ":v2"), eq(1L));
-        verify(eventPublisher).publishVideoAction(any());
+        verify(counterDeltaRepository).adjustStarCount(eq("vid_100"), eq("STAR_ACTIVE"), eq("star_item:" + deletedItem.getId() + ":v2"), eq(1L), eq(TEST_TIME));
+        verify(eventPublisher).publishVideoAction(any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
     }
 
     @Test
     @DisplayName("取消收藏且无其他收藏夹包含时扣减计数并发布取消收藏事件")
     void shouldUnstarVideoAndDecrementCount() {
-        StarItem item = StarItem.create("f1", "vid_100", "user_01");
+        StarItem item = StarItem.create("f1", "vid_100", "user_01", TEST_TIME);
         when(itemRepository.findByUserAndVid("user_01", "vid_100")).thenReturn(java.util.List.of(item));
         when(itemRepository.deleteByUserAndVid("user_01", "vid_100")).thenReturn(1);
         when(itemRepository.isStarredByUser("user_01", "vid_100")).thenReturn(false);
 
         service.unstarVideo("vid_100", "user_01", null);
 
-        verify(counterDeltaRepository).adjustStarCount("vid_100", "STAR_INACTIVE", "star_unstar:" + item.getId() + ":v1", -1L);
-        verify(eventPublisher).publishVideoAction(any());
+        verify(counterDeltaRepository).adjustStarCount("vid_100", "STAR_INACTIVE", "star_unstar:" + item.getId() + ":v1", -1L, TEST_TIME);
+        verify(eventPublisher).publishVideoAction(any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
     }
 
     @Test
     @DisplayName("从某一收藏夹移出但仍有其他收藏夹收录时，不扣减计数且不发布取消收藏事件")
     void shouldNotDecrementCountWhenStillStarredInOtherFolders() {
-        StarFolder folder = StarFolder.createCustom("user_01", "学习");
+        StarFolder folder = StarFolder.createCustom("user_01", "学习", TEST_TIME);
         when(folderRepository.findById(folder.getId())).thenReturn(Optional.of(folder));
         when(itemRepository.deleteByFolderAndVidAndUser(folder.getId(), "vid_100", "user_01")).thenReturn(1);
         when(itemRepository.isStarredByUser("user_01", "vid_100")).thenReturn(true);
 
         service.unstarVideo("vid_100", "user_01", folder.getId());
 
-        verify(counterDeltaRepository, never()).adjustStarCount(any(), any(), any(), eq(-1L));
-        verify(eventPublisher, never()).publishVideoAction(any());
+        verify(counterDeltaRepository, never()).adjustStarCount(any(), any(), any(), eq(-1L), eq(TEST_TIME));
+        verify(eventPublisher, never()).publishVideoAction(any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
     }
 
     @Test
@@ -136,20 +146,20 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("尝试收藏到他人收藏夹时抛出异常阻断越权写入")
     void shouldThrowWhenStarringToOtherUserFolder() {
-        StarFolder otherUserFolder = StarFolder.createCustom("user_other", "他人私密收藏");
+        StarFolder otherUserFolder = StarFolder.createCustom("user_other", "他人私密收藏", TEST_TIME);
         when(folderRepository.findById(otherUserFolder.getId())).thenReturn(Optional.of(otherUserFolder));
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () ->
                 service.starVideo("vid_100", "user_01", otherUserFolder.getId()));
 
         verify(itemRepository, never()).save(any());
-        verify(counterDeltaRepository, never()).adjustStarCount(any(), any(), any(), any(Long.class));
+        verify(counterDeltaRepository, never()).adjustStarCount(any(), any(), any(), any(Long.class), eq(TEST_TIME));
     }
 
     @Test
     @DisplayName("尝试读取他人收藏夹明细时抛出异常阻断越权读取")
     void shouldThrowWhenGettingStarItemsFromOtherUserFolder() {
-        StarFolder otherUserFolder = StarFolder.createCustom("user_other", "他人私密收藏");
+        StarFolder otherUserFolder = StarFolder.createCustom("user_other", "他人私密收藏", TEST_TIME);
         when(folderRepository.findById(otherUserFolder.getId())).thenReturn(Optional.of(otherUserFolder));
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () ->
@@ -197,7 +207,7 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("initDefaultFolder 在默认收藏夹已存在时幂等返回已有实体且不重复写库")
     void shouldReturnExistingDefaultFolderInInitDefaultFolder() {
-        StarFolder existing = StarFolder.createDefault("user_01");
+        StarFolder existing = StarFolder.createDefault("user_01", TEST_TIME);
         when(folderRepository.findDefaultByUserId("user_01")).thenReturn(Optional.of(existing));
 
         StarFolder folder = service.initDefaultFolder("user_01");
@@ -242,7 +252,7 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("重命名自定义收藏夹成功")
     void shouldRenameFolderSuccessfully() {
-        StarFolder folder = StarFolder.createCustom("user_01", "旧名称");
+        StarFolder folder = StarFolder.createCustom("user_01", "旧名称", TEST_TIME);
         when(folderRepository.findById(folder.getId())).thenReturn(Optional.of(folder));
         when(folderRepository.existsByUserIdAndTitleExcludingId("user_01", "新名称", folder.getId())).thenReturn(false);
 
@@ -255,7 +265,7 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("重命名新旧标题相同时幂等返回且不调用仓储更新")
     void shouldBeIdempotentWhenRenamingWithSameTitle() {
-        StarFolder folder = StarFolder.createCustom("user_01", "同名");
+        StarFolder folder = StarFolder.createCustom("user_01", "同名", TEST_TIME);
         when(folderRepository.findById(folder.getId())).thenReturn(Optional.of(folder));
 
         StarFolder renamed = service.renameFolder(folder.getId(), "user_01", "同名");
@@ -267,7 +277,7 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("尝试重命名默认收藏夹抛出异常阻断")
     void shouldThrowWhenRenamingDefaultFolder() {
-        StarFolder defaultFolder = StarFolder.createDefault("user_01");
+        StarFolder defaultFolder = StarFolder.createDefault("user_01", TEST_TIME);
         when(folderRepository.findById(defaultFolder.getId())).thenReturn(Optional.of(defaultFolder));
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () ->
@@ -279,7 +289,7 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("重命名新标题与其他收藏夹冲突时抛出异常阻断")
     void shouldThrowWhenRenamingWithConflictingTitle() {
-        StarFolder folder = StarFolder.createCustom("user_01", "旧名称");
+        StarFolder folder = StarFolder.createCustom("user_01", "旧名称", TEST_TIME);
         when(folderRepository.findById(folder.getId())).thenReturn(Optional.of(folder));
         when(folderRepository.existsByUserIdAndTitleExcludingId("user_01", "已被占用的名称", folder.getId())).thenReturn(true);
 
@@ -292,7 +302,7 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("删除自定义收藏夹时级联软删除明细，对彻底失去收藏的视频扣减计数并写 Outbox")
     void shouldDeleteFolderAndCascadeItemsWithCounterDecrement() {
-        StarFolder folder = StarFolder.createCustom("user_01", "待删夹");
+        StarFolder folder = StarFolder.createCustom("user_01", "待删夹", TEST_TIME);
         when(folderRepository.findById(folder.getId())).thenReturn(Optional.of(folder));
         when(itemRepository.findVidsByFolderId(folder.getId())).thenReturn(java.util.List.of("vid_1", "vid_2"));
         // vid_1 在其它收藏夹中已无收录，vid_2 仍被收录在默认收藏夹
@@ -302,25 +312,26 @@ class StarApplicationServiceTest {
         service.deleteFolder(folder.getId(), "user_01");
 
         // 验证收藏夹本身与明细均被软删除
-        verify(folderRepository).deleteById(folder.getId());
+        assertThat(folder.getUpdatedAt()).isEqualTo(TEST_TIME);
+        verify(folderRepository).deleteById(folder.getId(), TEST_TIME);
         verify(itemRepository).deleteByFolderId(folder.getId());
 
         // vid_1 扣减计数并写 Outbox；vid_2 不触发
-        verify(counterDeltaRepository).adjustStarCount("vid_1", "STAR_INACTIVE", "star_folder_del:" + folder.getId() + ":vid_1", -1L);
-        verify(eventPublisher).publishVideoAction(any());
-        verify(counterDeltaRepository, never()).adjustStarCount(eq("vid_2"), any(), any(), eq(-1L));
+        verify(counterDeltaRepository).adjustStarCount("vid_1", "STAR_INACTIVE", "star_folder_del:" + folder.getId() + ":vid_1", -1L, TEST_TIME);
+        verify(eventPublisher).publishVideoAction(any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
+        verify(counterDeltaRepository, never()).adjustStarCount(eq("vid_2"), any(), any(), eq(-1L), eq(TEST_TIME));
     }
 
     @Test
     @DisplayName("尝试删除默认收藏夹抛出异常阻断")
     void shouldThrowWhenDeletingDefaultFolder() {
-        StarFolder defaultFolder = StarFolder.createDefault("user_01");
+        StarFolder defaultFolder = StarFolder.createDefault("user_01", TEST_TIME);
         when(folderRepository.findById(defaultFolder.getId())).thenReturn(Optional.of(defaultFolder));
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () ->
                 service.deleteFolder(defaultFolder.getId(), "user_01"));
 
-        verify(folderRepository, never()).deleteById(any());
+        verify(folderRepository, never()).deleteById(any(), any());
         verify(itemRepository, never()).deleteByFolderId(any());
     }
 
@@ -341,7 +352,7 @@ class StarApplicationServiceTest {
                 service.deleteFolder("", "user_01"));
 
         verify(folderRepository, never()).save(any());
-        verify(folderRepository, never()).deleteById(any());
+        verify(folderRepository, never()).deleteById(any(), any());
     }
 
     @Test
@@ -358,7 +369,7 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("修改收藏夹标题遭遇数据库唯一键冲突并发异常时转换为友好业务提示")
     void shouldConvertDuplicateKeyExceptionOnRenameFolder() {
-        StarFolder folder = StarFolder.createCustom("user_01", "原名称");
+        StarFolder folder = StarFolder.createCustom("user_01", "原名称", TEST_TIME);
         when(folderRepository.findById(folder.getId())).thenReturn(Optional.of(folder));
         when(folderRepository.existsByUserIdAndTitleExcludingId("user_01", "新名称", folder.getId())).thenReturn(false);
         org.mockito.Mockito.doThrow(new org.springframework.dao.DuplicateKeyException("Duplicate entry"))
@@ -371,7 +382,7 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("并发初始化默认收藏夹触发唯一键冲突时：采用当前读(FOR UPDATE)穿透MVCC并幂等读取胜出记录")
     void shouldFallbackWhenDuplicateKeyOccursInInitDefaultFolder() {
-        StarFolder existing = StarFolder.createDefault("user_01");
+        StarFolder existing = StarFolder.createDefault("user_01", TEST_TIME);
         when(folderRepository.findDefaultByUserId("user_01")).thenReturn(Optional.empty());
         when(folderRepository.findDefaultByUserIdForUpdate("user_01")).thenReturn(Optional.of(existing));
         org.mockito.Mockito.doThrow(new org.springframework.dao.DuplicateKeyException("Duplicate entry"))
@@ -401,20 +412,20 @@ class StarApplicationServiceTest {
     void shouldNotAdjustStarCountWhenTransactionRollsBackDueToOutboxFailureInDeleteFolder() {
         org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
         try {
-            StarFolder folder = StarFolder.createCustom("user_01", "待删夹");
+            StarFolder folder = StarFolder.createCustom("user_01", "待删夹", TEST_TIME);
             when(folderRepository.findById(folder.getId())).thenReturn(Optional.of(folder));
             when(itemRepository.findVidsByFolderId(folder.getId())).thenReturn(java.util.List.of("vid_1"));
             when(itemRepository.isStarredByUser("user_01", "vid_1")).thenReturn(false);
 
             org.mockito.Mockito.doThrow(new RuntimeException("Outbox 落库失败"))
-                    .when(eventPublisher).publishVideoAction(any());
+                    .when(eventPublisher).publishVideoAction(any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
 
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.deleteFolder(folder.getId(), "user_01"))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("Outbox 落库失败");
 
             // 关键断言：事务失败回滚，afterCommit 绝不执行，Redis 收藏计数绝不扣减
-            verify(counterDeltaRepository, never()).adjustStarCount(any(), any(), any(), any(Long.class));
+            verify(counterDeltaRepository, never()).adjustStarCount(any(), any(), any(), any(Long.class), eq(TEST_TIME));
         } finally {
             org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
         }
@@ -423,16 +434,16 @@ class StarApplicationServiceTest {
     @Test
     @DisplayName("增量记录写入失败时业务操作失败，不会执行数据库计数补偿")
     void shouldFailStarWhenDeltaInsertFails() {
-        StarFolder defaultFolder = StarFolder.createDefault("user_01");
+        StarFolder defaultFolder = StarFolder.createDefault("user_01", TEST_TIME);
         when(folderRepository.findDefaultByUserId("user_01")).thenReturn(Optional.of(defaultFolder));
         when(itemRepository.findPhysicalByFolderAndVid(defaultFolder.getId(), "vid_100")).thenReturn(Optional.empty());
         when(itemRepository.isStarredByUser("user_01", "vid_100")).thenReturn(false);
         org.mockito.Mockito.doThrow(new RuntimeException("增量插入失败"))
-                .when(counterDeltaRepository).adjustStarCount(eq("vid_100"), eq("STAR_ACTIVE"), any(), eq(1L));
+                .when(counterDeltaRepository).adjustStarCount(eq("vid_100"), eq("STAR_ACTIVE"), any(), eq(1L), eq(TEST_TIME));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.starVideo("vid_100", "user_01", null))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("增量插入失败");
-        verify(counterDeltaRepository).adjustStarCount(eq("vid_100"), eq("STAR_ACTIVE"), any(), eq(1L));
+        verify(counterDeltaRepository).adjustStarCount(eq("vid_100"), eq("STAR_ACTIVE"), any(), eq(1L), eq(TEST_TIME));
     }
 }

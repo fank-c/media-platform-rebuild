@@ -6,7 +6,9 @@ import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
 import com.calles.platform.interaction.infrastructure.persistence.entity.VideoCounterPO;
 import com.calles.platform.interaction.infrastructure.persistence.mapper.VideoCounterMapper;
 import java.util.Collection;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -27,7 +29,7 @@ public class VideoCounterRepositoryImpl implements VideoCounterRepository {
      * 查询已汇总的 MySQL 计数快照。
      *
      * @param vid 视频公开业务短码
-     * @return 统计计数；无记录时返回全零实体
+     * @return 已持久化的统计计数；无记录时返回空
      */
     @Override
     public Optional<VideoCounter> findByVid(String vid) {
@@ -36,9 +38,9 @@ public class VideoCounterRepositoryImpl implements VideoCounterRepository {
             return Optional.empty();
         }
 
-        // 步骤 2: 主键检索并转换为领域对象，查无记录时兜底默认零值对象
+        // 步骤 2: 仅读取已持久化的快照；缺失时由应用层使用其时间快照构造零值对象
         VideoCounterPO po = mapper.selectById(vid.trim());
-        return Optional.of(po != null ? po.toDomain() : VideoCounter.createDefault(vid.trim()));
+        return po != null ? Optional.of(po.toDomain()) : Optional.empty();
     }
 
     /**
@@ -65,9 +67,11 @@ public class VideoCounterRepositoryImpl implements VideoCounterRepository {
      * @param vid 视频业务短码
      * @param type 计数维度类型
      * @param delta 净变动量
+     * @param now 本批次统一的 UTC 汇总时间
      */
     @Override
-    public void applyDelta(String vid, CounterType type, long delta) {
+    public void applyDelta(String vid, CounterType type, long delta, LocalDateTime now) {
+        Objects.requireNonNull(now, "汇总时间不能为空");
         // 步骤 1: 防御无效参数与零变动
         if (vid == null || vid.isBlank() || type == null || delta == 0) {
             return;
@@ -75,10 +79,10 @@ public class VideoCounterRepositoryImpl implements VideoCounterRepository {
 
         // 步骤 2: 路由到对应维度的原子更新 Mapper 方法
         switch (type) {
-            case VIEW -> mapper.applyViewDelta(vid.trim(), delta);
-            case LIKE -> mapper.applyLikeDelta(vid.trim(), delta);
-            case STAR -> mapper.applyStarDelta(vid.trim(), delta);
-            case SHARE -> mapper.applyShareDelta(vid.trim(), delta);
+            case VIEW -> mapper.applyViewDelta(vid.trim(), delta, now);
+            case LIKE -> mapper.applyLikeDelta(vid.trim(), delta, now);
+            case STAR -> mapper.applyStarDelta(vid.trim(), delta, now);
+            case SHARE -> mapper.applyShareDelta(vid.trim(), delta, now);
         }
     }
 }

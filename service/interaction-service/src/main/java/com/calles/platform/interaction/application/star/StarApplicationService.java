@@ -7,6 +7,10 @@ import com.calles.platform.interaction.domain.model.star.StarItem;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.StarFolderRepository;
 import com.calles.platform.interaction.domain.repository.StarItemRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +31,8 @@ public class StarApplicationService {
     private final StarItemRepository itemRepository;
     private final CounterDeltaRepository counterDeltaRepository;
     private final InteractionEventPublisher eventPublisher;
+    /** 收藏用例的 UTC 时间来源。 */
+    private final Clock clock;
 
     /**
      * 收藏视频到指定收藏夹或默认收藏夹（幂等）。
@@ -38,12 +44,14 @@ public class StarApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public String starVideo(String vid, String userId, String targetFolderId) {
+        Instant instant = clock.instant();
+        LocalDateTime now = LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
         // 步骤 1: 确定归属收藏夹（显式指定时严格校验属主与可用性；未指定时按需自愈初始化默认收藏夹）
         StarFolder folder;
         if (targetFolderId != null && !targetFolderId.isBlank()) {
             folder = requireOwnedFolder(userId, targetFolderId);
         } else {
-            folder = initDefaultFolder(userId);
+            folder = initDefaultFolder(userId, now);
         }
 
         // 步骤 2: 校验该收藏夹内是否已收录该视频（物理检索，兼容伪删除自愈并规避 uk_folder_vid 冲突）
@@ -56,11 +64,11 @@ public class StarApplicationService {
             }
             // 步骤 2.1: 若该条目此前已被伪删除，则执行复活；用户此前未收藏时同事务记录计数增量和 Outbox
             boolean alreadyStarred = itemRepository.isStarredByUser(userId, vid);
-            item.revive();
-            itemRepository.revive(item.getId());
+            item.revive(now);
+            itemRepository.revive(item.getId(), now);
             if (!alreadyStarred) {
-                eventPublisher.publishVideoAction(VideoActionPayload.star(userId, vid));
-                counterDeltaRepository.adjustStarCount(vid, "STAR_ACTIVE", "star_item:" + item.getId() + ":v" + item.getVersion(), 1L);
+                eventPublisher.publishVideoAction(VideoActionPayload.star(userId, vid), instant);
+                counterDeltaRepository.adjustStarCount(vid, "STAR_ACTIVE", "star_item:" + item.getId() + ":v" + item.getVersion(), 1L, now);
                 log.info("用户 [{}] 首次收藏视频 [{}] (复活原有明细)，写入 Outbox 与计数增量 (version={})", userId, vid, item.getVersion());
             }
             return item.getId();
@@ -70,13 +78,13 @@ public class StarApplicationService {
         boolean alreadyStarred = itemRepository.isStarredByUser(userId, vid);
 
         // 步骤 4: 保存收藏条目
-        StarItem newItem = StarItem.create(folder.getId(), vid, userId);
+        StarItem newItem = StarItem.create(folder.getId(), vid, userId, now);
         itemRepository.save(newItem);
 
         // 步骤 5: 若为该用户对该视频的首度收藏，同事务写 Outbox 与待汇总增量
         if (!alreadyStarred) {
-            eventPublisher.publishVideoAction(VideoActionPayload.star(userId, vid));
-            counterDeltaRepository.adjustStarCount(vid, "STAR_ACTIVE", "star_item:" + newItem.getId() + ":v" + newItem.getVersion(), 1L);
+            eventPublisher.publishVideoAction(VideoActionPayload.star(userId, vid), instant);
+            counterDeltaRepository.adjustStarCount(vid, "STAR_ACTIVE", "star_item:" + newItem.getId() + ":v" + newItem.getVersion(), 1L, now);
             log.info("用户 [{}] 首次收藏视频 [{}]，写入 Outbox 与计数增量 (version={})", userId, vid, newItem.getVersion());
         }
         return newItem.getId();
@@ -91,6 +99,8 @@ public class StarApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void unstarVideo(String vid, String userId, String folderId) {
+        Instant instant = clock.instant();
+        LocalDateTime now = LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
         // 步骤 0: 预查本次操作涉及的收藏明细（用于精确定界状态版本）
         List<StarItem> itemsBeforeDelete = itemRepository.findByUserAndVid(userId, vid);
 
@@ -114,8 +124,8 @@ public class StarApplicationService {
                 } else {
                     sourceId = "star_unstar:" + userId + ":" + vid;
                 }
-                eventPublisher.publishVideoAction(VideoActionPayload.unstar(userId, vid));
-                counterDeltaRepository.adjustStarCount(vid, "STAR_INACTIVE", sourceId, -1L);
+                eventPublisher.publishVideoAction(VideoActionPayload.unstar(userId, vid), instant);
+                counterDeltaRepository.adjustStarCount(vid, "STAR_INACTIVE", sourceId, -1L, now);
                 log.info("用户 [{}] 完全取消收藏视频 [{}]，写入 Outbox 与计数增量 (sourceId={})", userId, vid, sourceId);
             }
         }
@@ -147,6 +157,11 @@ public class StarApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public StarFolder initDefaultFolder(String userId) {
+        return initDefaultFolder(userId, com.calles.platform.interaction.application.InteractionTime.utcNow(clock));
+    }
+
+    /** 同一收藏用例共享入口时间，不重新读取时钟。 */
+    private StarFolder initDefaultFolder(String userId, LocalDateTime now) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("用户账号ID不能为空");
         }
@@ -155,7 +170,7 @@ public class StarApplicationService {
         return folderRepository.findDefaultByUserId(safeUserId).orElseGet(() -> {
             try {
                 // 步骤 2: 不存在时持久化新建默认收藏夹
-                StarFolder created = StarFolder.createDefault(safeUserId);
+                StarFolder created = StarFolder.createDefault(safeUserId, now);
                 folderRepository.save(created);
                 log.info("为用户 [{}] 初始化创建了默认收藏夹 [{}] (id={})", safeUserId, created.getTitle(), created.getId());
                 return created;
@@ -193,9 +208,10 @@ public class StarApplicationService {
             throw new IllegalArgumentException("已存在同名收藏夹");
         }
 
+        LocalDateTime now = com.calles.platform.interaction.application.InteractionTime.utcNow(clock);
         // 步骤 3: 实例化并持久化保存，底层唯一键防并发竞态兜底
         try {
-            StarFolder folder = StarFolder.createCustom(userId, trimmedTitle);
+            StarFolder folder = StarFolder.createCustom(userId, trimmedTitle, now);
             folderRepository.save(folder);
             log.info("用户 [{}] 创建了自定义收藏夹 [{}] (id={})", userId, trimmedTitle, folder.getId());
             return folder;
@@ -242,9 +258,10 @@ public class StarApplicationService {
             throw new IllegalArgumentException("已存在同名收藏夹");
         }
 
+        LocalDateTime now = com.calles.platform.interaction.application.InteractionTime.utcNow(clock);
         // 步骤 6: 实体更名并持久化更新，底层唯一键防并发冲突兜底
         try {
-            folder.rename(trimmedTitle);
+            folder.rename(trimmedTitle, now);
             folderRepository.update(folder);
             log.info("用户 [{}] 将收藏夹 [{}] 重命名为 [{}]", userId, folderId, trimmedTitle);
             return folder;
@@ -262,6 +279,8 @@ public class StarApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteFolder(String folderId, String userId) {
+        Instant instant = clock.instant();
+        LocalDateTime now = LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
         // 步骤 1: 严格解析显式指定的有效收藏夹（校验 ID 非空、存在且属于当前用户，绝不隐式写库）
         StarFolder folder = requireOwnedFolder(userId, folderId);
 
@@ -274,8 +293,8 @@ public class StarApplicationService {
         List<String> affectedVids = itemRepository.findVidsByFolderId(folder.getId());
 
         // 步骤 4: 逻辑删除收藏夹自身
-        folder.delete();
-        folderRepository.deleteById(folder.getId());
+        folder.delete(now);
+        folderRepository.deleteById(folder.getId(), now);
 
         // 步骤 5: 级联逻辑删除该收藏夹内的所有收藏明细条目
         itemRepository.deleteByFolderId(folder.getId());
@@ -284,8 +303,8 @@ public class StarApplicationService {
         for (String vid : affectedVids) {
             boolean stillStarred = itemRepository.isStarredByUser(userId, vid);
             if (!stillStarred) {
-                eventPublisher.publishVideoAction(VideoActionPayload.unstar(userId, vid));
-                counterDeltaRepository.adjustStarCount(vid, "STAR_INACTIVE", "star_folder_del:" + folder.getId() + ":" + vid, -1L);
+                eventPublisher.publishVideoAction(VideoActionPayload.unstar(userId, vid), instant);
+                counterDeltaRepository.adjustStarCount(vid, "STAR_INACTIVE", "star_folder_del:" + folder.getId() + ":" + vid, -1L, now);
                 log.info("用户 [{}] 因删除收藏夹 [{}] 彻底移出视频 [{}]，写入 Outbox 与计数增量", userId, folderId, vid);
             }
         }

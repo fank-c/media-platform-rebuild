@@ -81,7 +81,8 @@ public class CounterDeltaRepositoryImpl implements CounterDeltaRepository {
         }
 
         // 步骤 2: 委托 Mapper 批量更新处理完成时间戳
-        LocalDateTime time = processedAt != null ? processedAt : LocalDateTime.now();
+        // 汇总时间由用例统一提供，不能在持久化层伪造处理时刻。
+        LocalDateTime time = java.util.Objects.requireNonNull(processedAt, "汇总时间不能为空");
         deltaMapper.markProcessedBatch(ids, time);
     }
 

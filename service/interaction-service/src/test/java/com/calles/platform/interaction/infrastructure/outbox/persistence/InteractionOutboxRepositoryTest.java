@@ -39,13 +39,14 @@ class InteractionOutboxRepositoryTest {
     @Test
     @DisplayName("插入发件箱记录调用Mapper insert")
     void shouldInsertRecord() {
+        Instant occurredAt = clock.instant().minusSeconds(60);
         InteractionOutboxRecord record = InteractionOutboxRecord.of(
-                "evt_01", "vid_100", "interaction.video-action", "{}", "trace_01", clock.instant()
+                "evt_01", "vid_100", "interaction.video-action", "{}", "trace_01", occurredAt
         );
 
         repository.insert(record);
 
-        verify(mapper).insert(eq(record), any(Timestamp.class), eq("PENDING"), any(Timestamp.class));
+        verify(mapper).insert(eq(record), eq(Timestamp.from(occurredAt)), eq("PENDING"), eq(Timestamp.from(occurredAt)));
     }
 
     @Test
@@ -64,6 +65,10 @@ class InteractionOutboxRepositoryTest {
 
         assertThat(result).isNotNull();
         assertThat(result.eventId()).isEqualTo("evt_01");
+        // 租约截止时间以认领时刻计算，不能误用事件发生时刻。
+        verify(mapper).markClaimedIfEligible(eq("evt_01"), eq("PROCESSING"), eq("owner_1"),
+                eq(Timestamp.from(clock.instant().plusSeconds(30))), anyString(), eq(20), eq("PENDING"),
+                eq(Timestamp.from(clock.instant())), eq("PROCESSING"), eq(Timestamp.from(clock.instant())));
     }
 
     @Test
@@ -89,6 +94,7 @@ class InteractionOutboxRepositoryTest {
         boolean ok = repository.markPublished(message);
 
         assertThat(ok).isTrue();
+        verify(mapper).markPublished("evt_01", "PUBLISHED", Timestamp.from(clock.instant()), "PROCESSING", "tok");
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.model.counter;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -51,9 +52,11 @@ public class CounterDelta {
      * @param delta 变动量 (不可为 0；VIEW/SHARE 必须为严格正整数)
      * @param sourceType 业务事实类型 (不可为空)
      * @param sourceId 业务事实唯一标识 (不可为空)
+     * @param now 应用层传入的 UTC 业务时间
      * @return 待持久化的计数增量实体
      */
-    public static CounterDelta create(String vid, CounterType type, long delta, String sourceType, String sourceId) {
+    public static CounterDelta create(String vid, CounterType type, long delta, String sourceType, String sourceId, LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (vid == null || vid.isBlank()) {
             throw new IllegalArgumentException("视频业务短码不能为空");
         }
@@ -81,7 +84,7 @@ public class CounterDelta {
                 .delta(delta)
                 .sourceType(sourceType.trim())
                 .sourceId(sourceId.trim())
-                .createdAt(LocalDateTime.now())
+                .createdAt(now)
                 .processedAt(null)
                 .build();
     }

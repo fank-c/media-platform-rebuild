@@ -3,6 +3,8 @@ package com.calles.platform.interaction.application.video;
 import com.calles.platform.interaction.domain.model.video.VideoSnapshot;
 import com.calles.platform.interaction.domain.repository.VideoSnapshotRepository;
 import com.calles.platform.interaction.interfaces.messaging.event.VideoMetadataMessage;
+import java.time.Clock;
+import com.calles.platform.interaction.application.InteractionTime;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -31,6 +33,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class VideoMetadataApplicationService {
 
     private final VideoSnapshotRepository videoSnapshotRepository;
+    /** 仅当上游事件没有时间时提供服务端 UTC 接收时刻。 */
+    private final Clock clock;
 
     /**
      * 消费结果。
@@ -85,7 +89,7 @@ public class VideoMetadataApplicationService {
                 message.metadataVersion() != null ? message.metadataVersion() : 1,
                 eventId,
                 message.status(),
-                toLocalDateTime(message.updatedAt() != null ? message.updatedAt() : message.occurredAt())
+                toLocalDateTime(message.updatedAt() != null ? message.updatedAt() : message.occurredAt(), clock)
         );
 
         boolean written = videoSnapshotRepository.saveIfNewerOrSameVersion(snapshot);
@@ -99,15 +103,16 @@ public class VideoMetadataApplicationService {
     }
 
     /**
-     * 将事件时间转换为本地时间，事件缺失时间时回退当前时间。
+     * 将事件时间按 UTC 转换，事件缺失时间时使用本次接收时刻。
      *
      * @param instant 事件时间，允许为空
-     * @return 本地时间
+     * @param clock 服务端 UTC 时钟
+     * @return UTC 语义的本地时间
      */
-    private LocalDateTime toLocalDateTime(Instant instant) {
+    private LocalDateTime toLocalDateTime(Instant instant, Clock clock) {
         if (instant == null) {
-            return LocalDateTime.now();
+            return InteractionTime.utcNow(clock);
         }
-        return LocalDateTime.ofInstant(instant, ZoneOffset.systemDefault());
+        return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 }

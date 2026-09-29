@@ -4,6 +4,8 @@ import com.calles.platform.interaction.config.InteractionWatchProperties;
 import com.calles.platform.interaction.domain.repository.WatchEventClaimRepository;
 import com.calles.platform.interaction.domain.repository.WatchProgressRepository;
 import com.calles.platform.interaction.domain.repository.WatchSessionRepository;
+import java.time.Clock;
+import com.calles.platform.interaction.application.InteractionTime;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +35,8 @@ public class WatchRetentionApplicationService {
     private final WatchSessionRepository sessionRepository;
     private final WatchEventClaimRepository claimRepository;
     private final InteractionWatchProperties properties;
+    /** 清理轮次使用的统一 UTC 时钟。 */
+    private final Clock clock;
 
     /**
      * 按保留期清理观看会话、事件凭据与已隐藏的历史展示记录。
@@ -43,7 +47,7 @@ public class WatchRetentionApplicationService {
     public void cleanupExpired() {
         // 保留期缺失时回退默认 30 天，且严格校验 retention 不小于 sessionTimeout 与 repeatWindow，避免误删导致会话/冷却失效
         Duration retention = getDuration();
-        LocalDateTime threshold = LocalDateTime.now().minus(retention);
+        LocalDateTime threshold = InteractionTime.utcNow(clock).minus(retention);
         int batchSize = Math.max(1, properties.getCleanupBatchSize());
 
         int detached = progressRepository.detachStaleActiveSessions(threshold, batchSize);

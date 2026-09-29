@@ -1,5 +1,10 @@
 package com.calles.platform.interaction.application.watch;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -57,6 +62,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
  */
 @ExtendWith(MockitoExtension.class)
 class WatchHeartbeatApplicationServiceTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-27T12:00:00Z");
+    private static final Clock TEST_CLOCK = Clock.fixed(TEST_INSTANT, ZoneOffset.UTC);
+    private static final LocalDateTime TEST_TIME = LocalDateTime.ofInstant(TEST_INSTANT, ZoneOffset.UTC);
+
 
     /** 视频公开短码。 */
     private static final String VID = "cv_100";
@@ -91,7 +100,7 @@ class WatchHeartbeatApplicationServiceTest {
                 snapshotRepository,
                 counterDeltaRepository,
                 eventPublisher,
-                properties);
+                properties, TEST_CLOCK);
     }
 
     @Test
@@ -112,7 +121,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(outcome.watchedDuration()).isZero();
 
         // 验证起播增量写入与来源唯一键格式 (watch_session:{sessionId})
-        verify(counterDeltaRepository).incrementViewCount(eq(VID), eq("watch_session:" + outcome.sessionId()), eq(1L));
+        verify(counterDeltaRepository).incrementViewCount(eq(VID), eq("watch_session:" + outcome.sessionId()), eq(1L), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
         assertThat(eventPublisher.publishedActions()).isEmpty();
     }
 
@@ -139,7 +148,7 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(qualified.viewCountedThisSession()).isTrue();
 
         // 播放量增量只在起播时写入了恰好 1 次，达标时未额外追加
-        verify(counterDeltaRepository, times(1)).incrementViewCount(eq(VID), anyString(), eq(1L));
+        verify(counterDeltaRepository, times(1)).incrementViewCount(eq(VID), anyString(), eq(1L), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
         // 发出合格观看领域事件
         assertThat(eventPublisher.publishedActions())
                 .containsExactly(VideoActionPayload.ACTION_WATCH_VIEW_QUALIFIED);
@@ -181,7 +190,7 @@ class WatchHeartbeatApplicationServiceTest {
         expireActiveSession(40);
         WatchHeartbeatOutcome cooldownSession = startPlay("start_in_cooldown");
         assertThat(cooldownSession.viewCountedThisSession()).isFalse();
-        verify(counterDeltaRepository, times(1)).incrementViewCount(anyString(), anyString(), anyLong());
+        verify(counterDeltaRepository, times(1)).incrementViewCount(anyString(), anyString(), anyLong(), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
 
         // 步骤 3：该冷却中的会话达到 30% 时，依然能独立产生合格观看事件
         WatchHeartbeatOutcome inCooldownQualified = driveToThreshold(cooldownSession.sessionId(), 10L);
@@ -190,16 +199,16 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(eventPublisher.publishedActions()).hasSize(claimsAfterFirst + 1);
 
         // 步骤 4：在会话进行中即使冷却时间已过，后续心跳绝不中途补计播放量
-        currentProgress().markViewClaimed(LocalDateTime.now().minusHours(7));
+        currentProgress().markViewClaimed(TEST_TIME.minusHours(7));
         WatchHeartbeatOutcome midSessionHeartbeat = beatAfterGap(cooldownSession.sessionId(), 10, 20L, 50, 15);
         assertThat(midSessionHeartbeat.viewCountedThisSession()).isFalse();
-        verify(counterDeltaRepository, times(1)).incrementViewCount(anyString(), anyString(), anyLong());
+        verify(counterDeltaRepository, times(1)).incrementViewCount(anyString(), anyString(), anyLong(), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
 
         // 步骤 5：会话超时后再次开启新会话，冷却已过，此时才再次计入播放量
         expireActiveSession(40);
         WatchHeartbeatOutcome thirdSession = startPlay("start_after_cooldown");
         assertThat(thirdSession.viewCountedThisSession()).isTrue();
-        verify(counterDeltaRepository, times(2)).incrementViewCount(anyString(), anyString(), anyLong());
+        verify(counterDeltaRepository, times(2)).incrementViewCount(anyString(), anyString(), anyLong(), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
     }
 
     @Test
@@ -216,7 +225,7 @@ class WatchHeartbeatApplicationServiceTest {
         WatchHeartbeatOutcome retry = startPlay("idemp_key_001");
         assertThat(retry.sessionId()).isEqualTo(first.sessionId());
         assertThat(retry.duplicateOrStaleRequest()).isTrue();
-        verify(counterDeltaRepository, times(1)).incrementViewCount(anyString(), anyString(), anyLong());
+        verify(counterDeltaRepository, times(1)).incrementViewCount(anyString(), anyString(), anyLong(), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
 
         // 换新键但在旧会话仍活跃时发起起播：抛出 409 WATCH_SESSION_ACTIVE
         assertThatThrownBy(() -> startPlay("idemp_key_002"))
@@ -373,21 +382,21 @@ class WatchHeartbeatApplicationServiceTest {
         assertThat(outcome.completedThisSession()).isFalse();
         assertThat(outcome.lastPosition()).isEqualTo(60);
         assertThat(outcome.sessionWatchedDuration()).isZero();
-        verify(counterDeltaRepository, never()).incrementViewCount(anyString(), anyString(), anyLong());
+        verify(counterDeltaRepository, never()).incrementViewCount(anyString(), anyString(), anyLong(), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
         assertThat(eventPublisher.publishedActions()).isEmpty();
     }
 
     @Test
     @DisplayName("已发布内容即使时长快照为零也允许起播计数，证明播放量计数不依赖时长可用性")
     void shouldCountViewWhenPublishedEvenIfDurationIsZero() {
-        snapshotRepository.put(VideoSnapshot.create(VID, 0, 1, "evt_zero_dur", VideoSnapshot.STATUS_PUBLISHED, LocalDateTime.now()));
+        snapshotRepository.put(VideoSnapshot.create(VID, 0, 1, "evt_zero_dur", VideoSnapshot.STATUS_PUBLISHED, TEST_TIME));
 
         WatchHeartbeatOutcome outcome = startPlay("zero_dur_published_key", 0);
 
         assertThat(outcome.videoDuration()).isZero();
         assertThat(outcome.qualificationThreshold()).isZero();
         assertThat(outcome.viewCountedThisSession()).isTrue();
-        verify(counterDeltaRepository).incrementViewCount(eq(VID), eq("watch_session:" + outcome.sessionId()), eq(1L));
+        verify(counterDeltaRepository).incrementViewCount(eq(VID), eq("watch_session:" + outcome.sessionId()), eq(1L), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
     }
 
     @Test
@@ -471,7 +480,7 @@ class WatchHeartbeatApplicationServiceTest {
         sessionRepository.all().stream()
                 .filter(session -> session.getClosedAt() == null)
                 .forEach(session -> session.recordHeartbeat(0, session.getLastPosition(), null,
-                        LocalDateTime.now().minusSeconds(gapSeconds)));
+                        TEST_TIME.minusSeconds(gapSeconds)));
         return beat(sessionId, sequence, position, delta);
     }
 
@@ -498,7 +507,7 @@ class WatchHeartbeatApplicationServiceTest {
         sessionRepository.all().stream()
                 .filter(session -> session.getClosedAt() == null)
                 .forEach(session -> session.recordHeartbeat(0, session.getLastPosition(), null,
-                        LocalDateTime.now().minusMinutes(minutesAgo)));
+                        TEST_TIME.minusMinutes(minutesAgo)));
     }
 
     /**
@@ -508,7 +517,7 @@ class WatchHeartbeatApplicationServiceTest {
      */
     private void givenSnapshot(int duration) {
         snapshotRepository.put(VideoSnapshot.create(VID, duration, 1, "evt_meta_1", "PUBLISHED",
-                LocalDateTime.now()));
+                TEST_TIME));
     }
 
     /**
@@ -531,11 +540,11 @@ class WatchHeartbeatApplicationServiceTest {
          * 构造替身，不注入真实依赖。
          */
         private RecordingEventPublisher() {
-            super(null, null, null, null, null);
+            super(null, null, null, null);
         }
 
         @Override
-        public String publishVideoAction(VideoActionPayload payload) {
+        public String publishVideoAction(VideoActionPayload payload, java.time.Instant occurredAt) {
             published.add(payload);
             return "evt_" + published.size();
         }

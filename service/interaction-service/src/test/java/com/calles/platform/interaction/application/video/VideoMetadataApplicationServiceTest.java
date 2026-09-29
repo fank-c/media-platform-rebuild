@@ -1,5 +1,10 @@
 package com.calles.platform.interaction.application.video;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.calles.platform.interaction.application.video.VideoMetadataApplicationService.SnapshotApplyResult;
@@ -22,6 +27,10 @@ import org.junit.jupiter.api.Test;
  * <p>验证消费幂等、版本乱序保护与非法时长拒绝三类关键行为，对应方案中"重复消费""乱序消费"验证项。</p>
  */
 class VideoMetadataApplicationServiceTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-27T12:00:00Z");
+    private static final Clock TEST_CLOCK = Clock.fixed(TEST_INSTANT, ZoneOffset.UTC);
+    private static final LocalDateTime TEST_TIME = LocalDateTime.ofInstant(TEST_INSTANT, ZoneOffset.UTC);
+
 
     private FakeSnapshotRepository repository;
     private VideoMetadataApplicationService service;
@@ -29,7 +38,7 @@ class VideoMetadataApplicationServiceTest {
     @BeforeEach
     void setUp() {
         repository = new FakeSnapshotRepository();
-        service = new VideoMetadataApplicationService(repository);
+        service = new VideoMetadataApplicationService(repository, TEST_CLOCK);
     }
 
     @Test

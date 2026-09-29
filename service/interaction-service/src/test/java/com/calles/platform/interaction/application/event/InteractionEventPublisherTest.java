@@ -1,5 +1,9 @@
 package com.calles.platform.interaction.application.event;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -26,6 +30,7 @@ import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 class InteractionEventPublisherTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-23T12:00:00Z");
 
     @Mock
     private InteractionOutboxRepository outboxRepository;
@@ -35,7 +40,6 @@ class InteractionEventPublisherTest {
 
     private InteractionOutboxProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final Clock fixedClock = Clock.fixed(Instant.parse("2026-09-23T12:00:00Z"), ZoneOffset.UTC);
 
     private InteractionEventPublisher publisher;
 
@@ -43,7 +47,7 @@ class InteractionEventPublisherTest {
     void setUp() {
         properties = new InteractionOutboxProperties();
         properties.setEnabled(true);
-        publisher = new InteractionEventPublisher(outboxRepository, dispatchNotifier, properties, objectMapper, fixedClock);
+        publisher = new InteractionEventPublisher(outboxRepository, dispatchNotifier, properties, objectMapper);
     }
 
     @Test
@@ -52,7 +56,7 @@ class InteractionEventPublisherTest {
         MDC.put("traceId", "trace-test-123");
         try {
             VideoActionPayload payload = VideoActionPayload.like("user_01", "vid_999");
-            publisher.publishVideoAction(payload);
+            publisher.publishVideoAction(payload, TEST_INSTANT);
 
             ArgumentCaptor<InteractionOutboxRecord> recordCaptor = ArgumentCaptor.forClass(InteractionOutboxRecord.class);
             verify(outboxRepository).insert(recordCaptor.capture());
@@ -90,7 +94,7 @@ class InteractionEventPublisherTest {
         properties.setEnabled(false);
 
         VideoActionPayload payload = VideoActionPayload.star("user_01", "vid_999");
-        publisher.publishVideoAction(payload);
+        publisher.publishVideoAction(payload, TEST_INSTANT);
 
         verify(outboxRepository, never()).insert(any());
         verify(dispatchNotifier, never()).notifyDispatch(any());

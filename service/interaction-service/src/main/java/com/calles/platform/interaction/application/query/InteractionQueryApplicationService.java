@@ -7,6 +7,11 @@ import com.calles.platform.interaction.application.watch.WatchProgressView;
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
 import com.calles.platform.interaction.domain.repository.CounterDeltaRepository;
 import com.calles.platform.interaction.domain.repository.VideoCounterRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import com.calles.platform.interaction.application.InteractionTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +47,8 @@ public class InteractionQueryApplicationService {
     private final CounterDeltaRepository counterDeltaRepository;
     private final com.calles.platform.interaction.domain.repository.InteractionShareRecordRepository shareRecordRepository;
     private final com.calles.platform.interaction.application.event.InteractionEventPublisher eventPublisher;
+    /** 分享及缺失快照的统一 UTC 时间来源。 */
+    private final Clock clock;
 
     /**
      * 用户在指定视频上的互动状态快照（播放页一站式聚合响应）。
@@ -100,7 +107,7 @@ public class InteractionQueryApplicationService {
      */
     public VideoCounter getVideoStat(String vid) {
         return counterRepository.findByVid(vid)
-                .orElseGet(() -> VideoCounter.createDefault(vid));
+                .orElseGet(() -> VideoCounter.createDefault(vid, InteractionTime.utcNow(clock)));
     }
 
     /**
@@ -117,9 +124,10 @@ public class InteractionQueryApplicationService {
         Map<String, VideoCounter> map = list.stream()
                 .collect(Collectors.toMap(VideoCounter::getVid, Function.identity(), (a, b) -> a));
 
+        LocalDateTime now = InteractionTime.utcNow(clock);
         // 补齐缺失项为默认 0 计数实体
         for (String vid : vids) {
-            map.putIfAbsent(vid, VideoCounter.createDefault(vid));
+            map.putIfAbsent(vid, VideoCounter.createDefault(vid, now));
         }
         return map;
     }
@@ -149,6 +157,9 @@ public class InteractionQueryApplicationService {
             throw new IllegalArgumentException("分享请求必须指定有效的视频编码");
         }
 
+        // 幂等记录、增量与领域事件共享一次时间读取。
+        Instant now = clock.instant();
+        LocalDateTime localNow = LocalDateTime.ofInstant(now, ZoneOffset.UTC);
         String safeKey = idempotencyKey.trim();
         String safeUserId = userId.trim();
         String safeVid = vid.trim();
@@ -167,7 +178,7 @@ public class InteractionQueryApplicationService {
 
         // 步骤 2: 首次请求，持久化幂等记录、自增计数，并在同一事务内写入 Outbox
         // 若并发请求同时到达，由唯一键 uk_share_user_idempotency 拦截，回退判断幂等状态
-        InteractionShareRecord newRecord = InteractionShareRecord.create(safeKey, safeUserId, safeVid);
+        InteractionShareRecord newRecord = InteractionShareRecord.create(safeKey, safeUserId, safeVid, now);
         try {
             shareRecordRepository.save(newRecord);
         } catch (DuplicateKeyException e) {
@@ -183,8 +194,8 @@ public class InteractionQueryApplicationService {
         }
 
         String sourceId = "share:" + safeUserId + ":" + safeKey;
-        counterDeltaRepository.incrementShareCount(safeVid, sourceId, 1L);
-        eventPublisher.publishVideoAction(VideoActionPayload.share(safeUserId, safeVid));
+        counterDeltaRepository.incrementShareCount(safeVid, sourceId, 1L, localNow);
+        eventPublisher.publishVideoAction(VideoActionPayload.share(safeUserId, safeVid), now);
         log.info("用户 [{}] 成功分享视频 [{}]，幂等键 [{}]，写入 Outbox", safeUserId, safeVid, safeKey);
     }
 }

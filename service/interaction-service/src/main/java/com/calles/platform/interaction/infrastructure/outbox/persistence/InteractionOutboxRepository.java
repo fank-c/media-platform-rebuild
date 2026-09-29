@@ -10,7 +10,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
-import org.springframework.beans.factory.annotation.Autowired;
+import java.util.Objects;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,10 +23,14 @@ public class InteractionOutboxRepository {
     private final InteractionOutboxMapper outboxMapper;
     private final Clock clock;
 
-    public InteractionOutboxRepository(InteractionOutboxMapper outboxMapper,
-                                       @Autowired(required = false) Clock clock) {
+    /**
+     * 使用服务统一时钟，避免仓储私自回退到另一个系统时间源。
+     * @param outboxMapper 发件箱映射器
+     * @param clock 服务统一 UTC 时钟
+     */
+    public InteractionOutboxRepository(InteractionOutboxMapper outboxMapper, Clock clock) {
         this.outboxMapper = outboxMapper;
-        this.clock = clock != null ? clock : Clock.systemUTC();
+        this.clock = Objects.requireNonNull(clock, "时钟不能为空");
     }
 
     /**

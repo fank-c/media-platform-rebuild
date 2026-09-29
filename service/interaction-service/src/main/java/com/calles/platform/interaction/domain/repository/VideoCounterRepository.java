@@ -2,6 +2,7 @@ package com.calles.platform.interaction.domain.repository;
 
 import com.calles.platform.interaction.domain.model.counter.CounterType;
 import com.calles.platform.interaction.domain.model.counter.VideoCounter;
+import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -35,6 +36,7 @@ public interface VideoCounterRepository {
      * @param vid 视频公开编码
      * @param type 计数维度类型
      * @param delta 净变动量
+     * @param now 本轮汇总统一的 UTC 业务时间，用于快照创建及更新
      */
-    void applyDelta(String vid, CounterType type, long delta);
+    void applyDelta(String vid, CounterType type, long delta, LocalDateTime now);
 }

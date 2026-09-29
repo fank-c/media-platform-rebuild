@@ -2,6 +2,7 @@ package com.calles.platform.interaction.infrastructure.persistence.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.calles.platform.interaction.infrastructure.persistence.entity.StarFolderPO;
+import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Mapper;
 
 import org.apache.ibatis.annotations.Param;
@@ -17,10 +18,11 @@ public interface StarFolderMapper extends BaseMapper<StarFolderPO> {
      * 逻辑删除收藏夹，将 status 置为 0，deleted 置为 1，并更新修改时间。
      *
      * @param id 收藏夹 ID
+     * @param now 应用层提供的 UTC 业务时间
      * @return 影响行数
      */
-    @Update("UPDATE interaction_star_folder SET status = 0, deleted = 1, updated_at = CURRENT_TIMESTAMP(3) WHERE id = #{id} AND deleted = 0")
-    int deleteFolderById(@Param("id") String id);
+    @Update("UPDATE interaction_star_folder SET status = 0, deleted = 1, updated_at = #{now} WHERE id = #{id} AND deleted = 0")
+    int deleteFolderById(@Param("id") String id, @Param("now") LocalDateTime now);
 
     /**
      * 采用当前读（Locking Read FOR UPDATE）查询用户活跃的默认收藏夹。

@@ -1,5 +1,10 @@
 package com.calles.platform.interaction.application.query;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
@@ -26,6 +31,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class InteractionQueryApplicationServiceTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-27T12:00:00Z");
+    private static final Clock TEST_CLOCK = Clock.fixed(TEST_INSTANT, ZoneOffset.UTC);
+    private static final LocalDateTime TEST_TIME = LocalDateTime.ofInstant(TEST_INSTANT, ZoneOffset.UTC);
+
 
     @Mock
     private LikeApplicationService likeService;
@@ -59,7 +68,7 @@ class InteractionQueryApplicationServiceTest {
                 counterRepository,
                 counterDeltaRepository,
                 shareRecordRepository,
-                eventPublisher
+                eventPublisher, TEST_CLOCK
         );
     }
 
@@ -92,8 +101,8 @@ class InteractionQueryApplicationServiceTest {
     @Test
     @DisplayName("批量查询计数器时自动补齐缺失视频为全0计数")
     void shouldPadDefaultCounterWhenNotFoundInBatch() {
-        VideoCounter c1 = VideoCounter.createDefault("vid_1");
-        c1.adjustLikeCount(10);
+        VideoCounter c1 = VideoCounter.createDefault("vid_1", TEST_TIME);
+        c1.adjustLikeCount(10, TEST_TIME);
         when(counterRepository.findByVids(List.of("vid_1", "vid_2"))).thenReturn(List.of(c1));
 
         Map<String, VideoCounter> result = service.getBatchVideoStats(List.of("vid_1", "vid_2"));
@@ -111,29 +120,29 @@ class InteractionQueryApplicationServiceTest {
         service.recordShare("vid_100", "user_01", "idem_key_1");
 
         org.mockito.Mockito.verify(shareRecordRepository).save(org.mockito.ArgumentMatchers.any());
-        org.mockito.Mockito.verify(counterDeltaRepository).incrementShareCount("vid_100", "share:user_01:idem_key_1", 1L);
-        org.mockito.Mockito.verify(eventPublisher).publishVideoAction(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(counterDeltaRepository).incrementShareCount(org.mockito.ArgumentMatchers.eq("vid_100"), org.mockito.ArgumentMatchers.eq("share:user_01:idem_key_1"), org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
+        org.mockito.Mockito.verify(eventPublisher).publishVideoAction(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
     }
 
     @Test
     @DisplayName("相同用户相同幂等键重试分享同一视频时不重复自增计数且不发布事件")
     void shouldBeIdempotentOnDuplicateShareKeyForSameVideo() {
         InteractionShareRecord existing =
-                InteractionShareRecord.create("idem_key_1", "user_01", "vid_100");
+                InteractionShareRecord.create("idem_key_1", "user_01", "vid_100", TEST_INSTANT);
         when(shareRecordRepository.findByUserIdAndIdempotencyKey("user_01", "idem_key_1")).thenReturn(Optional.of(existing));
 
         service.recordShare("vid_100", "user_01", "idem_key_1");
 
         org.mockito.Mockito.verify(shareRecordRepository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
-        org.mockito.Mockito.verify(counterDeltaRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
-        org.mockito.Mockito.verify(eventPublisher, org.mockito.Mockito.never()).publishVideoAction(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(counterDeltaRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
+        org.mockito.Mockito.verify(eventPublisher, org.mockito.Mockito.never()).publishVideoAction(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
     }
 
     @Test
     @DisplayName("相同用户复用相同幂等键分享不同视频时抛出409冲突异常")
     void shouldThrowConflictWhenShareKeyReusedForDifferentVideo() {
         InteractionShareRecord existing =
-                InteractionShareRecord.create("idem_key_1", "user_01", "vid_100");
+                InteractionShareRecord.create("idem_key_1", "user_01", "vid_100", TEST_INSTANT);
         when(shareRecordRepository.findByUserIdAndIdempotencyKey("user_01", "idem_key_1")).thenReturn(Optional.of(existing));
 
         InteractionException exception = org.junit.jupiter.api.Assertions.assertThrows(
@@ -142,7 +151,7 @@ class InteractionQueryApplicationServiceTest {
 
         assertThat(exception.getStatus()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(exception.getMessage()).isEqualTo("幂等键已被用于其他分享请求");
-        org.mockito.Mockito.verify(counterDeltaRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
+        org.mockito.Mockito.verify(counterDeltaRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
     }
 
     @Test
@@ -153,15 +162,15 @@ class InteractionQueryApplicationServiceTest {
         service.recordShare("vid_200", "user_02", "idem_key_1");
 
         org.mockito.Mockito.verify(shareRecordRepository).save(org.mockito.ArgumentMatchers.any());
-        org.mockito.Mockito.verify(counterDeltaRepository).incrementShareCount("vid_200", "share:user_02:idem_key_1", 1L);
-        org.mockito.Mockito.verify(eventPublisher).publishVideoAction(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(counterDeltaRepository).incrementShareCount(org.mockito.ArgumentMatchers.eq("vid_200"), org.mockito.ArgumentMatchers.eq("share:user_02:idem_key_1"), org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
+        org.mockito.Mockito.verify(eventPublisher).publishVideoAction(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(java.time.Instant.class));
     }
 
     @Test
     @DisplayName("并发插入触发唯一键冲突时能通过当前读(FOR UPDATE)穿透快照判定幂等命中")
     void shouldHandleConcurrentDuplicateKeyGracefullyWithCurrentRead() {
         InteractionShareRecord existing =
-                InteractionShareRecord.create("idem_key_1", "user_01", "vid_100");
+                InteractionShareRecord.create("idem_key_1", "user_01", "vid_100", TEST_INSTANT);
         when(shareRecordRepository.findByUserIdAndIdempotencyKey("user_01", "idem_key_1"))
                 .thenReturn(Optional.empty());
         when(shareRecordRepository.findByUserIdAndIdempotencyKeyForUpdate("user_01", "idem_key_1"))
@@ -172,14 +181,14 @@ class InteractionQueryApplicationServiceTest {
         service.recordShare("vid_100", "user_01", "idem_key_1");
 
         org.mockito.Mockito.verify(shareRecordRepository).findByUserIdAndIdempotencyKeyForUpdate("user_01", "idem_key_1");
-        org.mockito.Mockito.verify(counterDeltaRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong());
+        org.mockito.Mockito.verify(counterDeltaRepository, org.mockito.Mockito.never()).incrementShareCount(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
     }
 
     @Test
     @DisplayName("并发插入触发唯一键冲突且当前读查出不同视频时抛出409")
     void shouldThrowConflictWhenConcurrentDuplicateKeyHasDifferentVideo() {
         InteractionShareRecord existing =
-                InteractionShareRecord.create("idem_key_1", "user_01", "vid_100");
+                InteractionShareRecord.create("idem_key_1", "user_01", "vid_100", TEST_INSTANT);
         when(shareRecordRepository.findByUserIdAndIdempotencyKey("user_01", "idem_key_1"))
                 .thenReturn(Optional.empty());
         when(shareRecordRepository.findByUserIdAndIdempotencyKeyForUpdate("user_01", "idem_key_1"))

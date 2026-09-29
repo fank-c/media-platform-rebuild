@@ -1,5 +1,10 @@
 package com.calles.platform.interaction.infrastructure.persistence.repository;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -22,6 +27,10 @@ import org.junit.jupiter.api.Test;
  * 计数增量仓储 MyBatis-Plus 实现单元测试。
  */
 class CounterDeltaRepositoryTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-27T12:00:00Z");
+    private static final Clock TEST_CLOCK = Clock.fixed(TEST_INSTANT, ZoneOffset.UTC);
+    private static final LocalDateTime TEST_TIME = LocalDateTime.ofInstant(TEST_INSTANT, ZoneOffset.UTC);
+
 
     @Test
     @DisplayName("无活跃业务事务时追加增量必须抛出异常")
@@ -29,7 +38,7 @@ class CounterDeltaRepositoryTest {
         InteractionCounterDeltaMapper mapper = mock(InteractionCounterDeltaMapper.class);
         CounterDeltaRepositoryImpl repository = new CounterDeltaRepositoryImpl(mapper);
 
-        CounterDelta delta = CounterDelta.create("v1", CounterType.VIEW, 1L, "WATCH_PLAY", "w_001");
+        CounterDelta delta = CounterDelta.create("v1", CounterType.VIEW, 1L, "WATCH_PLAY", "w_001", TEST_TIME);
 
         assertThatThrownBy(() -> repository.append(delta))
                 .isInstanceOf(IllegalStateException.class)
@@ -71,14 +80,14 @@ class CounterDeltaRepositoryTest {
     @Test
     @DisplayName("P1约束：创建VIEW/SHARE为非正增量时必须拒绝抛出异常")
     void rejectsNonPositiveViewOrShareDelta() {
-        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.VIEW, 0L, "WATCH_PLAY", "w_1"))
+        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.VIEW, 0L, "WATCH_PLAY", "w_1", TEST_TIME))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.VIEW, -1L, "WATCH_PLAY", "w_1"))
+        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.VIEW, -1L, "WATCH_PLAY", "w_1", TEST_TIME))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("播放量和分享量增量必须为严格正整数");
 
-        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.SHARE, -2L, "SHARE", "key_1"))
+        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.SHARE, -2L, "SHARE", "key_1", TEST_TIME))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("播放量和分享量增量必须为严格正整数");
     }
@@ -86,11 +95,11 @@ class CounterDeltaRepositoryTest {
     @Test
     @DisplayName("P2约束：缺失事实来源类型或标识时必须拒绝抛出异常")
     void rejectsMissingSourceInformation() {
-        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.LIKE, 1L, "", "s_1"))
+        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.LIKE, 1L, "", "s_1", TEST_TIME))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("业务事实来源类型不能为空");
 
-        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.LIKE, 1L, "LIKE_ACTIVE", "  "))
+        assertThatThrownBy(() -> CounterDelta.create("v1", CounterType.LIKE, 1L, "LIKE_ACTIVE", "  ", TEST_TIME))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("业务事实来源标识不能为空");
     }

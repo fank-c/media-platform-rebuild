@@ -1,5 +1,10 @@
 package com.calles.platform.interaction.interfaces.http;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -27,6 +32,10 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
 class InteractionLikeControllerTest {
+    private static final Instant TEST_INSTANT = Instant.parse("2026-09-27T12:00:00Z");
+    private static final Clock TEST_CLOCK = Clock.fixed(TEST_INSTANT, ZoneOffset.UTC);
+    private static final LocalDateTime TEST_TIME = LocalDateTime.ofInstant(TEST_INSTANT, ZoneOffset.UTC);
+
 
     private MockMvc mockMvc;
 
@@ -78,7 +87,7 @@ class InteractionLikeControllerTest {
     void getLikedVideosSuccessfully() throws Exception {
         UserInfo sampleUser = new UserInfo("user_001", "USER", "user", "session_001");
         when(accessPolicy.requireUser()).thenReturn(sampleUser);
-        VideoLike like = VideoLike.create("cv_200", "user_001");
+        VideoLike like = VideoLike.create("cv_200", "user_001", TEST_TIME);
         when(likeService.getLikedVideos(eq("user_001"), eq(1), eq(20))).thenReturn(List.of(like));
 
         mockMvc.perform(get("/api/interactions/likes")

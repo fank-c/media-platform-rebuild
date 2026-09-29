@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.repository;
 
 import com.calles.platform.interaction.domain.model.star.StarFolder;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -80,6 +81,7 @@ public interface StarFolderRepository {
      * 根据主键逻辑删除收藏夹。
      *
      * @param id 收藏夹 ID
+     * @param now 应用层提供的 UTC 业务时间，用于更新时间
      */
-    void deleteById(String id);
+    void deleteById(String id, LocalDateTime now);
 }

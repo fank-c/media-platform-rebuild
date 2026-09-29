@@ -5,7 +5,9 @@ import com.calles.platform.interaction.domain.model.star.StarFolder;
 import com.calles.platform.interaction.domain.repository.StarFolderRepository;
 import com.calles.platform.interaction.infrastructure.persistence.entity.StarFolderPO;
 import com.calles.platform.interaction.infrastructure.persistence.mapper.StarFolderMapper;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
@@ -110,10 +112,12 @@ public class StarFolderRepositoryImpl implements StarFolderRepository {
     }
 
     @Override
-    public void deleteById(String id) {
+    public void deleteById(String id, LocalDateTime now) {
+        Objects.requireNonNull(now, "收藏夹删除时间不能为空");
         if (id == null || id.isBlank()) {
             return;
         }
-        mapper.deleteFolderById(id.trim());
+        // 物理写入与领域对象保持同一 UTC 时间快照。
+        mapper.deleteFolderById(id.trim(), now);
     }
 }

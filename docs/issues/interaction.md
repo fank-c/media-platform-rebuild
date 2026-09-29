@@ -165,10 +165,11 @@
 - **影响**：
   - 同一次事务内的时间戳可能差几毫秒到几十毫秒。
   - 单元测试无法模拟时间，难以测试时间相关逻辑（如冷却期、保留期）。
-- **建议**：
-  - 注入 `Clock`（配置里已有 `@Bean Clock`），由应用层统一传入 `now`。
-  - 领域实体接受 `LocalDateTime now` 或 `Instant now` 参数，不自己调用静态方法。
-  - 测试时注入 `Clock.fixed()` 控制时间。
+- **实施进展（待验收）**：已按方案 B 收敛互动生产代码中的静态当前时间调用，领域方法显式接收 UTC 时间；观看心跳、计数、收藏、点赞、分享及元数据快照注入统一时钟。完整验收与本地数据库集成验证完成前仍保持待处理。详见[互动时间源统一实施方案](../plans/interaction-time-source-unification-implementation.md)。
+  - 所有需要当前时间的应用服务、调度服务和基础设施组件通过构造器注入 `Clock`；生产统一使用 UTC。
+  - 一个用例入口只读取一次 `now`，同一事务内向所有领域变更、事件和时间阈值计算传递同一时间快照。
+  - `VideoLike`、`StarFolder`、`StarItem`、`VideoCounter`、`CounterDelta`、`InteractionShareRecord` 及观看相关实体的创建、恢复、删除和状态更新方法显式接收时间参数，不再调用静态 `now()`。
+  - 持久化转换层不再在缺少时间时静默生成当前时间；测试使用 `Clock.fixed()`，并验证 UTC 和非 UTC 默认时区下的结果一致。
 
 ### INT-13 起播残留代码和 `PLAY_START` 常量没人用 ✅ 已解决
 

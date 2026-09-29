@@ -403,7 +403,13 @@ DDL 以 [`db/init/schema.sql`](../../db/init/schema.sql) 为准，增量迁移�
 
 ---
 
-## 8. 配置
+## 8. 时间源约定
+
+互动服务所有业务“当前时间”统一通过注入的 `Clock` 获取，生产使用 UTC。应用服务在一个用例入口只读取一次 `now`，向领域实体、计数增量、Outbox 事件和阈值计算传递同一时间快照；领域实体和持久化转换层不得直接调用 `LocalDateTime.now()` 或 `Instant.now()`。
+
+领域对象的创建、恢复、删除和状态更新方法显式接收 `LocalDateTime` 或 `Instant` 时间参数；需要时间间隔的规则使用 `Duration`。MySQL `DATETIME(3)` 字段按 UTC 语义读写，不在持久化层根据系统默认时区补当前时间。`application/InteractionTime.java` 负责单次 `Clock` 读取的 UTC 转换；收藏明细复活、收藏夹删除和计数汇总快照的 Mapper 写入均显式绑定用例时间，不使用数据库 `CURRENT_TIMESTAMP`。事件 `occurredAt` 使用用例传入时间，`published_at` 使用实际投递成功时刻。完整实施步骤见[互动时间源统一实施方案](../plans/interaction-time-source-unification-implementation.md)。
+
+## 9. 配置
 
 | 配置键 | 环境变量 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
@@ -431,7 +437,7 @@ DDL 以 [`db/init/schema.sql`](../../db/init/schema.sql) 为准，增量迁移�
 
 ---
 
-## 9. 源码索引
+## 10. 源码索引
 
 | 位置 | 类 |
 | :--- | :--- |

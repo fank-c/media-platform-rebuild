@@ -8,6 +8,7 @@ import com.calles.platform.interaction.domain.model.share.InteractionShareRecord
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Objects;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -54,7 +55,7 @@ public class InteractionShareRecordPO {
      * @return 领域实体
      */
     public InteractionShareRecord toDomain() {
-        Instant instant = this.createdAt != null ? this.createdAt.toInstant(ZoneOffset.UTC) : Instant.now();
+        Instant instant = Objects.requireNonNull(this.createdAt, "分享记录创建时间不能为空").toInstant(ZoneOffset.UTC);
         return new InteractionShareRecord(this.id, this.idempotencyKey, this.userId, this.vid, instant,
                 this.deleted != null && this.deleted == 1);
     }
@@ -69,9 +70,9 @@ public class InteractionShareRecordPO {
         if (domain == null) {
             return null;
         }
-        LocalDateTime ldt = domain.getCreatedAt() != null
-                ? LocalDateTime.ofInstant(domain.getCreatedAt(), ZoneOffset.UTC)
-                : LocalDateTime.now(ZoneOffset.UTC);
+        // 缺失时间意味着记录不完整，不能伪造新的业务发生时刻。
+        LocalDateTime ldt = LocalDateTime.ofInstant(
+                Objects.requireNonNull(domain.getCreatedAt(), "分享记录创建时间不能为空"), ZoneOffset.UTC);
         return InteractionShareRecordPO.builder()
                 .id(domain.getId())
                 .idempotencyKey(domain.getIdempotencyKey())

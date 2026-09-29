@@ -1,6 +1,7 @@
 package com.calles.platform.interaction.domain.model.like;
 
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -48,9 +49,10 @@ public class VideoLike {
      *
      * @param vid 视频公开短码
      * @param userId 点赞用户 ID
+     * @param now 应用层传入的 UTC 业务时间
      * @return 激活状态的点赞实体
      */
-    public static VideoLike create(String vid, String userId) {
+    public static VideoLike create(String vid, String userId, LocalDateTime now) {
         if (vid == null || vid.isBlank()) {
             throw new IllegalArgumentException("视频业务短码不能为空");
         }
@@ -58,7 +60,7 @@ public class VideoLike {
             throw new IllegalArgumentException("用户账号ID不能为空");
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        Objects.requireNonNull(now, "业务时间不能为空");
         return VideoLike.builder()
                 .id(UUID.randomUUID().toString().replace("-", ""))
                 .vid(vid.trim())
@@ -73,40 +75,44 @@ public class VideoLike {
 
     /**
      * 逻辑删除点赞事实。
+     * @param now 应用层传入的 UTC 业务时间
      */
-    public void markDeleted() {
+    public void markDeleted(LocalDateTime now) {
         this.deleted = true;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = Objects.requireNonNull(now, "业务时间不能为空");
     }
 
     /**
      * 取消点赞操作。
+     * @param now 应用层传入的 UTC 业务时间
      *
      * @return true 若状态发生实质变更（原先为 ACTIVE）；false 若已处于取消状态（幂等）
      */
-    public boolean cancel() {
+    public boolean cancel(LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (this.status == LikeStatus.CANCELLED) {
             return false;
         }
         this.status = LikeStatus.CANCELLED;
         this.version++;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = now;
         return true;
     }
 
     /**
      * 重新激活点赞（此前曾取消点赞）。
+     * @param now 应用层传入的 UTC 业务时间
      *
      * <p>状态重新置为 ACTIVE，版本号单调递增，并刷新有效点赞建立时间与最近更新时间，
      * 确保重新点赞的作品按最新点赞时间排列在点赞列表前列（与收藏明细自愈复活保持一致）。</p>
      *
      * @return true 若状态发生实质变更（原先为 CANCELLED）；false 若已处于点赞状态（幂等）
      */
-    public boolean reactivate() {
+    public boolean reactivate(LocalDateTime now) {
+        Objects.requireNonNull(now, "业务时间不能为空");
         if (this.status == LikeStatus.ACTIVE) {
             return false;
         }
-        LocalDateTime now = LocalDateTime.now();
         this.status = LikeStatus.ACTIVE;
         this.deleted = false;
         this.version++;
