@@ -1,7 +1,6 @@
 package com.calles.platform.recommend.interfaces.web;
 
 import com.calles.platform.common.web.context.UserContext;
-import com.calles.platform.recommend.application.service.FeedbackApplicationService;
 import com.calles.platform.recommend.application.service.RecommendFeedBufferService;
 import com.calles.platform.recommend.application.service.UserBlockApplicationService;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,19 +28,20 @@ class RecommendHttpErrorTest {
         UserContext.clear();
         buffer = mock(RecommendFeedBufferService.class);
         mvc = MockMvcBuilders.standaloneSetup(new RecommendFeedController(buffer,
-                mock(FeedbackApplicationService.class), mock(UserBlockApplicationService.class)))
+                mock(UserBlockApplicationService.class)))
                 .setControllerAdvice(new RecommendExceptionHandler())
                 .build();
     }
 
-    /** 未知反馈枚举及服务端专属行为均属于客户端参数错误。 */
+    /** 已删除的客户端反馈入口不能再接收行为，也不能调用推荐或屏蔽服务。 */
     @Test
-    void rejectsUnknownActions() throws Exception {
-        for (String action : new String[]{"UNKNOWN", "LIKE", "WATCH_COMPLETED"}) {
-            assertError(mvc.perform(post("/api/recommend/feedback")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content("{\"vid\":\"cv_test\",\"actionType\":\"" + action + "\"}")), 400);
-        }
+    void feedbackEndpointIsNotMapped() throws Exception {
+        mvc.perform(post("/api/recommend/feedback")
+                .header("X-User-Id", "user_test")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"vid\":\"cv_test\",\"actionType\":\"PLAY\"}"))
+                .andExpect(status().isNotFound());
+        verifyNoInteractions(buffer);
     }
 
     /** 添加与撤销屏蔽都必须将非法维度映射为 400 而非 401。 */
@@ -57,12 +57,10 @@ class RecommendHttpErrorTest {
     /** 请求体校验、JSON 格式及查询参数转换失败均输出统一外壳。 */
     @Test
     void rejectsInvalidRequests() throws Exception {
-        assertError(mvc.perform(post("/api/recommend/feedback").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"vid\":\"\",\"actionType\":\"PLAY\"}")), 400);
         assertError(mvc.perform(post("/api/recommend/blocks").header("X-User-Id", "user_test")
                 .contentType(MediaType.APPLICATION_JSON).content("{}")), 400);
-        assertError(mvc.perform(post("/api/recommend/feedback").contentType(MediaType.APPLICATION_JSON)
-                .content("{")), 400);
+        assertError(mvc.perform(post("/api/recommend/blocks").header("X-User-Id", "user_test")
+                .contentType(MediaType.APPLICATION_JSON).content("{")), 400);
         assertError(mvc.perform(get("/api/recommend/feed").param("size", "invalid")), 400);
         assertError(mvc.perform(delete("/api/recommend/blocks").header("X-User-Id", "user_test")
                 .param("blockType", "VIDEO")), 400);

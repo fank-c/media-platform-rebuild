@@ -13,7 +13,7 @@
 - **视频向量化与发布门禁**：消费 `content.video.submitted`，计算视频特征向量写入 Qdrant 与自属表，再回调 `content-service` 汇报 `VECTOR_EMBEDDING` 完成。
 - **候选池生命周期**：消费 `content.video.published` 入池（`ACTIVE`），消费 `content.video.offline` / `content.video.banned` 出池（`OFFLINE` / `BANNED`）。
 - **首页推荐流**：四路召回（个性化、探索、热度、关注）→ 四道硬过滤 → 槽位交织 → 冷启动补齐 → 同作者打散。
-- **行为反馈与画像**：接收客户端上报的曝光、播放、跳过、负反馈，以及 `interaction-service` 经 Outbox 投递的点赞、收藏、分享、有效观看和完播事件，记入流水并驱动用户画像演进。
+- **行为事件与画像**：消费 `interaction-service` 经 Outbox 投递的点赞、收藏、分享、有效观看和完播事件，以及用户服务的关注/取关事件，记入流水并按适用规则驱动画像。推荐侧不接受客户端直接上报行为。
 - **用户屏蔽**：维护视频、作者、主题三个维度的黑名单，作为推荐硬过滤条件。
 
 ### 1.2 防腐与禁止承担的工作
@@ -106,17 +106,16 @@ graph TD
 
 所有端点挂载于 `/api/recommend/**`，由网关转发至 `lb://recommend-service`。
 
-> **鉴权现状**：`/api/recommend/**` 不在网关白名单，**经网关访问的所有推荐接口都需要令牌**。代码中的“游客态”分支只在绕过网关直连服务时生效。
+> **鉴权现状**：`GET /api/recommend/feed` 允许游客访问；`/api/recommend/blocks` 的三个端点要求登录。推荐侧不提供客户端行为上报接口。
 
 | HTTP 方法 | URI 路径 | 服务内鉴权 | 处理流程 | 关键响应 |
 | :--- | :--- | :--- | :--- | :--- |
 | `GET` | `/api/recommend/feed` | 可选用户态 | 缓冲队列弹出或实时计算 → 返回推荐短码列表 | `200` |
-| `POST` | `/api/recommend/feedback` | 可选用户态 | 记入 `recommend_feedback_log` → 按行为类型更新画像（游客只记流水） | `200` |
 | `POST` | `/api/recommend/blocks` | 必须登录 | 新增视频/作者/主题屏蔽，写 `recommend_user_block` | `200` 返回屏蔽记录 |
 | `DELETE` | `/api/recommend/blocks?blockType=&targetId=` | 必须登录 | 撤销指定屏蔽 | `200` |
 | `GET` | `/api/recommend/blocks` | 必须登录 | 查询当前用户全部屏蔽 | `200` 返回列表 |
 
-**错误处理**：`RecommendExceptionHandler` 使用公共 `ApiResponse` 外壳。未知 `actionType` / `blockType`、请求体校验或 JSON 解析错误、查询参数转换错误返回 `400`；屏蔽接口缺少身份以独立 `MissingIdentityException` 返回 `401`；未知故障返回 `500` 通用提示。框架协议错误保留原状态，不回显用户输入或内部异常。网关鉴权和服务内游客分支不变。
+**错误处理**：`RecommendExceptionHandler` 使用公共 `ApiResponse` 外壳。未知 `blockType`、请求体校验或 JSON 解析错误、查询参数转换错误返回 `400`；屏蔽接口缺少身份以独立 `MissingIdentityException` 返回 `401`；未知故障返回 `500` 通用提示。框架协议错误保留原状态，不回显用户输入或内部异常。网关鉴权和服务内游客分支不变。
 
 ### 4.1 首页推荐流：`GET /api/recommend/feed`
 
@@ -143,31 +142,7 @@ graph TD
 - `score` 保留 4 位小数，只用于排序参考，不同通道之间不可直接比较。
 - **没有游标**：翻页靠服务端缓冲队列逐批弹出，客户端重复调用即可取下一批。
 
-### 4.2 行为反馈：`POST /api/recommend/feedback`
-
-| 字段 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `vid` | string | 是 | 视频短码 |
-| `actionType` | string | 是 | `IMPRESSION` / `PLAY` / `SKIP` / `DISLIKE`，大小写不敏感 |
-| `playDuration` | int | 否 | 实际播放秒数，缺省 0 |
-| `videoDuration` | int | 否 | 视频总秒数，缺省 0 |
-| `reason` | string | 否 | 负反馈原因；`DISLIKE_AUTHOR` 表示屏蔽作者，其余按屏蔽视频处理 |
-| `occurredAt` | datetime | 否 | 客户端行为时间，缺省取服务端当前时间 |
-
-画像更新规则（仅登录用户）：
-
-| 行为 | 触发条件 | 画像变化 |
-| :--- | :--- | :--- |
-| `PLAY` | 播放比例 >= 30% 或播放 >= 10 秒 | 用视频向量按 EMA（指数移动平均，新数据按固定权重逐步融入）更新用户向量，累加主题偏好，记入近期已看 |
-| `SKIP` | 播放比例 < 10% 且播放 < 3 秒 | 记一次粗领域“曝光未消费”，后续对该领域打折 |
-| `DISLIKE` | 无 | 自动写入屏蔽（作者或视频），并记一次粗领域曝光未消费 |
-| `IMPRESSION` | 无 | 只记流水 |
-
-> 注意：播放时长、视频时长都来自客户端，服务端不做校验。
->
-> **边界隔离说明**：HTTP 接口仅接受客户端直接视口/手势行为（`IMPRESSION`、`PLAY`、`SKIP`、`DISLIKE`），由 `ClientFeedbackAction` 强类型约束；点赞（`LIKE`）、收藏（`STAR`）、分享（`SHARE`）、完播（`WATCH_COMPLETED`）等行为严格限定由 `interaction-service` 服务端核验后经 RabbitMQ 异步接入，客户端直接上报将被拦截并返回错误。
-
-### 4.3 用户屏蔽：`/api/recommend/blocks`
+### 4.2 用户屏蔽：`/api/recommend/blocks`
 
 `POST` 请求体：`blockType`（`VIDEO` / `AUTHOR` / `TOPIC`）、`targetId`、`reason`（可选）。
 
@@ -190,6 +165,8 @@ graph TD
 - 本服务**不发布**任何领域事件。
 - 交互事件只由 `InteractionEventConsumer` 消费；统一队列仅绑定两个生产端当前使用的路由，不保留旧消费者、队列别名或预留版本路由。
 - 关注事件在同一本地事务内写入 `recommend_event_consumed` 与 `recommend_feedback_log`，两表的 `vid` 均允许为空；当前仅记录关注/取关事实，不更新作者兴趣画像，也不参与关注召回。
+- `recommend_feedback_log` 仅接受 MQ 互动动作：`LIKE`、`UNLIKE`、`STAR`、`UNSTAR`、`SHARE`、`WATCH_VIEW_QUALIFIED`、`WATCH_COMPLETED`、`FOLLOW`、`UNFOLLOW`。有效观看与完播各保留原始语义，不能合并为两次播放。
+- 当前不采集客户端曝光或跳过。画像中的领域状态模型保留，但没有客户端未消费信号写入入口；批次未选内容处理需另行设计。
 - 空库以 `db/init/schema.sql` 初始化，结构与本模块 `db/schema/` 保持一致；当前设计直接替换，不设置兼容期或增量升级前置条件。
 - 视频互动计数值归 `interaction-service` 所有；作者关注关系聚合根归 `user-service` 所有，推荐侧仅消费事实事件用于交互反馈与画像演进，不镜像关注列表。
 
@@ -340,7 +317,7 @@ sequenceDiagram
 | :--- | :---: | :--- | :--- | :--- |
 | `PERSONALIZED` 核心个性化 | 50% | 已登录且有非空用户向量 | Qdrant ANN（近似最近邻检索）取 `max(count×4, 30)` 条；得分 = 余弦分 × 粗领域抑制系数 + 主题加分（上限 0.5） | 返回空，由其他通道吸收 |
 | `EXPLORE` 探索 | 30% | 始终执行 | 约 2/3 近似探索：检索前 35 条后倒序取弱相关，并要求主领域在用户已有领域内；约 1/3 跨领域：从最新候选中挑用户未接触过的主领域 | 用最新 `ACTIVE` 候选补齐 |
-| `TRENDING` 热度 | 10% | 始终执行 | 统计 `recommend_feedback_log` 近 24 小时播放最多的视频 | 用最新 `ACTIVE` 候选补齐 |
+| `TRENDING` 热度 | 10% | 始终执行 | 统计 `recommend_feedback_log` 近 24 小时 `WATCH_VIEW_QUALIFIED` 事件次数最多的视频；完播不再计数，也不等同于公开播放量 | 用最新 `ACTIVE` 候选补齐 |
 | `FOLLOWING` 关注 | 10% | 已登录 | 用户服务查询最近最多 1000 个有效关注作者；候选池查询窗口内最新 100 条 ACTIVE 作品，互动服务批量提供累计公开播放量，按时间衰减与播放量排序 | 无物料或关注查询失败时由其他通道吸收；统计失败按零播放量保留时间排序 |
 
 - 每个通道请求量 = `max(期望条数×2, 4)`，用于抵消后续过滤损耗。
@@ -438,7 +415,7 @@ flowchart LR
 - **缓冲队列门面**：[`RecommendFeedBufferService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedBufferService.java)
 - **推荐编排**：[`RecommendFeedApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/RecommendFeedApplicationService.java)
 - **召回通道**：[`channel/impl/`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/channel/impl/)（`PersonalizedRecallChannel`、`ExploreRecallChannel`、`TrendingRecallChannel`、`FollowingRecallChannel`）
-- **行为反馈与画像**：[`FeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/FeedbackApplicationService.java)、[`InteractionFeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/InteractionFeedbackApplicationService.java)、[`AuthorInteractionApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/AuthorInteractionApplicationService.java)
+- **行为事件与画像**：[`InteractionFeedbackApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/InteractionFeedbackApplicationService.java)、[`AuthorInteractionApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/AuthorInteractionApplicationService.java)
 - **用户屏蔽**：[`UserBlockApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/UserBlockApplicationService.java)
 - **向量编排**：[`VideoVectorApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/VideoVectorApplicationService.java)
 - **候选池编排**：[`CandidateVideoApplicationService.java`](../../service/recommend-service/src/main/java/com/calles/platform/recommend/application/service/CandidateVideoApplicationService.java)
@@ -469,5 +446,5 @@ flowchart LR
 | REC-01 | 下架路由已统一为 `content.video.offline`，不保留双路由 | 消费后候选为 `OFFLINE`，已有 Redis 缓冲仍受 REC-02 影响 | 已实现待 RabbitMQ 联调验收 |
 | REC-02 | 缓冲队列中的物料弹出时不再过滤 | 新屏蔽或刚下线的视频最多在 1 小时内仍可能被下发 | 待评估 |
 | REC-03 | 已增加推荐模块 HTTP 异常映射与独立身份异常 | 参数 `400`、缺少身份 `401`、未知故障 `500`，统一响应外壳 | 已实现，MVC 回归覆盖 |
-| REC-04 | 反馈的播放时长和视频时长完全信任客户端 | 画像可被伪造上报影响 | 待决策 |
+| REC-04 | 客户端反馈链路已删除，画像只消费源服务事件 | 不再接受客户端直接上报播放时长 | 已清理，回归覆盖 |
 | REC-05 | 未消费 `content.video.unbanned` | 解封后的视频在候选池中仍为 `BANNED`，不会重新被推荐（内容服务解封时只发 `unbanned`，不重发 `published`） | 待处理 |

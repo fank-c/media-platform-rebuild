@@ -117,10 +117,9 @@ Authorization: Bearer <accessToken>
 | POST | `/api/interactions/videos/stats` | 匿名 / 已登录 | 批量视频公开计数 |
 | POST | `/api/interactions/videos/{vid}/share` | 已登录，需 `Idempotency-Key` | 记录分享 |
 | GET | `/api/recommend/feed` | 匿名 / 已登录 | 首页推荐流（游客看高热榜，登录用户个性化） |
-| POST | `/api/recommend/feedback` | 已登录 | 上报曝光 / 播放 / 跳过 / 负反馈（需登录） |
 | GET / POST / DELETE | `/api/recommend/blocks` | 已登录 | 查询 / 新增 / 撤销推荐屏蔽 |
 
-网关配置了游客只读模式白名单：`/api/content/videos/**`（视频详情与流切片）、`/api/interactions/videos/*/stat`、`/api/interactions/videos/stats`（公开统计）及 `/api/recommend/feed`（首页推荐流）允许未登录匿名访问。观看心跳 `/api/interactions/videos/{vid}/heartbeat`、点赞/收藏/分享及个人历史记录**严格不在白名单中**，未登录访问直接由网关拦截返回 401，游客观看一律不计入播放量、不产生服务端历史。推荐行为反馈与屏蔽接口亦要求登录态。各微服务内部回调与受控端点（挂载于 `/internal/**`）由网关统一拦截，仅限集群内网受信通信。网关另配置 `/actuator/health`、`/actuator/info` 白名单作为管理探针。
+网关配置了游客只读模式白名单：`/api/content/videos/**`（视频详情与流切片）、`/api/interactions/videos/*/stat`、`/api/interactions/videos/stats`（公开统计）及 `/api/recommend/feed`（首页推荐流）允许未登录匿名访问。观看心跳 `/api/interactions/videos/{vid}/heartbeat`、点赞/收藏/分享及个人历史记录**严格不在白名单中**，未登录访问直接由网关拦截返回 401，游客观看一律不计入播放量、不产生服务端历史。推荐屏蔽接口要求登录态。各微服务内部回调与受控端点（挂载于 `/internal/**`）由网关统一拦截，仅限集群内网受信通信。网关另配置 `/actuator/health`、`/actuator/info` 白名单作为管理探针。
 
 ## 2. 认证接口
 
@@ -1314,8 +1313,9 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 
 推荐模块（`recommend-service`）挂载于 `/api/recommend/**`，只返回推荐决策（视频短码），详情由客户端向内容服务获取。实现细节见 [推荐模块](modules/recommend.md)。
 
-- 首页推荐流 `/api/recommend/feed` 已加入网关白名单，未登录游客可直接访问获取热度推荐榜；行为流水上报 `/api/recommend/feedback` 与屏蔽接口 `/api/recommend/blocks` 仍必须携带有效登录令牌。
-- 推荐模块统一使用 `ApiResponse` 错误外壳：未知 `actionType` / `blockType`、请求体校验或解析失败、查询参数类型错误返回 HTTP `400`；屏蔽接口缺少服务内身份返回 `401`；未知故障返回 `500` 和通用提示，不泄漏内部异常。响应 `code` 与 HTTP 状态一致，`data=null`。框架协议错误保留原状态（如 `405`）。
+- 首页推荐流 `/api/recommend/feed` 已加入网关白名单，未登录游客可直接访问获取热度推荐榜；屏蔽接口 `/api/recommend/blocks` 必须携带有效登录令牌。
+- 推荐不提供客户端行为上报接口。观看、点赞、收藏和分享由互动服务处理，经 MQ 通知推荐侧；主动推荐屏蔽使用 `/api/recommend/blocks`。当前不采集曝光和跳过，不提供批次未选内容结算能力。
+- 推荐模块统一使用 `ApiResponse` 错误外壳：未知 `blockType`、请求体校验或解析失败、查询参数类型错误返回 HTTP `400`；屏蔽接口缺少服务内身份返回 `401`；未知故障返回 `500` 和通用提示，不泄漏内部异常。响应 `code` 与 HTTP 状态一致，`data=null`。框架协议错误保留原状态（如 `405`）。
 
 ### 首页推荐流：GET /api/recommend/feed
 
@@ -1323,19 +1323,6 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 - 登录用户优先从 Redis 待看队列弹出，队列为空时现场生成；重复调用即取下一批，**没有游标**。
 - 响应 `data`：`{ items: [{ vid, recallChannel, score, reason }], hasMore }`。
 - `recallChannel`：`PERSONALIZED` / `EXPLORE_SIMILAR` / `EXPLORE_RANDOM` / `TRENDING` / `COLD_START`（`FOLLOWING` 当前不会出现）。
-
-### 行为反馈：POST /api/recommend/feedback
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `vid` | string | 是 | 视频短码 |
-| `actionType` | string | 是 | `IMPRESSION` / `PLAY` / `SKIP` / `DISLIKE` |
-| `playDuration` | int | 否 | 实际播放秒数 |
-| `videoDuration` | int | 否 | 视频总秒数 |
-| `reason` | string | 否 | `DISLIKE_AUTHOR` 屏蔽作者，其余按屏蔽视频处理 |
-| `occurredAt` | datetime | 否 | 行为发生时间 |
-
-成功 `200`，`data=null`。游客只记流水，不更新画像。
 
 ### 推荐屏蔽：/api/recommend/blocks
 

@@ -35,7 +35,7 @@ class FeedbackLogRepositoryImplTest {
     @DisplayName("save：单笔保存行为流水")
     void shouldSaveFeedbackLog() {
         FeedbackLog log = FeedbackLog.record(
-                "u_100", "vid_999", FeedbackActionType.PLAY, 30, 60, "d1", "t1,t2", "a1", "trace-1", LocalDateTime.now()
+                "u_100", "vid_999", FeedbackActionType.WATCH_VIEW_QUALIFIED, 30, 60, "d1", "t1,t2", "a1", "trace-1", LocalDateTime.now()
         );
         when(feedbackLogMapper.insert(any(FeedbackLogPO.class))).thenReturn(1);
 
@@ -47,8 +47,8 @@ class FeedbackLogRepositoryImplTest {
     @Test
     @DisplayName("saveBatch：批量保存行为流水")
     void shouldSaveBatchFeedbackLogs() {
-        FeedbackLog log1 = FeedbackLog.record("u_100", "v1", FeedbackActionType.IMPRESSION, 0, 60, null, null, null, null, null);
-        FeedbackLog log2 = FeedbackLog.record("u_100", "v2", FeedbackActionType.SKIP, 2, 60, null, null, null, null, null);
+        FeedbackLog log1 = FeedbackLog.record("u_100", "v1", FeedbackActionType.LIKE, 0, 60, null, null, null, null, null);
+        FeedbackLog log2 = FeedbackLog.record("u_100", "v2", FeedbackActionType.WATCH_COMPLETED, 60, 60, null, null, null, null, null);
 
         when(feedbackLogMapper.insert(any(FeedbackLogPO.class))).thenReturn(1);
 
@@ -64,7 +64,7 @@ class FeedbackLogRepositoryImplTest {
         po.setId("f_001");
         po.setUserId("u_100");
         po.setVid("v1");
-        po.setActionType("PLAY");
+        po.setActionType("WATCH_VIEW_QUALIFIED");
         po.setPlayDuration(15);
         po.setVideoDuration(30);
         po.setOccurredAt(LocalDateTime.now());
@@ -75,7 +75,7 @@ class FeedbackLogRepositoryImplTest {
         List<FeedbackLog> logs = repository.findRecentByUserId("u_100", 10);
 
         assertThat(logs).hasSize(1);
-        assertThat(logs.get(0).getActionType()).isEqualTo(FeedbackActionType.PLAY);
+        assertThat(logs.get(0).getActionType()).isEqualTo(FeedbackActionType.WATCH_VIEW_QUALIFIED);
         assertThat(logs.get(0).calculatePlayRatio()).isEqualTo(0.5);
     }
 }

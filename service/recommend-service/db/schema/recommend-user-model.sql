@@ -42,13 +42,12 @@ CREATE TABLE IF NOT EXISTS `recommend_feedback_log` (
     `topic_tag_ids` VARCHAR(512) NULL COMMENT '发生行为时视频主题标签ID快照 (逗号分隔)',
     `author_id` CHAR(32) NULL COMMENT '发生行为时视频作者ID快照',
     `trace_id` VARCHAR(64) NULL COMMENT '全链路追踪ID',
-    `occurred_at` DATETIME(3) NOT NULL COMMENT '客户端行为发生时间',
+    `occurred_at` DATETIME(3) NOT NULL COMMENT '源服务行为发生时间',
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
     KEY `idx_rfl_user_occurred` (`user_id`, `occurred_at` DESC),
     KEY `idx_rfl_vid_action` (`vid`, `action_type`),
     CONSTRAINT `ck_rfl_action_type` CHECK (`action_type` IN (
-        'IMPRESSION', 'PLAY', 'SKIP', 'DISLIKE',
         'LIKE', 'UNLIKE', 'STAR', 'UNSTAR', 'SHARE',
         'WATCH_VIEW_QUALIFIED', 'WATCH_COMPLETED',
         'FOLLOW', 'UNFOLLOW'

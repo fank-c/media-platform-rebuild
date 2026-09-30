@@ -49,12 +49,11 @@
 - [ ] **REC-01 验收**：代码已统一 `content.video.offline`，绑定、消费与重复消费测试通过；待真实 RabbitMQ 送达与 MySQL 状态落库联调。
 - [ ] **REC-05**：消费 `content.video.unbanned`，在满足发布准入时恢复候选为 `ACTIVE`。
 - [ ] **REC-02**：Redis 待看缓冲出队时复核候选状态和用户屏蔽。
-- [ ] **REC-04**：确定客户端播放时长作为弱信号的范围、权重和异常规则。
 - [ ] **REC-06**：为推荐消费补充有界重试、死信和告警出口。
 
 ### P2 问题与规划
 
-- [ ] **REC-07**：明确热度召回使用互动公开计数、推荐反馈，还是组合口径。
+- [ ] **REC-07**：当前热度已按有效观看事件统计；后续评估是否组合互动公开计数，不把两者混称为播放量。
 - [ ] **REC-08**：实现相关推荐接口 `GET /api/recommend/videos/{vid}/related`。
 
 ## 已完成能力索引
@@ -63,7 +62,8 @@
 
 - 认证、用户、文件、网关、内容、审核和转码模块的当前能力，见对应 [`modules/`](modules/) 文档。
 - 互动点赞、收藏、观看、分享、计数增量、游客只读和 Outbox 基础链路，见 [`modules/interaction.md`](modules/interaction.md)。
-- 推荐向量化、候选池、首页推荐流、互动事件消费和用户反馈，见 [`modules/recommend.md`](modules/recommend.md)。
+- 推荐向量化、候选池、首页推荐流、MQ 互动事件消费、行为流水和用户屏蔽，见 [`modules/recommend.md`](modules/recommend.md)。
+- 推荐客户端反馈链路已删除，画像只消费源服务事件，见 [`audits/recommend-audit.md`](audits/recommend-audit.md#rec-04-客户端播放时长完全参与画像判断信号可被伪造)。
 - 推荐 REC-03 参数 `400`、缺少身份 `401` 与统一 HTTP 错误响应，见 [`audits/recommend-audit.md`](audits/recommend-audit.md)。
 - 观看拆表、计数增量和事件 Outbox 的架构取舍，见 [`adr/`](adr/) 对应记录。
 

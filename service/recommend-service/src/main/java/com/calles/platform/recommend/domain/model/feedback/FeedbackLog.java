@@ -9,7 +9,7 @@ import java.util.UUID;
 /**
  * 行为反馈流水领域实体。
  *
- * <p>表示由客户端直接上报并经过门禁核验的客观行为事实记录。
+ * <p>表示由互动或用户服务经 MQ 传入、并通过推荐侧消费校验的行为事实记录。
  * 遵循不可篡改与只追加原则，为画像模型重算、审计追溯和离线对账提供底层事实账本。</p>
  */
 @Getter
@@ -45,7 +45,7 @@ public class FeedbackLog {
     /** 全链路追踪 ID。 */
     private final String traceId;
 
-    /** 客户端真实行为发生时间戳。 */
+    /** 源服务行为发生时间戳。 */
     private final LocalDateTime occurredAt;
 
     /** 流水写入库时间戳。 */

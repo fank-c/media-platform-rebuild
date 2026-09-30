@@ -3,17 +3,14 @@ package com.calles.platform.recommend.interfaces.web;
 import com.calles.platform.common.core.ApiResponse;
 import com.calles.platform.common.web.context.UserContext;
 import com.calles.platform.recommend.application.dto.RecommendFeedResult;
-import com.calles.platform.recommend.application.service.FeedbackApplicationService;
 import com.calles.platform.recommend.application.service.RecommendFeedBufferService;
 import com.calles.platform.recommend.application.service.UserBlockApplicationService;
 import com.calles.platform.recommend.domain.model.block.BlockType;
 import com.calles.platform.recommend.domain.model.block.UserBlock;
-import com.calles.platform.recommend.domain.model.feedback.FeedbackActionType;
 import com.calles.platform.recommend.interfaces.web.dto.*;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.MDC;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -24,7 +21,6 @@ import java.util.List;
  * <p>职责与端点契约：
  * <ul>
  *   <li><b>首页推荐流</b>：{@code GET /api/recommend/feed}（支持游客与登录用户，返回个性化瀑布流物料）；</li>
- *   <li><b>行为流水上报</b>：{@code POST /api/recommend/feedback}（上报播放、跳过、负反馈等事实流水并驱动画像演进）；</li>
  *   <li><b>明确拉黑屏蔽</b>：{@code POST /api/recommend/blocks}（拉黑视频/作者/主题标签）；</li>
  *   <li><b>撤销屏蔽</b>：{@code DELETE /api/recommend/blocks}；</li>
  *   <li><b>查询屏蔽列表</b>：{@code GET /api/recommend/blocks}。</li>
@@ -38,7 +34,6 @@ import java.util.List;
 public class RecommendFeedController {
 
     private final RecommendFeedBufferService recommendFeedBufferService;
-    private final FeedbackApplicationService feedbackApplicationService;
     private final UserBlockApplicationService userBlockApplicationService;
 
     /**
@@ -70,49 +65,6 @@ public class RecommendFeedController {
                 .toList();
 
         return ApiResponse.ok(new RecommendFeedResponse(itemDtos, result.isHasMore()));
-    }
-
-    /**
-     * 上报客户端用户交互行为流水。
-     *
-     * @param headerUserId 网关透传用户账号 ID (可选)
-     * @param headerTraceId 客户端或网关链路追踪 ID (可选)
-     * @param request 行为反馈上报载荷
-     * @return 操作成功响应
-     */
-    @PostMapping("/feedback")
-    public ApiResponse<Void> submitFeedback(
-            @RequestHeader(value = "X-User-Id", required = false) String headerUserId,
-            @RequestHeader(value = "X-Trace-Id", required = false) String headerTraceId,
-            @Valid @RequestBody FeedbackSubmitRequest request) {
-
-        // 步骤 1：解析用户与链路追踪标识
-        String userId = resolveUserId(headerUserId);
-        String traceId = (headerTraceId != null && !headerTraceId.isBlank())
-                ? headerTraceId.trim()
-                : MDC.get("traceId");
-
-        // 步骤 2：校验并转换客户端合法行为动作类型枚举 (杜绝客户端伪造点赞、完播等服务端核验行为)
-        ClientFeedbackAction clientAction;
-        try {
-            clientAction = ClientFeedbackAction.valueOf(request.getActionType().trim().toUpperCase());
-        } catch (IllegalArgumentException ex) {
-            throw new IllegalArgumentException("未知的客户端行为类型: " + request.getActionType());
-        }
-
-        // 步骤 3：调用应用服务记录事实日志并分流更新画像
-        feedbackApplicationService.recordFeedback(
-                userId,
-                request.getVid(),
-                clientAction.toDomainType(),
-                request.getPlayDuration() != null ? request.getPlayDuration() : 0,
-                request.getVideoDuration() != null ? request.getVideoDuration() : 0,
-                request.getReason(),
-                traceId,
-                request.getOccurredAt()
-        );
-
-        return ApiResponse.ok();
     }
 
     /**

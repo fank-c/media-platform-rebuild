@@ -3,13 +3,10 @@ package com.calles.platform.recommend.interfaces.web;
 import com.calles.platform.common.core.ApiResponse;
 import com.calles.platform.recommend.application.dto.RecommendFeedResult;
 import com.calles.platform.recommend.application.dto.RecommendItemResult;
-import com.calles.platform.recommend.application.service.FeedbackApplicationService;
 import com.calles.platform.recommend.application.service.RecommendFeedBufferService;
 import com.calles.platform.recommend.application.service.UserBlockApplicationService;
 import com.calles.platform.recommend.domain.model.block.BlockType;
 import com.calles.platform.recommend.domain.model.block.UserBlock;
-import com.calles.platform.recommend.domain.model.feedback.FeedbackActionType;
-import com.calles.platform.recommend.interfaces.web.dto.FeedbackSubmitRequest;
 import com.calles.platform.recommend.interfaces.web.dto.RecommendFeedResponse;
 import com.calles.platform.recommend.interfaces.web.dto.UserBlockRequest;
 import com.calles.platform.recommend.interfaces.web.dto.UserBlockResponse;
@@ -20,7 +17,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,8 +33,6 @@ class RecommendFeedControllerTest {
 
     @Mock
     private RecommendFeedBufferService recommendFeedBufferService;
-    @Mock
-    private FeedbackApplicationService feedbackApplicationService;
     @Mock
     private UserBlockApplicationService userBlockApplicationService;
 
@@ -63,49 +57,6 @@ class RecommendFeedControllerTest {
         assertThat(response.data().getItems()).hasSize(2);
         assertThat(response.data().getItems().get(0).getVid()).isEqualTo("vid_101");
         assertThat(response.data().getHasMore()).isTrue();
-    }
-
-    @Test
-    @DisplayName("POST /api/recommend/feedback：正常上报行为反馈流水")
-    void shouldSubmitFeedbackSuccessfully() {
-        FeedbackSubmitRequest request = new FeedbackSubmitRequest(
-                "vid_fb_01", "PLAY", 15, 30, null, LocalDateTime.now()
-        );
-
-        ApiResponse<Void> response = controller.submitFeedback("user_fb_01", "trace_001", request);
-
-        assertThat(response).isNotNull();
-        assertThat(response.code()).isEqualTo(200);
-        verify(feedbackApplicationService).recordFeedback(
-                eq("user_fb_01"), eq("vid_fb_01"), eq(FeedbackActionType.PLAY),
-                eq(15), eq(30), isNull(), eq("trace_001"), any()
-        );
-    }
-
-    @Test
-    @DisplayName("POST /api/recommend/feedback：客户端尝试伪造上报 LIKE 服务端核验行为被拒绝")
-    void shouldRejectSubmitFeedbackWhenActionIsLike() {
-        FeedbackSubmitRequest request = new FeedbackSubmitRequest(
-                "vid_fb_01", "LIKE", 0, 0, null, LocalDateTime.now()
-        );
-
-        assertThatThrownBy(() -> controller.submitFeedback("user_fb_01", "trace_001", request))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("未知的客户端行为类型: LIKE");
-        verifyNoInteractions(feedbackApplicationService);
-    }
-
-    @Test
-    @DisplayName("POST /api/recommend/feedback：客户端尝试伪造上报 WATCH_COMPLETED 完播行为被拒绝")
-    void shouldRejectSubmitFeedbackWhenActionIsWatchCompleted() {
-        FeedbackSubmitRequest request = new FeedbackSubmitRequest(
-                "vid_fb_01", "WATCH_COMPLETED", 60, 60, null, LocalDateTime.now()
-        );
-
-        assertThatThrownBy(() -> controller.submitFeedback("user_fb_01", "trace_001", request))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("未知的客户端行为类型: WATCH_COMPLETED");
-        verifyNoInteractions(feedbackApplicationService);
     }
 
     @Test

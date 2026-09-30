@@ -24,7 +24,7 @@ import java.util.List;
  *   <li><b>目标配比</b>：占据单次推送的 10% 配额；</li>
  *   <li><b>核心定位</b>：提供全站社会认同（Social Proof）与近期爆款话题共鸣；</li>
  *   <li><b>阶段演进</b>：
- *     1. 阶段一（当前）：从 {@code feedbackLogRepository} 近 24 小时高频有效播放日志中统计 Top 物料；
+ *     1. 阶段一（当前）：按近 24 小时 {@code WATCH_VIEW_QUALIFIED} 事件次数统计 Top 物料，不累计完播或公开播放量；
  *     2. 兜底回退：若行为事实不足，自动回退最新优质发布物料池；
  *     3. 阶段二（未来）：接入 {@code interaction-service} 点赞/播放热榜。
  *   </li>
@@ -42,7 +42,7 @@ public class TrendingRecallChannel implements RecommendRecallChannel {
     /** 该通道在多路推荐混合流中的基准目标配比 (10%)。 */
     private static final int TARGET_PERCENTAGE = 10;
 
-    /** 行为反馈日志持久化仓储 (用于聚合统计近 24 小时播放热度流水)。 */
+    /** 行为反馈日志仓储，用于聚合近 24 小时有效观看事件热度。 */
     private final FeedbackLogRepository feedbackLogRepository;
 
     /** 推荐候选视频物料仓储。 */
@@ -66,7 +66,7 @@ public class TrendingRecallChannel implements RecommendRecallChannel {
 
         List<RecalledCandidate> result = new ArrayList<>();
 
-        // 步骤 1：查询近 24 小时播放次数最多的物料短码列表
+        // 步骤 1：只统计有效观看事件，避免同会话完播再次计入热度
         LocalDateTime since = LocalDateTime.now().minusDays(1);
         List<String> hotVids = Collections.emptyList();
         try {

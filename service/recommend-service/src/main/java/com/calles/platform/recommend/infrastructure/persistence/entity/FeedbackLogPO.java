@@ -23,7 +23,7 @@ public class FeedbackLogPO {
      * <p>业务含义与约束说明：
      * <ul>
      *   <li><b>格式规范</b>：32 位无连字符标准 UUID 字符串；</li>
-     *   <li><b>主键策略</b>：由应用层在记录客户端客观行为事实时显式分配生成，采用 {@link IdType#INPUT} 模式，非数据库自增；</li>
+     *   <li><b>主键策略</b>：由应用层在消费 MQ 行为事实时显式分配生成，采用 {@link IdType#INPUT} 模式，非数据库自增；</li>
      *   <li><b>日志溯源</b>：保证分布式环境下高并发事件只追加写入的全局唯一性，支撑全链路追踪审计与模型离线重算。</li>
      * </ul>
      * </p>
@@ -39,7 +39,7 @@ public class FeedbackLogPO {
     @TableField("vid")
     private String vid;
 
-    /** 行为动作类型: IMPRESSION, PLAY, SKIP, DISLIKE。 */
+    /** MQ 互动动作，允许值由 FeedbackActionType 与数据库约束共同定义。 */
     @TableField("action_type")
     private String actionType;
 
@@ -67,7 +67,7 @@ public class FeedbackLogPO {
     @TableField("trace_id")
     private String traceId;
 
-    /** 客户端行为发生时间。 */
+    /** 源服务行为发生时间。 */
     @TableField("occurred_at")
     private LocalDateTime occurredAt;
 

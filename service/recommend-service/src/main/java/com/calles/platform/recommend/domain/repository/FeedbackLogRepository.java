@@ -35,7 +35,7 @@ public interface FeedbackLogRepository {
     List<FeedbackLog> findRecentByUserId(String userId, int limit);
 
     /**
-     * 查询指定时间窗口内有效播放量最高的视频短码列表。
+     * 查询指定时间窗口内有效观看次数最高的视频短码列表，不包含完播或公开播放量。
      *
      * @param since 起始时间戳
      * @param limit 最大返回条数

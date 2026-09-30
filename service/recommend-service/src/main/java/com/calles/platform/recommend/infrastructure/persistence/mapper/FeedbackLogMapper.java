@@ -13,7 +13,7 @@ import org.apache.ibatis.annotations.Mapper;
 public interface FeedbackLogMapper extends BaseMapper<FeedbackLogPO> {
 
     /**
-     * 查询指定时间窗口内有效播放量最高的视频公开短码列表。
+     * 查询指定时间窗口内有效观看次数最高的视频公开短码列表，不累计完播或公开播放量。
      *
      * @param since 起始时间戳
      * @param limit 最大返回条数
@@ -22,7 +22,7 @@ public interface FeedbackLogMapper extends BaseMapper<FeedbackLogPO> {
     @org.apache.ibatis.annotations.Select("""
             SELECT vid
             FROM recommend_feedback_log
-            WHERE action_type = 'PLAY' AND created_at >= #{since}
+            WHERE action_type = 'WATCH_VIEW_QUALIFIED' AND created_at >= #{since}
             GROUP BY vid
             ORDER BY COUNT(*) DESC
             LIMIT #{limit}

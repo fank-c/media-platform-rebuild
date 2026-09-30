@@ -130,10 +130,11 @@ class AuthGlobalFilterTest {
         verify(filterChain, never()).filter(any());
     }
 
+    /** 推荐写操作只保留屏蔽端点；游客访问必须先被网关拒绝。 */
     @Test
-    @DisplayName("游客访问行为流水上报端点（非白名单）未携带 Token 应被拦截并返回 401 UNAUTHORIZED")
-    void shouldRejectGuestFeedbackWithoutToken() {
-        MockServerHttpRequest request = MockServerHttpRequest.post("/api/recommend/feedback").build();
+    @DisplayName("游客访问推荐屏蔽端点（非白名单）未携带 Token 应被拦截并返回 401 UNAUTHORIZED")
+    void shouldRejectGuestBlockWithoutToken() {
+        MockServerHttpRequest request = MockServerHttpRequest.post("/api/recommend/blocks").build();
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
 
         filter.filter(exchange, filterChain).block();
