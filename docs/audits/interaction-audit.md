@@ -1,15 +1,15 @@
-# 互动模块已知问题清单 · interaction-service
+# 互动模块问题审计记录 · interaction-service
 
-> 本文件记录互动模块的已知问题，随仓库版本管理。
+> 本文件保留问题证据、历史修复与剩余风险。当前执行事项以 [TODO](../TODO.md#interaction-service) 为准。
 
-- 核对基线：`2b56633 refactor: 简化视频元数据事件构建与消费逻辑`
-- 核对方式：阅读源码与 Mapper SQL；**未编写复现用例**。标注"推断"的条目只做了代码推导，没有实际跑过。
+- 核对基线：`5014f78 feat(interaction): 实现 Outbox 已发布记录保留清理`
+- 核对方式：阅读源码、Mapper SQL及已有测试；本文件记录问题闭环和剩余验收项，不替代完整模块验收报告。
 - 优先级：**P0** = 数据错误或越权；**P1** = 统计/推荐信号失真，或错误码不对；**P2** = 边界问题、技术债。
-- 状态：`待处理` / `待决策`（得先定规则才能改）/ `已解决`（已修复或被新架构取代）。
+- 状态：`待处理` / `待决策` / `已实现待验收` / `已解决`。`已实现待验收` 表示代码已落地，但仍有模块回归、真实基础设施或契约联调未完成；`待决策` 表示实现方向或环境开关尚未确认。
 - **重大架构变更**：
   - 观看能力按 [ADR 0005](../adr/0005-观看能力拆分与视频时长本地快照.md) 拆表重构（进度/会话/凭据/快照分离），移除 Redisson 锁依赖。
   - 计数按 [ADR 0004](../adr/0004-interaction-counter-deltas.md) 改为事务内增量 + MySQL 后台汇总，停用 Redis 绝对值刷盘。
-  - 收藏夹按 `ced0628` 增强了属主校验、重名防护、版本化防重与级联删除。
+  - 互动 Outbox 已增加独立的 `PUBLISHED` 保留清理任务，但派发与清理默认仍关闭，真实 RabbitMQ、推荐消费和 MySQL 联调需要单独验收。
   - 文中 `WatchHistory`、`interaction_watch_history`、`PLAY_COMPLETE`、`VideoCounterRedisCache`、`VideoCounterFlushScheduler` 等位置指向重构前实现，仅作审计记录。
 
 ## 总览
@@ -24,13 +24,13 @@
 | INT-06 | P1 | 计数 | 刷盘失败丢脏标记；降级到本机内存后多实例计数分裂 | **已解决** |
 | INT-07 | P1 | 并发 | 首次点赞/收藏/分享先查后写，并发时 500 或重复计数（推断） | **已解决** |
 | INT-08 | P1 | 契约 | 分享幂等键冲突返回 500，不是 409 | **已解决** |
-| INT-09 | P1 | 网关 | 公开统计接口已加白名单，but 播放页互动状态未开放 | **已解决** |
+| INT-09 | P1 | 网关/契约 | 服务内匿名回退与网关游客访问边界 | **待决策** |
 | INT-10 | P2 | 语义 | 会话一直不断时，同一会话内也能触发 REPEAT 播放 | **已解决** |
 | INT-11 | P2 | 语义 | 锁等待超时降级时，这次心跳的时长直接丢掉 | **已解决** |
-| INT-12 | P2 | 可测性 | 实体和应用层各自取 `LocalDateTime.now()`，两个时间源 | 待处理 |
+| INT-12 | P2 | 可测性 | 实体和应用层各自取 `LocalDateTime.now()`，两个时间源 | **已实现待验收** |
 | INT-13 | P2 | 技术债 | 起播残留代码和 `PLAY_START` 常量没人用 | **已解决** |
 | INT-14 | P2 | 功能缺口 | 收藏夹没有重名校验、改名和删除接口；GET 查询会写库 | **已解决** |
-| INT-15 | P2 | 下游 | 推荐侧没有消费者，Outbox 只进不出，也没有清理策略 | 待处理 |
+| INT-15 | P2 | 下游/运维 | Outbox 派发默认关闭，已发布记录清理需完成环境验收 | **已实现待验收/待决策** |
 
 ---
 
@@ -58,7 +58,7 @@
 
 ---
 
-## P1（部分已解决）
+## P1（已解决与待决策）
 
 ### INT-03 心跳的增量、视频时长和进度都信客户端 ✅ 已解决
 
@@ -118,25 +118,15 @@
   4. 同一用户复用键请求不同视频时，抛出 `InteractionException(HttpStatus.CONFLICT, "幂等键已被用于其他分享请求")`，映射为 HTTP 409；
   5. 增加并发插入捕获 `DuplicateKeyException` 并二次回退校验幂等的竞态防护。
 
-### INT-09 公开统计接口已加白名单，but 播放页互动状态未开放 ✅ 已部分解决
+### INT-09 服务内匿名回退与网关游客访问边界
 
-- **位置**：`gateway-service/config/AuthProperties.java`，`InteractionWatchController`、`InteractionStatController`。
-- **现状**：
-  - 网关白名单已包含：
-    ```java
-    "/api/interactions/videos/*/stat",      // 单个视频统计
-    "/api/interactions/videos/stats"        // 批量统计
-    ```
-  - 但 **播放页互动状态快照** `/api/interactions/videos/{vid}/my-state` 和 **观看进度** `/api/interactions/videos/{vid}/watch-progress` 仍需登录。
-- **影响**：游客无法查看公开统计（已解决），但播放页互动状态和断点需要登录（待决策）。
-- **待决策**：
-  - 播放页互动状态 (`my-state`) 本质是"我的状态"，游客访问应返回空状态还是 401？
-  - 观看进度 (`watch-progress`) 是个人断点，游客访问语义不清。
-  - 建议：保持现状，这两个接口要求登录符合业务语义。
+- **证据**：网关 `AuthProperties` 默认白名单包含公开统计，但没有 `my-state` 和 `watch-progress`。
+- **当前边界**：这两个接口经网关仍要求登录；互动服务内部允许匿名返回默认零值，不能据此宣称客户端游客可经网关访问。
+- **剩余决策**：是否开放这两个个人状态接口，需要明确产品契约后同步网关配置与验证；本轮不修改鉴权。
 
 ---
 
-## P2（部分已解决）
+## P2（历史修复与待验收）
 
 ### INT-10 会话一直不断时，同一会话内也能触发 REPEAT 播放 ✅ 已解决
 
@@ -158,18 +148,17 @@
 ### INT-12 实体和应用层各自取 `LocalDateTime.now()`，两个时间源
 
 - **位置**：`VideoLike`、`StarItem`、`StarFolder`、`VideoCounter`、`CounterDelta`、`WatchRetentionApplicationService`、`CounterAggregationApplicationService` 等多处直接调用 `LocalDateTime.now()` 或 `Instant.now()`。
-- **现状**：
+- **原实现**：
   - 领域实体在 `create()`、`revive()`、`delete()` 等方法内自己取 `now()`。
   - 应用服务也独立取 `now` 传给业务逻辑或作为参数。
   - `WatchHeartbeatApplicationService.processHeartbeat()` 第 85-86 行连续取两次 `LocalDateTime.now()`。
 - **影响**：
   - 同一次事务内的时间戳可能差几毫秒到几十毫秒。
   - 单元测试无法模拟时间，难以测试时间相关逻辑（如冷却期、保留期）。
-- **实施进展（待验收）**：已按方案 B 收敛互动生产代码中的静态当前时间调用，领域方法显式接收 UTC 时间；观看心跳、计数、收藏、点赞、分享及元数据快照注入统一时钟。完整验收与本地数据库集成验证完成前仍保持待处理。详见[互动时间源统一实施方案](../plans/interaction-time-source-unification-implementation.md)。
-  - 所有需要当前时间的应用服务、调度服务和基础设施组件通过构造器注入 `Clock`；生产统一使用 UTC。
-  - 一个用例入口只读取一次 `now`，同一事务内向所有领域变更、事件和时间阈值计算传递同一时间快照。
-  - `VideoLike`、`StarFolder`、`StarItem`、`VideoCounter`、`CounterDelta`、`InteractionShareRecord` 及观看相关实体的创建、恢复、删除和状态更新方法显式接收时间参数，不再调用静态 `now()`。
-  - 持久化转换层不再在缺少时间时静默生成当前时间；测试使用 `Clock.fixed()`，并验证 UTC 和非 UTC 默认时区下的结果一致。
+- **实施进展（已实现待验收）**：最新实现提交 `531bf23` 已按方案 B 收敛互动生产代码中的静态当前时间调用，领域方法显式接收 UTC 时间；观看心跳、计数、收藏、点赞、分享及元数据快照使用统一时钟。
+  - 生产代码静态搜索已不再发现裸 `LocalDateTime.now()`、`Instant.now()` 或 `now(ZoneOffset.UTC)`。
+  - 相关单元测试和持久化时间契约测试已随实现提交；仍需完成互动模块完整回归及本地 MySQL 集成验证后关闭本问题。
+  - 当前时间源约定见[互动模块](../modules/interaction.md#8-时间源约定)，未完成事项以 TODO 为准。
 
 ### INT-13 起播残留代码和 `PLAY_START` 常量没人用 ✅ 已解决
 
@@ -179,49 +168,46 @@
   - 删除旧 `interaction_watch_history` 表及相关实体、Mapper、领域方法。
   - 删除 `PLAY` / `PLAY_COMPLETE` / `PLAY_START` 三个 action，改用 `WATCH_VIEW_QUALIFIED` / `WATCH_COMPLETED`。
 
-### INT-14 收藏夹没有重名校验、改名和删除接口；GET 查询会写库 ✅ 已解决
+### INT-14 收藏夹能力和查询副作用 ✅ 已解决
 
 - **位置**：`StarApplicationService`、`InteractionStarController`。
 - **原问题**：缺少重名校验、改名和删除功能；GET 查询有写副作用。
 - **解决方案**（`ced0628`）：
   - **重名校验**：`createCustomFolder` 和 `renameFolder` 增加同名与系统保留名（"默认收藏夹"）防护。
-  - **改名接口**：`POST /star/folders/{folderId}/rename`，含重名校验和并发保护。
-  - **删除接口**：`DELETE /star/folders/{folderId}`，级联清理明细，彻底移出时联动计数/Outbox事件。
+  - **改名接口**：当前契约为 `PUT /star/folders/{folderId}`，含重名校验和并发保护。
+  - **删除接口**：`DELETE /star/folders/{folderId}`，级联清理明细，彻底移出时联动计数/Outbox 事件。
   - **惰性初始化分离**：`getUserFolders()` 改为纯读，不再隐式创建默认收藏夹；默认收藏夹在首次收藏时由 `initDefaultFolder()` 惰性创建。
 
-### INT-15 Outbox 投递开关默认关闭，缺少清理策略
+### INT-15 Outbox 派发开关与已发布记录清理
 
-- **位置**：interaction-service Outbox 配置、ecommend-service 消费者（已实现✅）。
-- **现状更正**：
-  - ❌ **错误认知**：推荐侧**已实现完整消费者**（InteractionEventConsumer + InteractionFeedbackApplicationService），包含幂等防重、5 种 action 处理逻辑和完整测试覆盖。
-  - ✅ **实际问题**：interaction.outbox.dispatch-enabled=false（默认关闭），消费者已就绪但投递未启用。
-  - ⚠️ interaction_outbox 表持续增长（12,847+ 条 PENDING 记录），缺少清理策略。
-- **影响**：
-  - Outbox 表持续膨胀（日均 5,000 条，1 年约 9 GB）。
-  - 推荐系统无法获取互动信号，画像演进滞后（但消费者本身已就绪）。
-- **修复方案**：
-  1. ✅ ~~推荐侧实现消费者~~ **已完成**（InteractionEventConsumer + 幂等防重 + 业务处理）
-  2. 🔧 打开 dispatch-enabled=true（推荐侧已就绪，可直接启用）
-  3. 🔧 增加 PUBLISHED 记录保留期清理任务（如 30 天）
-  4. 📊 增加 Outbox 监控指标（PENDING 堆积数、最老记录时间）
+- **位置**：`interaction-service` Outbox 配置、`recommend-service` 消费者、Outbox 清理调度链路。
+- **当前事实**：
+  - 推荐侧已实现统一 `InteractionEventConsumer`、互动反馈处理、消费幂等记录和相关测试；“推荐侧没有消费者”已不是当前问题。
+  - `interaction.outbox.dispatch-enabled=false` 是明确的默认配置。它表示事件先落库为 `PENDING`，不表示事件丢弃。
+  - `PUBLISHED` 记录的独立保留清理任务已在 `5014f78` 中实现，默认 `cleanup-enabled=false`，按 `published_at` 分批清理，不处理 `PENDING`、`PROCESSING`、`FAILED` 或发布时间为空的记录。
+- **剩余事项**：
+  1. **环境决策**：确认 RabbitMQ 拓扑、互动事件契约和推荐消费链路完成联调后，再通过 `INTERACTION_OUTBOX_DISPATCH_ENABLED=true` 开启派发；不建议仅因为消费者已存在就修改代码默认值。
+  2. **验收**：完成真实 MySQL、RabbitMQ 到推荐消费链路，以及派发和清理并发行为验证。
+  3. **运维**：持续监控 `PENDING`、`PROCESSING`、`FAILED` 数量和最老记录年龄；默认关闭派发时，`PENDING` 增长属于配置结果，应单独提示而不是误报为派发故障。
+- **实现说明**：[互动模块投递链路](../modules/interaction.md#52-投递链路)。
 
 ---
 
 ## 总结
 
-**15 个问题中 12 个已解决**，主要得益于两次架构级重构与本次修复：
-- [ADR 0004](../adr/0004-interaction-counter-deltas.md) 解决了计数一致性与 Redis 刷盘问题（INT-02/04/06）
-- [ADR 0005](../adr/0005-观看能力拆分与视频时长本地快照.md) 解决了观看防刷与完播语义问题（INT-03/05/10/11）
-- `ced0628` 解决了收藏夹安全与功能缺口（INT-01/07/14）
-- INT-08 分享幂等键限定用户维度并返回 409 Conflict
+当前清单的 15 项历史问题中：
 
-**待处理 3 项**：
-- **INT-09**（P1）- 播放页状态接口鉴权策略（已部分解决，待最终决策）
-- **INT-12**（P2）- 时间源统一（影响可测性）
-- **INT-15**（P2）- Outbox 清理策略
+- **12 项已解决**：INT-01 至 INT-08、INT-10、INT-11、INT-13、INT-14；
+- **1 项待决策**：INT-09，个人状态接口的网关游客访问策略；
+- **1 项已实现待验收**：INT-12，剩余完整回归和本地 MySQL 集成验证；
+- **1 项已实现但仍有环境决策与联调要求**：INT-15，派发默认关闭是配置决策，清理链路已实现。
 
----
+主要架构闭环：
+- [ADR 0004](../adr/0004-interaction-counter-deltas.md) 解决计数一致性与 Redis 刷盘问题（INT-02/04/06）；
+- [ADR 0005](../adr/0005-观看能力拆分与视频时长本地快照.md) 解决观看防刷与完播语义问题（INT-03/05/10/11）；
+- `ced0628` 解决收藏夹安全、并发和功能缺口（INT-01/07/14）；
+- `ed19574` 修复分享幂等键冲突及并发返回语义（INT-08）；
+- `531bf23` 完成互动模块时间源统一实现（INT-12，待验收）；
+- `5014f78` 完成 Outbox 已发布记录保留清理实现（INT-15，待环境验收）。
 
-## 其他（仓库级，非互动模块）
-
-- 工作区有约 674 个文件处于修改状态，实际内容只差 `.gitignore` 一行，其余都是 CRLF/LF 换行差异（索引是 LF，工作区是 CRLF）。建议加 `.gitattributes` 或配置 `core.autocrlf`，避免真实改动被换行噪音淹没。
+当前执行事项统一维护在 [TODO](../TODO.md#interaction-service)。本文件保留问题证据，不重复承担执行看板职责。

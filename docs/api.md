@@ -110,9 +110,9 @@ Authorization: Bearer <accessToken>
 | GET / POST / PUT / DELETE | `/api/interactions/star/folders` | 已登录 | 收藏夹列表 / 新建 / 改名 / 删除 |
 | GET | `/api/interactions/star/items` | 已登录 | 分页查询收藏夹内视频 |
 | POST | `/api/interactions/videos/{vid}/heartbeat` | 已登录 | 上报播放心跳，返回会话与服务端判定结果 |
-| GET | `/api/interactions/videos/{vid}/watch-progress` | 已登录（服务内允许匿名） | 查询断点进度 |
+| GET | `/api/interactions/videos/{vid}/watch-progress` | 已登录（网关）；服务内允许匿名 | 查询断点进度；服务内匿名回退返回零进度 |
 | GET / DELETE | `/api/interactions/watch/history` | 已登录 | 观看历史分页 / 删除单条或清空 |
-| GET | `/api/interactions/videos/{vid}/my-state` | 已登录（服务内允许匿名） | 播放页互动状态快照（未登录返回零值） |
+| GET | `/api/interactions/videos/{vid}/my-state` | 已登录（网关）；服务内允许匿名 | 播放页互动状态快照；服务内匿名回退返回零值 |
 | GET | `/api/interactions/videos/{vid}/stat` | 匿名 / 已登录 | 单视频公开计数 |
 | POST | `/api/interactions/videos/stats` | 匿名 / 已登录 | 批量视频公开计数 |
 | POST | `/api/interactions/videos/{vid}/share` | 已登录，需 `Idempotency-Key` | 记录分享 |

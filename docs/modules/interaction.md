@@ -3,8 +3,9 @@
 `interaction-service`（端口 8500）负责点赞、收藏、观看心跳、观看历史、分享，以及视频公开计数。它是这些数据**唯一的业务所有者**。
 
 - 相关 ADR：[0001 Outbox 与视频交互事件](../adr/0001-interaction-outbox-and-video-action-events.md)、[0003 Redisson 分布式锁](../adr/0003-interaction-redisson-distributed-lock.md)、[0004 计数增量汇总](../adr/0004-interaction-counter-deltas.md)、[0005 观看能力拆分与视频时长本地快照](../adr/0005-观看能力拆分与视频时长本地快照.md)
-- 相关主线：[主线 04 · 播放心跳与防重](../flows/04-前台视频播放分发与网关防刷.md#34-播放心跳上报会话隔离与可重复有效播放防重-interaction-service)
-- 进度：[TODO · 互动模块](../TODO.md#互动模块--interaction-service)
+- 相关模块：[内容分发](content.md)
+- 进度：[TODO · 互动模块](../TODO.md#interaction-service)
+- 审计：[互动问题审计](../audits/interaction-audit.md)
 
 ---
 
@@ -27,7 +28,7 @@
 
 - 只访问 `interaction_*` 表；不调用 content-service 修改视频数据，也不同步查询视频元数据，视频时长只从 `content.video.metadata` 事件建立本地快照。
 - 不做认证：身份来自网关注入的 `X-User-Id` / `X-User-Role`，由 `InteractionAccessPolicy` 读取。
-- 不做推荐：只产出事件；推荐侧消费链路**尚未实现**，所以 Outbox 投递默认关闭。
+- 不做推荐：只产出事件；`recommend-service` 已实现统一交互事件消费者、幂等消费和反馈处理，但本服务 Outbox 的 `dispatch-enabled` 默认关闭，是否投递由环境配置和联调验收决定。
 - 评论：`comment_count` 字段已预留，评论功能尚未实现。
 
 ### 1.3 分层
@@ -61,10 +62,10 @@ infrastructure/*       MyBatis/JDBC 持久化、计数增量汇总、Outbox、�
 | | DELETE | `/star/folders/{folderId}` | 登录 | 删除自定义收藏夹（级联移出明细，彻底移出视频扣减计数并写 Outbox） |
 | | GET | `/star/items` | 登录 | 分页查询收藏夹里的视频；校验属主权限，不带 `folderId` 时查默认收藏夹 |
 | 观看 | POST | `/videos/{vid}/heartbeat` | 登录 | 起播（带 Header `Idempotency-Key`，`sessionId` 为空，`sequence=0`，`delta=0`）开启会话并计播放量；后续心跳回传 `sessionId` 与递增 `sequence>0` 累计有效观看时长与完播 |
-| | GET | `/videos/{vid}/watch-progress` | 可匿名 | 游客返回零进度 |
+| | GET | `/videos/{vid}/watch-progress` | 网关要求登录；服务内允许匿名 | 服务内匿名回退返回零进度 |
 | | GET | `/watch/history` | 登录 | 分页（`page` 从 1 开始，`size` 最大 100） |
 | | DELETE | `/watch/history` | 登录 | 带 `vid` 删单条，不带就清空；只隐藏展示，不释放防重状态 |
-| 快照 | GET | `/videos/{vid}/my-state` | 可匿名 | 一次返回 liked、starred、断点、completed；游客全部返回默认值 |
+| 快照 | GET | `/videos/{vid}/my-state` | 网关要求登录；服务内允许匿名 | 返回个人互动快照；服务内匿名回退返回默认值 |
 | 计数 | GET | `/videos/{vid}/stat` | 可匿名 | 单个视频的公开计数 |
 | | POST | `/videos/stats` | 可匿名 | 批量查询，body `{"vids":[...]}`，缺失的补 0 |
 | 分享 | POST | `/videos/{vid}/share` | 登录 | 必须带 Header `Idempotency-Key`，同一个键重复请求按幂等处理 |
@@ -292,7 +293,7 @@ flowchart LR
 | `LIKE` | `state` = `ACTIVE` / `INACTIVE` | 点赞状态真的变化了 |
 | `STAR` | `state` = `ACTIVE` / `INACTIVE` | 用户维度首次收藏 / 从所有收藏夹彻底移除 |
 | `SHARE` | `state` = `ACTIVE` | 幂等键第一次出现 |
-| `WATCH_VIEW_QUALIFIED` | `sessionId`、`creditedDuration`、`videoDuration` | 本会话达到门槛、冷却已结束且成功抢占播放量凭据；下游据此增加公开播放量 |
+| `WATCH_VIEW_QUALIFIED` | `sessionId`、`creditedDuration`、`videoDuration` | 本会话达到有效观看门槛并成功抢占观看事件凭据；仅作为推荐等下游行为信号，**不增加公开播放量** |
 | `WATCH_COMPLETED` | 同上 | 本会话达成双 90% 完播条件；不增加播放量 |
 
 消费方必须先读 `action` 再取对应字段，并容忍未知的 `action`。点赞收藏分享与观看量共用一条路由，不存在多版本路由共存的问题。
@@ -306,7 +307,7 @@ flowchart LR
 
 **现状**：`dispatch-enabled` 默认是 `false`，事件只落库不投递；推荐统一交互消费者已实现，是否启用投递由环境配置决定。
 
-`cleanup-enabled` 默认关闭；启用后独立任务按 `published_at` 分批清理超期的 `PUBLISHED` 记录，不删除其他状态或发布时间为空的记录。详见[实施方案](../plans/interaction-outbox-retention-cleanup-implementation.md)。
+`cleanup-enabled` 默认关闭；启用后独立任务按 `published_at` 分批清理超期的 `PUBLISHED` 记录，不删除其他状态或发布时间为空的记录。当前验收项见 [TODO](../TODO.md#interaction-service)。
 
 ```mermaid
 flowchart TD
@@ -411,7 +412,7 @@ DDL 以 [`db/init/schema.sql`](../../db/init/schema.sql) 为准，增量迁移�
 
 互动服务所有业务“当前时间”统一通过注入的 `Clock` 获取，生产使用 UTC。应用服务在一个用例入口只读取一次 `now`，向领域实体、计数增量、Outbox 事件和阈值计算传递同一时间快照；领域实体和持久化转换层不得直接调用 `LocalDateTime.now()` 或 `Instant.now()`。
 
-领域对象的创建、恢复、删除和状态更新方法显式接收 `LocalDateTime` 或 `Instant` 时间参数；需要时间间隔的规则使用 `Duration`。MySQL `DATETIME(3)` 字段按 UTC 语义读写，不在持久化层根据系统默认时区补当前时间。`application/InteractionTime.java` 负责单次 `Clock` 读取的 UTC 转换；收藏明细复活、收藏夹删除和计数汇总快照的 Mapper 写入均显式绑定用例时间，不使用数据库 `CURRENT_TIMESTAMP`。事件 `occurredAt` 使用用例传入时间，`published_at` 使用实际投递成功时刻。完整实施步骤见[互动时间源统一实施方案](../plans/interaction-time-source-unification-implementation.md)。
+领域对象的创建、恢复、删除和状态更新方法显式接收 `LocalDateTime` 或 `Instant` 时间参数；需要时间间隔的规则使用 `Duration`。MySQL `DATETIME(3)` 字段按 UTC 语义读写，不在持久化层根据系统默认时区补当前时间。`application/InteractionTime.java` 负责单次 `Clock` 读取的 UTC 转换；收藏明细复活、收藏夹删除和计数汇总快照的 Mapper 写入均显式绑定用例时间，不使用数据库 `CURRENT_TIMESTAMP`。事件 `occurredAt` 使用用例传入时间，`published_at` 使用实际投递成功时刻。当前未完成事项见 [TODO](../TODO.md#interaction-service)。
 
 ## 9. 配置
 

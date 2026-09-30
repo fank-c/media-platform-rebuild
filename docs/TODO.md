@@ -1,320 +1,70 @@
-# 项目模块开发 TODO
+# 当前待办与验收清单
 
-## 认证模块 · auth-service
+本文件只记录当前未完成事项、验收项和后续规划。已完成能力不在这里展开实现细节，详细内容分别见对应的模块文档、API 契约和 ADR。
 
-说明：[认证模块](modules/auth.md)。
+状态含义：`待处理` 表示需要实现；`待决策` 表示规则或范围尚未确认；`待验收` 表示代码已落地但验证尚未完成；`规划` 表示尚未进入当前实现范围。
 
-### 账号注册
+## 模块待办
 
-- [x] 校验注册信息并创建普通账号，不自动登录。
-- [x] 保存密码哈希，不保存明文密码。
-- [x] 创建账号时同时登记资料初始化通知。
+### audit-service
 
-### 登录与登录状态维护
-
-- [x] 校验登录名、密码和账号状态，签发访问令牌与刷新凭据。
-- [x] 使用一次性刷新凭据换取新令牌，并检查账号最新状态。
-- [x] 条件完成刷新，拒绝重复刷新以及已被退出操作终止的轮换。
-- [x] 退出当前刷新会话，并撤销本次提交的访问令牌；不代表撤销全部历史访问令牌。
-
-### 身份验证与当前账号
-
-- [x] 为网关验证访问令牌，返回身份摘要；不实时读取账号状态。
-- [x] 查询当前账号摘要并检查账号最新状态。
-
-### 账号创建通知
-
-- [x] 后台发送账号创建通知，按发送确认更新结果并有限重试。
-- [x] 在注册事务提交后触发快速发送（可选能力，默认关闭）。
-- [x] 为新认证库已有正常普通账号生成资料初始化通知（内部定时任务，默认关闭且只预览）。
-
-## 用户模块 · user-service
-
-说明：[用户模块](modules/user.md)。
-
-### 用户资料初始化
-
-- [x] 接收账号创建事件，只为缺失资料建档，不覆盖或恢复已有资料。
-- [x] 识别重复事件，在同一事务中保存消费记录和资料。
-- [x] 临时消费失败有限重试，非法事件和耗尽重试的消息进入死信处理。
-
-### 本人资料查询与编辑
-
-- [x] 普通用户查询本人资料；缺失时提示等待，不因查询自动创建。
-- [x] 普通用户首次保存或修改昵称、简介、城市和生日，支持显式清空字段。
-- [x] 按资料版本拒绝过期修改，避免旧页面覆盖新内容。
-
-### 公开资料展示
-
-- [x] 已登录用户查询其他用户的公开摘要，隐藏不可用资料。
-- [x] 批量查询公开摘要，保留请求顺序和重复项，并标记不可用项。
-- [x] 过滤非可信来源的头像地址（仅展示已有地址，不含头像上传或替换）。
-
-### 管理端资料维护
-
-- [x] 管理员筛选并分页查询未删除资料。
-- [x] 管理员按版本修改已有正常资料，不创建、启停或恢复资料。
-
-### 用户关注与社交关系
-
-- [x] 关注与取消关注创作者，支持幂等处理与自关拦截。
-- [x] 采用 `follow_status`（0/1）软状态标记与覆盖索引支撑高频变动。
-- [x] 独立 `user_counter` 计数快照表，通过原生原子自增/自减维护关注数与粉丝数，与资料表彻底解耦。
-- [x] 双方社交关系智能判定（未关注、已关注、被关注、互相关注）。
-- [x] 分页查询关注与粉丝列表，聚合公开资料与成为粉丝/关注时间。
-- [x] 关注/取关成功后在事务提交后向 RabbitMQ 广播领域事件（`user.relation.followed.v1` / `user.relation.unfollowed.v1`）。
-- [x] 暴露内部查询端点获取关注列表，赋能推荐服务关注召回通道。
-
-## 文件模块 · file-service
-
-说明：[文件模块](modules/file.md)。
-
-### 普通上传
-
-- [x] 普通用户上传单个私人文件，校验文件要求并保存对象。
-- [x] 对象上传及文件记录保存明确成功后返回完成信息。
-
-### 客户端直传与确认
-
-- [x] 签发 V1 临时上传地址，并异步读取对象确认上传（兼容路径）。
-- [x] 曾实现 V2 带摘要的暂存上传与异步确认接口；新上传入口已标记过期，默认关闭，不再作为接入目标。
-- [x] V2 在确认时校验对象大小，并按源对象标识将暂存文件复制为正式文件。
-- [x] 查询本人上传状态；区分正在确认与上传完成。
-- [x] 停止将 V2 新上传入口作为后续开放目标：当前存储策略与 V2 checksum PUT 签名不兼容；保留已有 V2 记录的确认、恢复与清理能力。V1 仍为现有直传路径，不按 V2 切换规划停用。
-
-### 下载、内部读取与删除
-
-- [x] 为本人已完成、正常且未删除的文件签发短期下载地址。
-- [x] 按调用方传入的已认证用户 ID 打开其已完成文件内容（仅进程内服务，无跨服务读取接口）。
-- [x] 删除前先隐藏文件，远端对象删除明确成功后记录删除完成。
-- [x] 重复删除已完成删除的本人文件，按成功处理。
-
-### 未完成上传清理与失败恢复
-
-- [x] 分批清理过期上传及其对象（内部任务，默认关闭）。
-- [x] 恢复 V2 在途确认，并清理已完成文件的暂存残留（内部任务，默认关闭）。
-- [x] 重试尚未完成的文件删除（内部任务，默认关闭，也可重复调用删除接口）。
-
-## 网关模块 · gateway-service
-
-说明：[网关模块](modules/gateway.md)。
-
-### 请求转发
-
-- [x] 按路径配置七个业务服务的转发入口，不代表下游业务均已实现。
-- [x] 按白名单放行登录、注册、刷新和探针请求。
-
-### 身份校验与传递
-
-- [x] 拦截缺少或无效凭据的受保护请求，向认证服务验证身份。
-- [x] 缓存验证结果（包括无效结果）；正常有效令牌的缓存不超过其剩余时间。
-- [x] 清除客户端身份头，认证通过后重新注入身份。
-- [x] 经网关注销后尝试删除本次令牌的验证缓存。
-
-## 公共模块 · common-core / common-web
-
-说明：[公共模块](modules/common.md)。
-
-### 统一数据格式
-
-- [x] 提供接口响应的统一外壳，业务数据仍由各服务定义。
-- [x] 提供事件标识、版本和追踪信息的公共外壳，不包含具体业务校验。
-
-### 请求上下文
-
-- [x] 在 Servlet 请求中接收或生成追踪标识，关联日志并写入响应。
-- [x] 将网关注入的身份转换为请求内上下文，不负责令牌验签。
-- [x] 自动装配 Servlet 过滤器，并在请求结束后清理上下文。
-
-## 内容模块 · content-service
-
-说明：[内容模块](modules/content.md)。
-
-### 领域模型与仓储持久化
-
-- [x] 建立物理主键与 24 位高熵 Base62 业务短码（`vid`）双 ID 体系。
-- [x] 视频聚合根状态机、转码流切片模型与标签引用热度增量同步。
-- [x] 标签字典单层类型扩展（`DOMAIN` 泛化领域 vs `TOPIC` 具体主题）与分类检索能力。
-- [x] 基于 MyBatis-Plus 的表结构映射与仓储层落地。
-
-### 创作者工作台与播放分发
-
-- [x] 创作者草稿箱新建、元数据更新、Feign 远程文件资产探活与提审发布。
-- [x] 前台公开多清晰度切片播放流分发与按可见性策略安全脱敏。
-- [x] 管理端作品多维检索与封禁/解封治理。
-
-### 异步任务流水线与门禁
-
-- [x] 视频提审分解为 5 类细粒度子任务（审核、基准转码、4K 转码、向量提取）。
-- [x] 落地工业级分级就绪门禁（`PublishGatekeeper`）：审核通过 + 基准画质就绪 + 向量就绪即放行，4K 异步非阻塞追加。
-- [x] 超时未完成任务自愈巡检与重试调度器（`VideoTaskTimeoutScheduler`）。
-- [x] 事务性发件箱（`content_outbox`）完整动力系统：双通道投递（afterCommit 虚拟线程快速通道 + 定时自愈扫描）、CAS 租约原子防重、指数退避抖动与 MDC 全链路追踪。
-
-## 审核模块 · audit-service
-
-说明：[审核模块](modules/audit.md)。
-
-### 领域模型与数据持久化
-
-- [x] 建立审核任务（`AuditTask`）、多维度明细证据（`AuditDetail`）与敏感词字典（`AuditSensitiveWord`）聚合模型。
-- [x] 完成对应数据表 DDL 定义与 MyBatis-Plus 仓储持久化落地。
-
-### 自动化机审流水线与仲裁
-
-- [x] 实现基于确定有限状态机（DFA）前缀树的高性能敏感词扫描引擎（`DfaTextAuditEngine`），支持分级拦截（`ILLEGAL` vs `SUSPICIOUS`）与热重载。
-- [x] 实现多媒体封面规则审查引擎（`DefaultRuleImageAuditEngine`），支持测试桩模拟与云厂商可插拔扩展。
-- [x] 实现基于安全最高优先级（`ILLEGAL` > `SUSPICIOUS` > `NORMAL`）的多维度判定仲裁决策器（`AuditDecisionAggregator`）。
-
-### 提审事件消费与闭环回调
-
-- [x] 监听 RabbitMQ `content.video.submitted` 提审事件，自动启动机审并建立证据日志。
-- [x] 通过 OpenFeign（`ContentServiceClient`）回调内容服务内部端点 `POST /api/content/videos/internal/audit-callback`，驱动视频门禁流转。
-- [x] 实现回调超时重试与状态对齐自愈调度器（`AuditCallbackRetryScheduler`）。
-- [x] 提供内部提审演练调试接口与任务证据明细查询端点。
-
-### 人工复审与词库治理（阶段二规划）
-
-- [x] 管理端人工审核待办工单池分页检索与审批/驳回接口。
 - [ ] 敏感词字典动态增删查接口。
 - [ ] 对接阿里云内容安全等真实第三方云机审 SDK 适配器。
 
-## 转码模块 · transcode-service
+### transcode-service
 
-说明：[转码模块](modules/transcode.md)。
-
-### 领域模型与仓储持久化
-
-- [x] 建立转码工单聚合根（`TranscodeTask`）、画质规格预设（`QualityPreset`）与全状态机流转模型。
-- [x] 完成对应数据表 DDL 定义（`transcode_task`，唯一键 `uk_video_quality_format`）与 MyBatis-Plus 仓储持久化落地。
-
-### 执行引擎与硬件保护
-
-- [x] 实现基于宿主机 FFmpeg/FFprobe 的音视频压制引擎（`FfmpegTranscodeEngine`），支持等比保真、黑边填充与 Web `faststart` 秒开优化。
-- [x] 实现支持脱网运行与 CI 快速验证的模拟桩引擎（`MockTranscodeEngine`）。
-- [x] 落地基于公平信号量的硬件并发保护限流器（`TranscodeRateLimiter`），支持 Java 21 虚拟线程调度。
-
-### 事件驱动与跨微服务协同闭环
-
-- [x] 声明 RabbitMQ 队列 `transcode-service.video-submitted.v1`，异步消费 `content.video.submitted` 提审事件。
-- [x] 跨服务文件交互：Feign 申请 `file-service` 临时直链流式拉流，完成切片后通过受信任内部端点 `POST /api/files/internal/upload` 托管上传并签发资产 ID。
-- [x] 发布门禁协同：通过 OpenFeign 回调 `content-service` 内部端点 `POST /api/content/videos/internal/transcode-callback` 登记流规格与视频时长，驱动 `PublishGatekeeper` 门禁流转。
-- [x] 资源清理自愈：任务沙箱临时工作区在 `finally` 阶段强力递归清除，避免磁盘泄漏。
 - [ ] HLS（`.m3u8` + `.ts`）分片转码（阶段二规划）。
 
-## 互动模块 · interaction-service
+## interaction-service
 
-说明：[互动模块](modules/interaction.md)。
+说明：当前实现见 [`modules/interaction.md`](modules/interaction.md)，历史问题见 [`audits/interaction-audit.md`](audits/interaction-audit.md)。
 
-### 基础入口
+### 观看链路验收
 
-- [x] 提供服务启动入口与注册配置（工程骨架，集成 Redis、MySQL、MyBatis-Plus、RabbitMQ）。
+- [ ] 开启 `WATCH_HEARTBEAT_IT_ENABLED=true`，验证元数据事件幂等、事件凭据唯一键防重和重复序号零写入。
 
-### 点赞
+### 时间源统一
 
-- [x] 点赞与取消点赞，状态存在 `interaction_like`；重复请求幂等，不重复计数、不重复发事件。
-- [x] 分页查询本人点赞列表（`GET /api/interactions/likes`）。
+- [ ] 完成互动模块完整回归、本地 MySQL 集成及 UTC/非 UTC 默认时区验证。
 
-### 收藏与收藏夹
+### 计数与 Outbox 验收
 
-- [x] 默认收藏夹在首次收藏时惰性自动创建；独立提取初始化方法供后续事件集成；GET 查询为纯读不写库。
-- [x] 新建自定义收藏夹（支持同名校验与系统保留名防护）。
-- [x] 收藏到指定或默认收藏夹、按收藏夹或全部取消；“首次收藏 / 彻底移除”才计数并发事件。
-- [x] 分页查询收藏夹内视频。
-- [x] 取消收藏后再收藏复活原明细，避免唯一键冲突。
-- [x] 收藏夹属主校验：`resolveFolder` 与 `getStarItems` 严格比对 `userId` 与有效状态，阻断越权读写他人收藏夹。
-- [x] 收藏夹重命名、重名校验与删除（含级联清理明细与彻底移除时计数/Outbox事件联动）。
+- [ ] 完成真实 MySQL 多实例汇总、业务回滚和增量清理保留期集成验证，并观察积压量与批处理延迟。
+- [ ] 完成 Outbox 派发与清理真实环境验收：验证 RabbitMQ 到推荐消费链路、MySQL 清理并发和指标告警。
 
-### 观看心跳与观看历史
+### 游客访问策略
 
-- [x] 统一心跳入口：登录用户上报进度，服务端维护断点与累计时长；游客返回 `401`。
-- [x] 会话隔离与起播计数：起播显式开启新会话（必传 `Idempotency-Key`，`sequence=0, deltaDuration=0`），校验视频已发布与 6 小时冷却立即记录播放量，解耦时长门槛；活跃未过期会话返回 409 `WATCH_SESSION_ACTIVE`。
-- [x] 观看播放量与行为事件解耦：起播增量来源为 `WATCH_PLAY:watch_session:{sessionId}`，会话内一次性决策；后续心跳有效观看达标 `max(5 秒, 30% 时长)` 独立发出 `WATCH_VIEW_QUALIFIED`，不重计播放量、不读改冷却。
-- [x] 心跳递增序号，重复与乱序请求幂等返回只读回执；会话失效或过期返回 409 `WATCH_SESSION_INVALID` / `WATCH_SESSION_EXPIRED`。
-- [x] Redisson 分布式锁在事务外层，等锁超时只读降级。**已被 ADR 0005 取代并移除**（改用行级锁）。
-- [x] 完播：播放位置与有效观看时长双 90% 时抢占完播凭据并发 `WATCH_COMPLETED`，不增加播放量。
-- [x] 播放量在起播事务内记录增量；公开计数后台汇总后展示。
-- [x] 断点查询、播放页状态快照（点赞/收藏/断点/完播）。
-- [x] 观看历史分页、删除单条与清空；只隐藏展示、不释放防刷状态，删了重看不重置冷却。
-- [x] 防刷门禁：按服务端时间差与单次上限、会话剩余时长三重校验增量；视频时长改用 content-service 事件建立的本地快照；完播需位置与有效时长双 90%（见 [ADR 0005](adr/0005-观看能力拆分与视频时长本地快照.md)）。
-- [x] 观看能力拆表：进度 / 会话 / 资格 / 事件凭据分离，防重依据收敛到 `interaction_watch_event_claim` 唯一键，心跳不再依赖 Redisson 锁。
-- [x] 统一完播防重语义：按观看会话计，每会话最多一次 `WATCH_COMPLETED`，不增加播放量。
-- [x] 元数据事件 `content.video.metadata` 与消费队列 `interaction-service.video-metadata`（含死信出口）。
-- [x] 观看数据保留期清理（会话、凭据、已隐藏进度，增加防清理保护）。
-- [x] 删除旧观看执行链路与版本号命名：`interaction_watch_history`、旧实体与 CAS Mapper、Redisson 依赖与 `RedisLockService`、`PLAY`/`PLAY_COMPLETE` 事件、模型切换开关、`/v2/...` 路径与事件路由版本后缀。
-- [ ] 观看改造集成验证：开启 `WATCH_HEARTBEAT_IT_ENABLED=true` 后跑元数据事件幂等、凭据唯一键防重与重复序号零写入集成用例。
-
-### 分享
-
-- [x] 分享必须带 `Idempotency-Key`，`interaction_share_record` 持久化防重后计数并发事件。
-- [ ] 幂等键冲突返回 `409`（当前为 `500`）。
-
-### 公开计数
-
-- [x] 单条与批量查询公开计数，缺失的补 0。
-- [x] 业务状态变化时同事务插入计数增量；后台汇总 `interaction_video_counter`，公开统计仅读取已汇总值。
-- [x] 停用 Redis 绝对值快照刷盘，旧缓存过期覆盖、丢脏标记及事务回滚问题不再位于生产写路径。
-- [ ] 真实 MySQL 多实例汇总、业务回滚及清理保留期集成验证；上线前观察积压量与批处理延迟。
-
-### 领域事件与 Outbox
-
-- [x] 统一事件 `interaction.video-action`（`LIKE / STAR / SHARE / WATCH_VIEW_QUALIFIED / WATCH_COMPLETED`），只记录真实状态变化。
-- [x] 自属 `interaction_outbox`：同事务落库、租约抢占、Broker Confirm、有限重试；投递默认关闭。
-- [x] `recommend-service` 消费 `interaction.video-action`（幂等消费已实现并验证），待按需打开 `dispatch-enabled`。
-- [ ] Outbox 已发布记录的保留期清理。
+- [ ] 确认 `my-state` 与 `watch-progress` 是否经网关向游客开放；当前网关要求登录，服务内部匿名回退返回零值（INT-09）。
 
 ### 后续规划
 
-- [ ] 树形评论与楼中楼（接入机审与多级排序）。
-- [ ] 确定公开查询接口是否对游客开放（需要调整网关白名单）。
+- [ ] 树形评论与楼中楼，接入机审与多级排序。
 
-> 已移除旧条目：`InteractionRedisBuffer` / `MetricsDeltaFlushScheduler` / content `metrics-delta` 回写、`session-finish` 结账端点与 `interaction.user.session-feedback` 事件。代码中不存在这些实现，并且与“计数由互动服务独占、不回写 content”的现行边界冲突。
+## recommend-service
 
-## 推荐模块 · recommend-service
+说明：当前实现见 [`modules/recommend.md`](modules/recommend.md)，问题审计见 [`audits/recommend-audit.md`](audits/recommend-audit.md)。
 
-说明：[推荐模块](modules/recommend.md)。
+### P1 问题
 
-### 基础入口
+- [ ] **REC-01**：统一 content 主动下架事件路由键，确保候选视频变为 `OFFLINE`。
+- [ ] **REC-05**：消费 `content.video.unbanned`，在满足发布准入时恢复候选为 `ACTIVE`。
+- [ ] **REC-02**：Redis 待看缓冲出队时复核候选状态和用户屏蔽。
+- [ ] **REC-03**：将非法参数和缺少身份映射为明确的 `400 / 401`。
+- [ ] **REC-04**：确定客户端播放时长作为弱信号的范围、权重和异常规则。
+- [ ] **REC-06**：为推荐消费补充有界重试、死信和告警出口。
 
-- [x] 提供服务启动入口与注册配置（工程骨架，包含 MyBatis-Plus、MySQL、Redis、RabbitMQ、OpenFeign、Qdrant 向量库集成）。
+### P2 问题与规划
 
-### 视频特征向量化与内容门禁闭环
+- [ ] **REC-07**：明确热度召回使用互动公开计数、推荐反馈，还是组合口径。
+- [ ] **REC-08**：实现相关推荐接口 `GET /api/recommend/videos/{vid}/related`。
 
-- [x] 监听 RabbitMQ `content.video.submitted` 提审事件，在 Java 21 虚拟线程中异步计算视频高维特征向量。
-- [x] 设计双模向量引擎（优先标准通用 OpenAI 兼容协议，网络抖动或未配 Key 时自动降级为本地确定性 Feature Hashing 算法）。
-- [x] 对接 Qdrant 向量数据库（REST :6333），自动建立 `video_vectors` 集合（Cosine 距离），持久化 Point 并注入业务 Payload。
-- [x] 建立自属表 `recommend_video_vector`，按视频幂等记录向量与处理状态（当前无 Redis 向量缓存）。
-- [x] 通过 OpenFeign 客户端回调 `content-service` 的 `/api/content/videos/internal/task-callback` 接口，汇报 `VECTOR_EMBEDDING` 为 `SUCCESS`，打通平台视频发布门禁全链路。
+## 已完成能力索引
 
-### 推荐候选池库存与生命周期闭环
+以下内容已经落地，不在本清单重复展开：
 
-- [x] 建立自属推荐候选池轻量元数据表 `recommend_candidate_video`，负责维护作者打散维度、领域/主题标签属性及推荐可用状态。
-- [x] 监听 RabbitMQ `content.video.published` 发布上线事件，以强幂等方式将新作品正式准入推荐候选库存池（`status=ACTIVE`）。
-- [x] 监听 RabbitMQ `content.video.offlined` 与 `content.video.banned` 生命周期事件，将候选状态变更为 `OFFLINE` 或 `BANNED`，实现合规清退与熔断下线。
-- [ ] **【REC-01 契约不一致】**内容服务下架发送 `content.video.offline`，推荐侧绑定 `content.video.offlined`，创作者下架的视频不会出池。
-- [ ] **【REC-05】**消费 `content.video.unbanned`，解封后恢复 `ACTIVE`。
+- 认证、用户、文件、网关、内容、审核和转码模块的当前能力，见对应 [`modules/`](modules/) 文档。
+- 互动点赞、收藏、观看、分享、计数增量、游客只读和 Outbox 基础链路，见 [`modules/interaction.md`](modules/interaction.md)。
+- 推荐向量化、候选池、首页推荐流、互动事件消费和用户反馈，见 [`modules/recommend.md`](modules/recommend.md)。
+- 观看拆表、计数增量和事件 Outbox 的架构取舍，见 [`adr/`](adr/) 对应记录。
 
-### 用户模型与行为反馈事实闭环
-
-- [x] 建立自属用户画像状态快照表 `recommend_user_profile`，维护即时检索向量、细主题偏好快照、粗领域状态快照、近期观看短码序列与乐观锁版本号。
-- [x] 建立自属用户明确屏蔽约束表 `recommend_user_block`，维护拉黑视频、作者、主题标签的硬过滤规则与 O(1) 判定。
-- [x] 建立自属原始行为反馈事实流水表 `recommend_feedback_log`，只追加记录有效曝光、播放消费、滑过跳过与负反馈客观事实。
-- [x] 领域层实现 `UserProfile` 聚合根、`UserVector` 值对象（封装增量指数移动平均 EMA 与 L2 归一化）、`UserBlock` 实体及完整持久化仓储实现。
-- [x] 行为反馈接口 `POST /api/recommend/feedback`：记流水，有效播放推进画像，快速滑过抑制粗领域，负反馈自动屏蔽。
-- [x] 用户屏蔽接口 `GET / POST / DELETE /api/recommend/blocks`（视频 / 作者 / 主题）。
-- [ ] 反馈时长校验：播放时长与视频时长当前完全信任客户端（REC-04，待决策）。
-
-### 首页推荐流
-
-- [x] `GET /api/recommend/feed`：四路并发召回（个性化 50% / 探索 30% / 热度 10% / 关注 10%），500ms 全局超时，单通道异常降级为空。
-- [x] 四道硬过滤（状态、本人作品、屏蔽、近期已看）、槽位交织、冷启动补齐、同作者间隔 >= 2 打散。
-- [x] Redis 待看缓冲队列：大包预生成、低水位异步补水、Redis 异常回退实时计算。
-- [x] 关注召回：查询用户服务最近最多 1000 个有效关注作者，读取窗口内最新 ACTIVE 作品并批量接入互动公开播放量；依赖失败按通道规则降级。
-- [x] 消费 `interaction.video-action`（幂等落库防重、记录反馈流水并加权推进用户画像）。
-- [ ] 热度召回接入互动计数字段或互动事件聚合。
-- [ ] 缓冲队列弹出时复核屏蔽与候选状态（REC-02）。
-- [ ] 参数校验与未登录错误映射为 `400 / 401`（REC-03，当前推断为 `500`）。
-- [ ] 确定游客是否可访问推荐流（需调整网关白名单）。
-- [ ] 相关推荐 `GET /api/recommend/videos/{vid}/related`（规划）。
-- [ ] 消费失败死信队列与告警（当前非法消息直接丢弃）。
-
-
+历史问题和修复证据见 [`audits/`](audits/)，历史实施方案见 [`plans/`](plans/)；两者都不是当前待办的替代品。
