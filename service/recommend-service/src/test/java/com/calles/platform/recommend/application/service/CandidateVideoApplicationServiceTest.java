@@ -104,9 +104,9 @@ class CandidateVideoApplicationServiceTest {
     }
 
     @Test
-    @DisplayName("handleOfflined：创作者主动下线，状态变更为 OFFLINE")
-    void shouldHandleOfflined() {
-        applicationService.handleOfflined("vid_100", "cv_abc", "创作者下架");
+    @DisplayName("handleOffline：创作者主动下线，状态变更为 OFFLINE")
+    void shouldHandleOffline() {
+        applicationService.handleOffline("vid_100", "cv_abc", "创作者下架");
 
         verify(candidateVideoRepository).updateStatusByVideoId("vid_100", CandidateStatus.OFFLINE);
     }

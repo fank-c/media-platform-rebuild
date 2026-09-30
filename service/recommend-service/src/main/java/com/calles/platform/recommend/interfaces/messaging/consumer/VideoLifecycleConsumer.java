@@ -11,7 +11,7 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 /**
- * 视频生命周期状态变迁 (content.video.offlined / content.video.banned) RabbitMQ 消费者 (VideoLifecycleConsumer)。
+ * 视频生命周期状态变迁 (content.video.offline / content.video.banned) RabbitMQ 消费者 (VideoLifecycleConsumer)。
  *
  * <p>职责与执行策略：
  * <ul>
@@ -70,7 +70,7 @@ public class VideoLifecycleConsumer {
                 candidateVideoApplicationService.handleBanned(message.videoId(), message.vid(), message.reason());
             } else {
                 // 默认按创作者主动下线处理
-                candidateVideoApplicationService.handleOfflined(message.videoId(), message.vid(), message.reason());
+                candidateVideoApplicationService.handleOffline(message.videoId(), message.vid(), message.reason());
             }
         } catch (Exception e) {
             log.error("推进视频生命周期清退发生未捕获致命异常: videoId={}, error={}", message.videoId(), e.getMessage(), e);

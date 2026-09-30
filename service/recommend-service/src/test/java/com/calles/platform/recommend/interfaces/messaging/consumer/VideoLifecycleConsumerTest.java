@@ -38,12 +38,12 @@ class VideoLifecycleConsumerTest {
     }
 
     @Test
-    @DisplayName("onVideoLifecycleEvent：消费下架事件触发 handleOfflined")
-    void shouldConsumeOfflinedEventSuccessfully() {
+    @DisplayName("onVideoLifecycleEvent：消费下架事件触发 handleOffline")
+    void shouldConsumeOfflineEventSuccessfully() {
         String payload = """
                 {
                   "eventId": "evt_off_1",
-                  "eventType": "content.video.offlined",
+                  "eventType": "content.video.offline",
                   "traceId": "trace_off",
                   "videoId": "vid_100",
                   "vid": "cv_abc",
@@ -53,7 +53,7 @@ class VideoLifecycleConsumerTest {
 
         consumer.onVideoLifecycleEvent(payload);
 
-        verify(candidateVideoApplicationService).handleOfflined(eq("vid_100"), eq("cv_abc"), eq("创作者隐藏"));
+        verify(candidateVideoApplicationService).handleOffline(eq("vid_100"), eq("cv_abc"), eq("创作者隐藏"));
     }
 
     @Test
@@ -88,7 +88,7 @@ class VideoLifecycleConsumerTest {
         consumer.onVideoLifecycleEvent(payload);
 
         verify(candidateVideoApplicationService, never()).handleBanned(any(), any(), any());
-        verify(candidateVideoApplicationService, never()).handleOfflined(any(), any(), any());
+        verify(candidateVideoApplicationService, never()).handleOffline(any(), any(), any());
     }
 
     @Test
@@ -97,14 +97,14 @@ class VideoLifecycleConsumerTest {
         String payload = """
                 {
                   "eventId": "evt_off_1",
-                  "eventType": "content.video.offlined",
+                  "eventType": "content.video.offline",
                   "videoId": "vid_100",
                   "vid": "cv_abc"
                 }
                 """;
 
         doThrow(new RuntimeException("DB Connection failed"))
-                .when(candidateVideoApplicationService).handleOfflined(any(), any(), any());
+                .when(candidateVideoApplicationService).handleOffline(any(), any(), any());
 
         assertThatThrownBy(() -> consumer.onVideoLifecycleEvent(payload))
                 .isInstanceOf(RuntimeException.class)

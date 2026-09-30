@@ -617,7 +617,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 }
 ```
 
-成功 HTTP `200`，`data=null`。本地事务流转状态为 `OFFLINE`，写入 `content.video.offline` Outbox 事件（以事件类型作为路由键）。注意：推荐服务当前绑定的是 `content.video.offlined`，**下架事件到达不了推荐队列**，见 [推荐模块 · 已知问题 REC-01](modules/recommend.md#102-已知问题)。
+成功 HTTP `200`，`data=null`。本地事务流转状态为 `OFFLINE`，写入 `content.video.offline` Outbox 事件（以事件类型作为路由键）。推荐生命周期队列绑定相同路由，消费后将候选标为 `OFFLINE`；已有 Redis 待看缓冲仍待 REC-02 出队复核。
 
 关键错误：未登录 `401`；非本人 `403`；视频不存在 `404`；未上线视频 `409`。
 
@@ -1315,7 +1315,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 推荐模块（`recommend-service`）挂载于 `/api/recommend/**`，只返回推荐决策（视频短码），详情由客户端向内容服务获取。实现细节见 [推荐模块](modules/recommend.md)。
 
 - 首页推荐流 `/api/recommend/feed` 已加入网关白名单，未登录游客可直接访问获取热度推荐榜；行为流水上报 `/api/recommend/feedback` 与屏蔽接口 `/api/recommend/blocks` 仍必须携带有效登录令牌。
-- 参数非法（未知 `actionType` / `blockType`）或屏蔽接口缺少身份时抛出 `IllegalArgumentException`，服务无统一异常映射，**推断返回 `500`**（未实测）。
+- 推荐模块统一使用 `ApiResponse` 错误外壳：未知 `actionType` / `blockType`、请求体校验或解析失败、查询参数类型错误返回 HTTP `400`；屏蔽接口缺少服务内身份返回 `401`；未知故障返回 `500` 和通用提示，不泄漏内部异常。响应 `code` 与 HTTP 状态一致，`data=null`。框架协议错误保留原状态（如 `405`）。
 
 ### 首页推荐流：GET /api/recommend/feed
 

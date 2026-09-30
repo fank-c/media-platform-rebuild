@@ -20,9 +20,9 @@
 
 | 编号 | 优先级 | 分类 | 标题 | 状态 |
 | :--- | :--- | :--- | :--- | :--- |
-| REC-01 | P1 | 跨服务契约 | 下架事件路由键不一致，主动下架视频不会移出候选池 | **待处理** |
+| REC-01 | P1 | 跨服务契约 | 下架事件路由键不一致，主动下架视频不会移出候选池 | **已实现待验收** |
 | REC-02 | P1 | 推荐安全 | Redis 待看缓冲出队时不复核候选状态和用户屏蔽 | **待处理** |
-| REC-03 | P1 | HTTP 契约 | 非法参数和缺少登录身份可能返回 500 | **待处理** |
+| REC-03 | P1 | HTTP 契约 | 非法参数和缺少登录身份可能返回 500 | **已解决** |
 | REC-04 | P1 | 数据质量/待决策 | 客户端播放时长完全参与画像判断，信号可被伪造 | **待决策** |
 | REC-05 | P1 | 生命周期 | 未消费视频解封事件，候选池无法自动恢复 | **待处理** |
 | REC-06 | P1 | 消息可靠性 | 推荐消费缺少明确的有界重试、死信和告警出口 | **待处理** |
@@ -35,12 +35,14 @@
 
 ### REC-01 下架事件路由键不一致，主动下架视频不会移出候选池
 
-- **位置**：`RecommendMessagingConfiguration.VIDEO_OFFLINED_ROUTING_KEY`、`recommendVideoOfflinedBinding()`、`VideoLifecycleConsumer`、`CandidateVideoApplicationService.handleOfflined()`。
-- **当前事实**：content-service 主动下架事件使用路由键 `content.video.offline`；recommend-service 当前绑定的是 `content.video.offlined`。事件类型模型和消费者注释也使用了带 `d` 的命名。
-- **影响**：创作者主动下架的视频无法到达推荐生命周期队列，`recommend_candidate_video` 仍可能保持 `ACTIVE`，后续推荐请求可能继续返回已经下架的作品。管理员封禁事件 `content.video.banned` 不受此问题影响。
+- **位置**：`RecommendMessagingConfiguration.VIDEO_OFFLINE_ROUTING_KEY`、`recommendVideoOfflineBinding()`、`VideoLifecycleConsumer`、`CandidateVideoApplicationService.handleOffline()`。
+- **原问题**：content-service 主动下架事件使用路由键 `content.video.offline`；recommend-service 误绑定 `content.video.offlined`。
+- **修复事实**：推荐侧常量、绑定、注释和测试已统一为 `content.video.offline`，没有双路由；真实消费者与应用服务执行后候选状态为 `OFFLINE`，重复消费状态不变。决策见 [ADR-0011](../adr/0011-recommend-offline-event-contract.md)。
+- **原影响**：创作者主动下架的视频无法到达推荐生命周期队列，`recommend_candidate_video` 仍可能保持 `ACTIVE`，后续推荐请求可能继续返回已经下架的作品。管理员封禁事件 `content.video.banned` 不受此问题影响。
 - **判断**：这是已经由代码和契约文档确认的跨服务契约问题，不是仅凭运行日志推断。
 - **处理方向**：在当前开发阶段统一采用一个路由键，推荐与 content 的事件类型、绑定配置、消息模型、测试和文档同步修改；不保留两个新旧路由长期并存。修改跨服务事件契约时应同步 ADR 或现有事件契约记录。
-- **验收条件**：发布主动下架事件后，recommend 生命周期队列能够收到消息，候选状态变为 `OFFLINE`，推荐流过滤该视频；重复消费保持幂等。
+- **验证证据**：`VideoOfflineContractTest` 覆盖绑定对象、真实消费用例和内存持久化替身的状态幂等；`VideoLifecycleConsumerTest`、`CandidateVideoApplicationServiceTest` 回归通过。
+- **剩余边界**：真实 RabbitMQ 送达和 MySQL 落库尚未联调，因此保留“已实现待验收”。已有 Redis 缓冲仍需 REC-02 处理，本项不承诺缓冲立即失效。
 
 ### REC-02 Redis 待看缓冲出队时不复核候选状态和用户屏蔽
 
@@ -53,10 +55,12 @@
 
 ### REC-03 非法参数和缺少登录身份可能返回 500
 
-- **位置**：`RecommendFeedController` 的 `submitFeedback()`、`addBlock()`、`removeBlock()`、`listBlocks()`；当前未见 recommend-service 专用的统一异常映射。
-- **当前事实**：未知 `actionType`、未知 `blockType` 和缺少登录身份通过 `IllegalArgumentException` 抛出。请求体校验失败由 Spring 校验链处理，但业务异常没有在 recommend 控制器层转换为明确的 HTTP 错误契约。
-- **影响**：客户端无法稳定区分参数错误、未登录和服务端异常；业务输入错误可能按未处理异常返回 `500`，不符合推荐接口文档中约定的 `400/401` 语义。
-- **判断**：代码路径已确认；最终 HTTP 状态码尚未通过启动服务实测，因此“返回 500”属于当前实现的高概率推断，不应当作已完成实测结论。
+- **位置**：`RecommendFeedController` 的 `submitFeedback()`、`addBlock()`、`removeBlock()`、`listBlocks()`，以及新增的 `RecommendExceptionHandler`。
+- **原问题**：未知 `actionType`、未知 `blockType` 和缺少登录身份都通过 `IllegalArgumentException` 抛出，业务错误无明确 HTTP 映射。
+- **修复事实**：新增 `RecommendExceptionHandler` 和独立 `MissingIdentityException`。业务参数、请求体校验、JSON 解析及参数类型转换错误返回 `400`；三个屏蔽端点缺少身份返回 `401`；未知故障返回 `500` 通用提示。统一使用 `ApiResponse`，`code` 与 HTTP 状态一致，`data=null`，不回显输入和内部异常。
+- **原影响**：客户端无法稳定区分参数错误、未登录和服务端异常；业务输入错误可能按未处理异常返回 `500`，不符合推荐接口文档中约定的 `400/401` 语义。
+- **验证证据**：`RecommendHttpErrorTest` 通过 MockMvc 执行真实控制器、校验器和异常处理器，覆盖非法反馈枚举、添加/撤销屏蔽非法枚举、请求体校验、畸形 JSON、查询参数错误、三个屏蔽端点缺少身份及未知异常。编译与推荐模块全部 155 项测试通过。
+- **验证边界**：这是服务内 MVC HTTP 契约测试，不是经网关启动联调；网关鉴权和服务内 feed / feedback 游客行为未修改。原实现最终返回 500 的说法仍仅为代码推断。
 - **处理方向**：建立 recommend-service 统一异常处理，将参数和枚举错误映射为 `400`，缺少身份映射为 `401`，资源或业务冲突按明确契约映射；响应仍使用公共 `ApiResponse` 外壳，不泄露内部异常。
 - **验收条件**：反馈接口未知动作返回 `400`；屏蔽接口缺少身份返回 `401`；非法请求体返回统一的 `400`；未知异常才返回 `500`。
 
@@ -73,7 +77,7 @@
 ### REC-05 未消费视频解封事件，候选池无法自动恢复
 
 - **位置**：`RecommendMessagingConfiguration`、`VideoLifecycleMessage`、`VideoLifecycleConsumer`、`CandidateVideoApplicationService`。
-- **当前事实**：recommend-service 当前只绑定 `content.video.offlined` 和 `content.video.banned`，没有绑定或处理 `content.video.unbanned`。`CandidateVideoApplicationService` 可以在收到重新发布事件时把非 ACTIVE 候选重新激活，但 content-service 解封流程只发送 `unbanned`，不会重新发送 `published`。
+- **当前事实**：recommend-service 当前绑定 `content.video.offline` 和 `content.video.banned`，没有绑定或处理 `content.video.unbanned`。`CandidateVideoApplicationService` 可以在收到重新发布事件时把非 ACTIVE 候选重新激活，但 content-service 解封流程只发送 `unbanned`，不会重新发送 `published`。
 - **影响**：视频被管理员封禁后，即使后续解封，recommend 候选状态仍保持 `BANNED`，不会重新进入推荐流。
 - **判断**：由当前消息绑定、消息模型和模块文档确认，尚未做真实 RabbitMQ 解封事件演练。
 - **处理方向**：为解封建立明确的当前事件契约，消费后将候选从 `BANNED` 恢复为 `ACTIVE`；恢复前应再次确认视频发布准入和候选必要快照。不能把 `unbanned` 简单当作任意状态的强制激活。
@@ -121,10 +125,11 @@
 
 建议推进顺序：
 
-1. 先统一 REC-01 下架事件契约，并补齐 REC-05 解封生命周期；
-2. 再处理 REC-03 错误映射和 REC-02 缓冲出队复核；
+1. 验收 REC-01 下架事件送达与落库，后续补齐 REC-05 解封生命周期；
+2. 处理 REC-02 缓冲出队复核（REC-03 错误映射已解决）；
 3. 明确 REC-04 客户端反馈的可信度和画像权重；
 4. 在 RabbitMQ 联调时一并验收 REC-06；
 5. 最后按产品优先级决定 REC-07 热度口径和 REC-08 相关推荐。
 
-本文件没有改变任何消息路由、HTTP 契约、数据库结构或配置默认值。
+- REC-01 已实现待真实 RabbitMQ / MySQL 联调验收；REC-03 已解决，其余问题保持原范围与状态。
+- 本次仅修复 REC-01、REC-03，未处理 Redis 缓冲复核、解封消费或消费重试。

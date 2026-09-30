@@ -11,7 +11,7 @@
 ### 1.1 核心业务职责
 
 - **视频向量化与发布门禁**：消费 `content.video.submitted`，计算视频特征向量写入 Qdrant 与自属表，再回调 `content-service` 汇报 `VECTOR_EMBEDDING` 完成。
-- **候选池生命周期**：消费 `content.video.published` 入池（`ACTIVE`），消费 `content.video.offlined` / `content.video.banned` 出池（`OFFLINE` / `BANNED`）。
+- **候选池生命周期**：消费 `content.video.published` 入池（`ACTIVE`），消费 `content.video.offline` / `content.video.banned` 出池（`OFFLINE` / `BANNED`）。
 - **首页推荐流**：四路召回（个性化、探索、热度、关注）→ 四道硬过滤 → 槽位交织 → 冷启动补齐 → 同作者打散。
 - **行为反馈与画像**：接收客户端上报的曝光、播放、跳过、负反馈，以及 `interaction-service` 经 Outbox 投递的点赞、收藏、分享、有效观看和完播事件，记入流水并驱动用户画像演进。
 - **用户屏蔽**：维护视频、作者、主题三个维度的黑名单，作为推荐硬过滤条件。
@@ -86,13 +86,13 @@ graph TD
     Content -->|content.video.published| MQ
     Content -->|content.video.banned| MQ
     Content -.->|"content.video.unbanned（推荐侧未消费，见 10.2）"| MQ
-    Content -.->|"content.video.offline（与推荐侧绑定键不一致，见 10.2）"| MQ
+    Content -->|content.video.offline| MQ
     Interaction -->|interaction.video-action| MQ
     User -->|interaction.author-action.v1| MQ
 
     MQ -->|recommend-service.video-submitted.v1| RS
     MQ -->|recommend-service.video-published.v1| RS
-    MQ -->|"recommend-service.video-lifecycle.v1（绑定 offlined / banned）"| RS
+    MQ -->|"recommend-service.video-lifecycle.v1（绑定 offline / banned）"| RS
     MQ -->|"recommend-service.interaction-action.v1（绑定 video-action / author-action.v1）"| RS
 
     RS -->|写入向量 Point| Qdrant
@@ -116,7 +116,7 @@ graph TD
 | `DELETE` | `/api/recommend/blocks?blockType=&targetId=` | 必须登录 | 撤销指定屏蔽 | `200` |
 | `GET` | `/api/recommend/blocks` | 必须登录 | 查询当前用户全部屏蔽 | `200` 返回列表 |
 
-**错误处理现状**：未登录调用屏蔽接口、未知 `actionType` / `blockType` 时抛出 `IllegalArgumentException`。服务未配置全局异常映射，**推断实际返回 `500`**（未实测）。请求体校验失败按 Spring 默认返回 `400`。
+**错误处理**：`RecommendExceptionHandler` 使用公共 `ApiResponse` 外壳。未知 `actionType` / `blockType`、请求体校验或 JSON 解析错误、查询参数转换错误返回 `400`；屏蔽接口缺少身份以独立 `MissingIdentityException` 返回 `401`；未知故障返回 `500` 通用提示。框架协议错误保留原状态，不回显用户输入或内部异常。网关鉴权和服务内游客分支不变。
 
 ### 4.1 首页推荐流：`GET /api/recommend/feed`
 
@@ -183,7 +183,7 @@ graph TD
 | :--- | :--- | :--- | :--- |
 | `recommend-service.video-submitted.v1` | `content.video.submitted` | `VideoSubmittedConsumer` | 虚拟线程异步计算向量 → 写 Qdrant 与 `recommend_video_vector` → Feign 回调 `task-callback` |
 | `recommend-service.video-published.v1` | `content.video.published` | `VideoPublishedConsumer` | 幂等写入 `recommend_candidate_video`，状态 `ACTIVE` |
-| `recommend-service.video-lifecycle.v1` | `content.video.offlined`、`content.video.banned` | `VideoLifecycleConsumer` | `banned` 置 `BANNED`，其他类型按下架置 `OFFLINE` |
+| `recommend-service.video-lifecycle.v1` | `content.video.offline`、`content.video.banned` | `VideoLifecycleConsumer` | `banned` 置 `BANNED`，其他类型按下架置 `OFFLINE` |
 | `recommend-service.interaction-action.v1` | `interaction.video-action`、`interaction.author-action.v1` | `InteractionEventConsumer` | 统一入口信封解析与 MDC 注入 → `InteractionEventDispatcher` 按 `eventType` 分发：<br>1. `interaction.video-action` 委托 `InteractionFeedbackApplicationService` 演进向量画像与行为流水；<br>2. `interaction.author-action` 委托 `AuthorInteractionApplicationService` 记录幂等防重与作者关注流水。 |
 
 - 反序列化失败、格式畸形、未知事件类型或缺少关键字段（如 `eventId`、`userId` 等）的消息直接丢弃并记警告日志（安全 ACK 防毒丸），**当前没有死信队列**。
@@ -466,8 +466,8 @@ flowchart LR
 
 | 编号 | 问题 | 影响 | 状态 |
 | :--- | :--- | :--- | :--- |
-| REC-01 | `content-service` 下架时以 `content.video.offline` 为路由键发送；推荐侧只绑定 `content.video.offlined` | **创作者主动下架的视频不会移出推荐候选池**（封禁不受影响） | 待修复，需确定以哪边命名为准 |
+| REC-01 | 下架路由已统一为 `content.video.offline`，不保留双路由 | 消费后候选为 `OFFLINE`，已有 Redis 缓冲仍受 REC-02 影响 | 已实现待 RabbitMQ 联调验收 |
 | REC-02 | 缓冲队列中的物料弹出时不再过滤 | 新屏蔽或刚下线的视频最多在 1 小时内仍可能被下发 | 待评估 |
-| REC-03 | 参数非法、未登录抛 `IllegalArgumentException`，无统一异常映射 | 推断返回 `500` 而非 `400/401` | 待处理 |
+| REC-03 | 已增加推荐模块 HTTP 异常映射与独立身份异常 | 参数 `400`、缺少身份 `401`、未知故障 `500`，统一响应外壳 | 已实现，MVC 回归覆盖 |
 | REC-04 | 反馈的播放时长和视频时长完全信任客户端 | 画像可被伪造上报影响 | 待决策 |
 | REC-05 | 未消费 `content.video.unbanned` | 解封后的视频在候选池中仍为 `BANNED`，不会重新被推荐（内容服务解封时只发 `unbanned`，不重发 `published`） | 待处理 |

@@ -25,6 +25,7 @@
 | [0008](0008-video-counter-ownership-to-interaction.md) | 视频公开计数所有权划归互动服务 | 已采纳（追认） |
 | [0009](0009-recommend-qdrant-vector-database.md) | 推荐服务引入 Qdrant 向量数据库与双模向量化引擎 | 已采纳（追认） |
 | [0010](0010-following-recall-query-and-ranking.md) | 关注召回采用查询式两阶段召回与本地排序 | 已采纳（追认） |
+| [0011](0011-recommend-offline-event-contract.md) | 推荐下架事件采用内容服务当前契约，不保留双路由 | 已采纳 |
 
 ## 待补
 

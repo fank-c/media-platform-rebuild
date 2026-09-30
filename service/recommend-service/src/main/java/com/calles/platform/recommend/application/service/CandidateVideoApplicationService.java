@@ -87,14 +87,14 @@ public class CandidateVideoApplicationService {
     }
 
     /**
-     * 处理创作者主动下线用例 (消费 content.video.offlined 事件)。
+     * 处理创作者主动下线用例 (消费 content.video.offline 事件)。
      *
      * @param videoId 视频内部 ID
      * @param vid 视频公开短码
      * @param reason 下线原因
      */
     @Transactional
-    public void handleOfflined(String videoId, String vid, String reason) {
+    public void handleOffline(String videoId, String vid, String reason) {
         if (videoId == null || videoId.isBlank()) {
             return;
         }

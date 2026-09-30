@@ -17,7 +17,7 @@ import org.springframework.context.annotation.Configuration;
  *       异步执行高维特征向量提取并回调内容服务以解除发布门禁；</li>
  *   <li><b>视频发布准入通道 (Video Published)</b>：订阅 {@code content.video.published}，
  *       将过审上线的作品以强幂等方式准入推荐候选物料库 (recommend_candidate_video)；</li>
- *   <li><b>视频生命周期清退通道 (Video Lifecycle)</b>：订阅 {@code content.video.offlined} 与 {@code content.video.banned}，
+ *   <li><b>视频生命周期清退通道 (Video Lifecycle)</b>：订阅 {@code content.video.offline} 与 {@code content.video.banned}，
  *       实现合规清退与熔断下架，保障推荐流物料安全；</li>
  *   <li><b>互动行为反馈通道 (Interaction Video Action)</b>：订阅 {@code interaction.video-action}，
  *       消费点赞、收藏、分享、合格观看与完播行为，驱动热度召回通道与用户画像演进。</li>
@@ -65,10 +65,9 @@ public class RecommendMessagingConfiguration {
 
     /**
      * 视频下架领域事件路由键。
-     * <p>契约注意事项 (REC-01)：当前内容服务发送的路由键为 {@code content.video.offline}（未带 d 后缀），
-     * 推荐侧历史绑定为 {@code content.video.offlined}，在两端契约完全对齐前需留意绑定兼容性。</p>
+     * <p>发布方：{@code content-service} 创作者主动下架；推荐侧只绑定此唯一当前契约。</p>
      */
-    public static final String VIDEO_OFFLINED_ROUTING_KEY = "content.video.offlined";
+    public static final String VIDEO_OFFLINE_ROUTING_KEY = "content.video.offline";
 
     /**
      * 视频封禁领域事件路由键。
@@ -171,17 +170,17 @@ public class RecommendMessagingConfiguration {
     }
 
     /**
-     * 绑定视频下架事件至生命周期消费队列 (RoutingKey: content.video.offlined)。
+     * 绑定视频下架事件至生命周期消费队列 (RoutingKey: content.video.offline)。
      *
      * @param recommendVideoLifecycleQueue 生命周期消费队列
      * @param recommendMediaEventsExchange 领域事件交换机
      * @return 绑定实例
      */
     @Bean
-    public Binding recommendVideoOfflinedBinding(Queue recommendVideoLifecycleQueue, TopicExchange recommendMediaEventsExchange) {
+    public Binding recommendVideoOfflineBinding(Queue recommendVideoLifecycleQueue, TopicExchange recommendMediaEventsExchange) {
         return BindingBuilder.bind(recommendVideoLifecycleQueue)
                 .to(recommendMediaEventsExchange)
-                .with(VIDEO_OFFLINED_ROUTING_KEY);
+                .with(VIDEO_OFFLINE_ROUTING_KEY);
     }
 
     /**

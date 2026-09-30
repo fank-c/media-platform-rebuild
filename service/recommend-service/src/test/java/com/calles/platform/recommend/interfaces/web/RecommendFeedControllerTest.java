@@ -130,7 +130,7 @@ class RecommendFeedControllerTest {
         UserBlockRequest request = new UserBlockRequest("VIDEO", "vid_01", "不喜欢");
 
         assertThatThrownBy(() -> controller.addBlock(null, request))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(MissingIdentityException.class)
                 .hasMessageContaining("当前操作需要登录身份");
     }
 

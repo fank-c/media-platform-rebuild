@@ -46,10 +46,9 @@
 
 ### P1 问题
 
-- [ ] **REC-01**：统一 content 主动下架事件路由键，确保候选视频变为 `OFFLINE`。
+- [ ] **REC-01 验收**：代码已统一 `content.video.offline`，绑定、消费与重复消费测试通过；待真实 RabbitMQ 送达与 MySQL 状态落库联调。
 - [ ] **REC-05**：消费 `content.video.unbanned`，在满足发布准入时恢复候选为 `ACTIVE`。
 - [ ] **REC-02**：Redis 待看缓冲出队时复核候选状态和用户屏蔽。
-- [ ] **REC-03**：将非法参数和缺少身份映射为明确的 `400 / 401`。
 - [ ] **REC-04**：确定客户端播放时长作为弱信号的范围、权重和异常规则。
 - [ ] **REC-06**：为推荐消费补充有界重试、死信和告警出口。
 
@@ -65,6 +64,7 @@
 - 认证、用户、文件、网关、内容、审核和转码模块的当前能力，见对应 [`modules/`](modules/) 文档。
 - 互动点赞、收藏、观看、分享、计数增量、游客只读和 Outbox 基础链路，见 [`modules/interaction.md`](modules/interaction.md)。
 - 推荐向量化、候选池、首页推荐流、互动事件消费和用户反馈，见 [`modules/recommend.md`](modules/recommend.md)。
+- 推荐 REC-03 参数 `400`、缺少身份 `401` 与统一 HTTP 错误响应，见 [`audits/recommend-audit.md`](audits/recommend-audit.md)。
 - 观看拆表、计数增量和事件 Outbox 的架构取舍，见 [`adr/`](adr/) 对应记录。
 
 历史问题和修复证据见 [`audits/`](audits/)，历史实施方案见 [`plans/`](plans/)；两者都不是当前待办的替代品。

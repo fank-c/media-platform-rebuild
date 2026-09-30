@@ -220,11 +220,15 @@ public class RecommendFeedController {
 
     /**
      * 强制要求用户身份存在，不存在时拒绝执行。
+     *
+     * @param headerUserId 网关透传用户标识
+     * @return 已解析的非空用户标识
+     * @throws MissingIdentityException Header 和请求上下文均无身份
      */
     private String requireUserId(String headerUserId) {
         String userId = resolveUserId(headerUserId);
         if (userId == null || userId.isBlank()) {
-            throw new IllegalArgumentException("当前操作需要登录身份");
+            throw new MissingIdentityException();
         }
         return userId;
     }
