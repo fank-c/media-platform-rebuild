@@ -115,4 +115,20 @@ public class CandidateVideoRepositoryImpl implements CandidateVideoRepository {
         }
         return pos.stream().map(CandidateVideoPO::toDomain).collect(java.util.stream.Collectors.toList());
     }
+
+    @Override
+    public java.util.List<CandidateVideo> findActiveByVids(java.util.List<String> vids) {
+        if (vids == null || vids.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CandidateVideoPO> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+        wrapper.in(CandidateVideoPO::getVid, vids)
+                .eq(CandidateVideoPO::getStatus, CandidateStatus.ACTIVE.getCode());
+        java.util.List<CandidateVideoPO> pos = candidateVideoMapper.selectList(wrapper);
+        if (pos == null || pos.isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+        return pos.stream().map(CandidateVideoPO::toDomain).collect(java.util.stream.Collectors.toList());
+    }
 }

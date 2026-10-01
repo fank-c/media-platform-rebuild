@@ -80,4 +80,12 @@ public interface CandidateVideoRepository {
      * @return 匹配的候选视频领域实体列表
      */
     java.util.List<CandidateVideo> findByVids(java.util.List<String> vids);
+
+    /**
+     * 批量查询只返回 ACTIVE 状态的候选视频。
+     *
+     * @param vids 视频业务短码列表
+     * @return ACTIVE 状态的候选视频领域实体列表
+     */
+    java.util.List<CandidateVideo> findActiveByVids(java.util.List<String> vids);
 }

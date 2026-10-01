@@ -616,7 +616,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 }
 ```
 
-成功 HTTP `200`，`data=null`。本地事务流转状态为 `OFFLINE`，写入 `content.video.offline` Outbox 事件（以事件类型作为路由键）。推荐生命周期队列绑定相同路由，消费后将候选标为 `OFFLINE`；已有 Redis 待看缓冲仍待 REC-02 出队复核。
+成功 HTTP `200`，`data=null`。本地事务流转状态为 `OFFLINE`，写入 `content.video.offline` Outbox 事件（以事件类型作为路由键）。推荐生命周期队列绑定相同路由，消费后将候选标为 `OFFLINE`；已有 Redis 待看缓冲在出队时复核候选状态与用户屏蔽。
 
 关键错误：未登录 `401`；非本人 `403`；视频不存在 `404`；未上线视频 `409`。
 
@@ -1321,6 +1321,7 @@ V1 受理时通常仍为 `PENDING`，V2 为 `VERIFYING`。异步失败不会回�
 
 - Query：`size`，默认 10，上限 50。
 - 登录用户优先从 Redis 待看队列弹出，队列为空时现场生成；重复调用即取下一批，**没有游标**。
+- 缓冲出队及补取统一复核候选状态和 `VIDEO` / `AUTHOR` / `TOPIC` 屏蔽。满额返回时保留 `hasMore=true`，即使此刻队列为空、后台补水尚未完成；此标记表示可继续请求，不保证下一批一定有内容。
 - 响应 `data`：`{ items: [{ vid, recallChannel, score, reason }], hasMore }`。
 - `recallChannel`：`PERSONALIZED` / `EXPLORE_SIMILAR` / `EXPLORE_RANDOM` / `TRENDING` / `COLD_START`（`FOLLOWING` 当前不会出现）。
 

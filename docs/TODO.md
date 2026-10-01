@@ -48,7 +48,7 @@
 
 - [ ] **REC-01 验收**：代码已统一 `content.video.offline`，绑定、消费与重复消费测试通过；待真实 RabbitMQ 送达与 MySQL 状态落库联调。
 - [ ] **REC-05**：消费 `content.video.unbanned`，在满足发布准入时恢复候选为 `ACTIVE`。
-- [ ] **REC-02**：Redis 待看缓冲出队时复核候选状态和用户屏蔽。
+- [ ] **REC-02 验收**：出队及补取已复核候选状态和 VIDEO / AUTHOR / TOPIC 屏蔽，满额返回保留继续加载标记；待真实 Redis / MySQL 联调。
 - [ ] **REC-06**：为推荐消费补充有界重试、死信和告警出口。
 
 ### P2 问题与规划
